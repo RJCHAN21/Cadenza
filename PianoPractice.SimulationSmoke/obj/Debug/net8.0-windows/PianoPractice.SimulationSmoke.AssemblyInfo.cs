@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PianoPractice.SimulationSmoke")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a42027f424cc2262473449eeb4f121a775a6b040")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0377d575b147d40d5cc76351de92ddd5c313f165")]
 [assembly: System.Reflection.AssemblyProductAttribute("PianoPractice.SimulationSmoke")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PianoPractice.SimulationSmoke")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

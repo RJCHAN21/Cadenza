@@ -107,6 +107,10 @@ public sealed class CadenzaUserSettings
     public int LatencyMilliseconds { get; set; }
     public bool MetronomeEnabled { get; set; } = true;
     public bool ComputerKeyboardEnabled { get; set; }
+    public string PlaybackSoundPresetId { get; set; } = "acoustic_grand";
+    public string LiveSoundPresetId { get; set; } = "acoustic_grand";
+    public bool MatchPlaybackSynthEnabled { get; set; }
+    public string? LastOpenedScorePath { get; set; }
 }
 
 public sealed class SongProgressRecord

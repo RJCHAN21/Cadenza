@@ -42,6 +42,29 @@ public sealed class PianoAudioService : IDisposable
         int metronomeVolumePercent,
         int? includedStaffNumber,
         CancellationToken cancellationToken) =>
+        BuildPreviewAsync(
+            score,
+            includeMetronome,
+            startBeat,
+            endBeat,
+            tempoBpm,
+            pianoVolumePercent,
+            metronomeVolumePercent,
+            includedStaffNumber,
+            "acoustic_grand",
+            cancellationToken);
+
+    public Task<byte[]> BuildPreviewAsync(
+        ScoreDocument score,
+        bool includeMetronome,
+        double startBeat,
+        double endBeat,
+        double tempoBpm,
+        int pianoVolumePercent,
+        int metronomeVolumePercent,
+        int? includedStaffNumber,
+        string presetId,
+        CancellationToken cancellationToken) =>
         Task.Run(
             () => BuildPreview(
                 score,
@@ -52,11 +75,12 @@ public sealed class PianoAudioService : IDisposable
                 pianoVolumePercent,
                 metronomeVolumePercent,
                 includedStaffNumber,
+                presetId,
                 cancellationToken),
             cancellationToken);
 
     public Task<byte[]> BuildMidiPreviewAsync(MidiReference midi, IReadOnlySet<int> trackIndexes, bool includeMetronome, CancellationToken cancellationToken) =>
-        BuildMidiPreviewAsync(midi, trackIndexes, includeMetronome, 100, 70, cancellationToken);
+        BuildMidiPreviewAsync(midi, trackIndexes, includeMetronome, 100, 70, "acoustic_grand", cancellationToken);
 
     public Task<byte[]> BuildMidiPreviewAsync(
         MidiReference midi,
@@ -65,6 +89,16 @@ public sealed class PianoAudioService : IDisposable
         int pianoVolumePercent,
         int metronomeVolumePercent,
         CancellationToken cancellationToken) =>
+        BuildMidiPreviewAsync(midi, trackIndexes, includeMetronome, pianoVolumePercent, metronomeVolumePercent, "acoustic_grand", cancellationToken);
+
+    public Task<byte[]> BuildMidiPreviewAsync(
+        MidiReference midi,
+        IReadOnlySet<int> trackIndexes,
+        bool includeMetronome,
+        int pianoVolumePercent,
+        int metronomeVolumePercent,
+        string presetId,
+        CancellationToken cancellationToken) =>
         Task.Run(
             () => BuildMidiPreview(
                 midi,
@@ -72,6 +106,7 @@ public sealed class PianoAudioService : IDisposable
                 includeMetronome,
                 pianoVolumePercent,
                 metronomeVolumePercent,
+                presetId,
                 cancellationToken),
             cancellationToken);
 
@@ -104,6 +139,35 @@ public sealed class PianoAudioService : IDisposable
         _clickPlayer.Play();
     }
 
+    public void PlayLiveNote(int midiNote, int velocity, int volumePercent, string presetId)
+    {
+        if (volumePercent <= 0) return;
+        Task.Run(() =>
+        {
+            try
+            {
+                var seconds = 1.0;
+                var samples = new float[(int)(seconds * SampleRate)];
+                AddPianoVoice(
+                    samples,
+                    midiNote,
+                    velocity,
+                    0,
+                    0.8,
+                    1.0,
+                    Math.Clamp(volumePercent, 0, 100) / 100d,
+                    presetId,
+                    CancellationToken.None);
+                var wave = ToWaveFile(samples);
+                using var ms = new MemoryStream(wave, writable: false);
+                using var player = new SoundPlayer(ms);
+                player.Load();
+                player.Play();
+            }
+            catch { }
+        });
+    }
+
     public void Dispose()
     {
         StopPreview();
@@ -121,6 +185,7 @@ public sealed class PianoAudioService : IDisposable
         int pianoVolumePercent,
         int metronomeVolumePercent,
         int? includedStaffNumber,
+        string presetId,
         CancellationToken cancellationToken)
     {
         startBeat = Math.Clamp(startBeat, 0, score.TotalBeats);
@@ -146,6 +211,7 @@ public sealed class PianoAudioService : IDisposable
                 Math.Min(note.DurationBeats, endBeat - note.OnsetBeats),
                 secondsPerBeat,
                 pianoGain,
+                presetId,
                 cancellationToken);
         }
 
@@ -167,6 +233,7 @@ public sealed class PianoAudioService : IDisposable
         bool includeMetronome,
         int pianoVolumePercent,
         int metronomeVolumePercent,
+        string presetId,
         CancellationToken cancellationToken)
     {
         var selectedNotes = midi.Notes.Where(note => trackIndexes.Contains(note.TrackIndex) && note.Channel != 9).ToArray();
@@ -185,6 +252,7 @@ public sealed class PianoAudioService : IDisposable
                 note.DurationBeats,
                 secondsPerBeat,
                 Math.Clamp(pianoVolumePercent, 0, 100) / 100d,
+                presetId,
                 cancellationToken);
         }
 
@@ -212,6 +280,7 @@ public sealed class PianoAudioService : IDisposable
         double durationBeats,
         double secondsPerBeat,
         double gain,
+        string presetId,
         CancellationToken cancellationToken)
     {
         var start = Math.Max(0, (int)(onsetBeats * secondsPerBeat * SampleRate));
@@ -226,13 +295,106 @@ public sealed class PianoAudioService : IDisposable
         {
             if ((index & 2047) == 0) cancellationToken.ThrowIfCancellationRequested();
             var time = index / (double)SampleRate;
-            var attack = Math.Min(1d, time / 0.008d);
-            var release = time <= durationSeconds ? 1d : Math.Exp(-(time - durationSeconds) * 7d);
-            var envelope = attack * Math.Exp(-time * 2.4d) * release * 0.12d * level * gain;
-            var fundamental = Math.Sin(2d * Math.PI * frequency * time);
-            var secondHarmonic = Math.Sin(2d * Math.PI * frequency * 2d * time) * 0.32d;
-            var thirdHarmonic = Math.Sin(2d * Math.PI * frequency * 3d * time) * 0.13d;
-            samples[start + index] += (float)((fundamental + secondHarmonic + thirdHarmonic) * envelope);
+
+            double sampleVal;
+            if (presetId == "soft_synth")
+            {
+                var attack = Math.Min(1d, time / 0.008d);
+                var release = time <= durationSeconds ? 1d : Math.Exp(-(time - durationSeconds) * 7d);
+                var envelope = attack * Math.Exp(-time * 2.4d) * release * 0.12d * level * gain;
+                var fundamental = Math.Sin(2d * Math.PI * frequency * time);
+                var secondHarmonic = Math.Sin(2d * Math.PI * frequency * 2d * time) * 0.32d;
+                var thirdHarmonic = Math.Sin(2d * Math.PI * frequency * 3d * time) * 0.13d;
+                sampleVal = (fundamental + secondHarmonic + thirdHarmonic) * envelope;
+            }
+            else if (presetId == "bright_piano")
+            {
+                var attack = Math.Min(1d, time / 0.002d);
+                var release = time <= durationSeconds ? 1d : Math.Exp(-(time - durationSeconds) * 7d);
+                var envelope = attack * Math.Exp(-time * 2.0d) * release * 0.14d * level * gain;
+                var fundamental = Math.Sin(2d * Math.PI * frequency * time);
+                var h2 = Math.Sin(4d * Math.PI * frequency * time) * 0.55d;
+                var h3 = Math.Sin(6d * Math.PI * frequency * time) * 0.35d;
+                var h4 = Math.Sin(8d * Math.PI * frequency * time) * 0.20d;
+                sampleVal = (fundamental + h2 + h3 + h4) * envelope;
+            }
+            else if (presetId == "electric_grand")
+            {
+                var attack = Math.Min(1d, time / 0.003d);
+                var release = time <= durationSeconds ? 1d : Math.Exp(-(time - durationSeconds) * 6d);
+                var envelope = attack * Math.Exp(-time * 1.9d) * release * 0.14d * level * gain;
+                var fundamental = Math.Sin(2d * Math.PI * frequency * time);
+                var octave = Math.Sin(4d * Math.PI * frequency * time) * 0.40d;
+                var subPulse = Math.Sin(3d * Math.PI * frequency * time) * 0.25d;
+                sampleVal = (fundamental + octave + subPulse) * envelope;
+            }
+            else if (presetId == "honky_tonk")
+            {
+                var attack = Math.Min(1d, time / 0.004d);
+                var release = time <= durationSeconds ? 1d : Math.Exp(-(time - durationSeconds) * 5d);
+                var envelope = attack * Math.Exp(-time * 2.2d) * release * 0.13d * level * gain;
+                var voice1 = Math.Sin(2d * Math.PI * frequency * time);
+                var voice2 = Math.Sin(2d * Math.PI * (frequency * 1.004d) * time) * 0.85d;
+                var h2 = Math.Sin(4d * Math.PI * frequency * time) * 0.35d;
+                sampleVal = (voice1 + voice2 + h2) * envelope;
+            }
+            else if (presetId == "electric_piano")
+            {
+                var attack = Math.Min(1d, time / 0.003d);
+                var release = time <= durationSeconds ? 1d : Math.Exp(-(time - durationSeconds) * 8d);
+                var envelope = attack * Math.Exp(-time * 1.8d) * release * 0.14d * level * gain;
+                var tine = Math.Sin(2d * Math.PI * frequency * 7d * time) * Math.Exp(-time * 25d) * 0.35d;
+                var fundamental = Math.Sin(2d * Math.PI * frequency * time);
+                var secondHarmonic = Math.Sin(4d * Math.PI * frequency * time) * 0.20d;
+                sampleVal = (fundamental + secondHarmonic + tine) * envelope;
+            }
+            else if (presetId == "harpsichord")
+            {
+                var attack = Math.Min(1d, time / 0.001d);
+                var release = time <= durationSeconds ? 1d : Math.Exp(-(time - durationSeconds) * 12d);
+                var envelope = attack * Math.Exp(-time * 3.5d) * release * 0.11d * level * gain;
+                var fundamental = Math.Sin(2d * Math.PI * frequency * time);
+                var h2 = Math.Sin(4d * Math.PI * frequency * time) * 0.60d;
+                var h3 = Math.Sin(6d * Math.PI * frequency * time) * 0.40d;
+                var h4 = Math.Sin(8d * Math.PI * frequency * time) * 0.25d;
+                sampleVal = (fundamental + h2 + h3 + h4) * envelope;
+            }
+            else if (presetId == "church_organ")
+            {
+                var attack = Math.Min(1d, time / 0.035d);
+                var release = time <= durationSeconds ? 1d : Math.Exp(-(time - durationSeconds) * 15d);
+                var envelope = attack * release * 0.08d * level * gain;
+                var sub = Math.Sin(Math.PI * frequency * time) * 0.40d;
+                var fundamental = Math.Sin(2d * Math.PI * frequency * time);
+                var h2 = Math.Sin(4d * Math.PI * frequency * time) * 0.50d;
+                var h3 = Math.Sin(6d * Math.PI * frequency * time) * 0.30d;
+                var h4 = Math.Sin(8d * Math.PI * frequency * time) * 0.20d;
+                sampleVal = (sub + fundamental + h2 + h3 + h4) * envelope;
+            }
+            else
+            {
+                // Acoustic Grand Piano (Physical Acoustic Model: 8 partials, inharmonicity dispersion, hammer attack transient & soundboard resonance)
+                const double B = 0.00025d; // Physical string stiffness inharmonicity coefficient
+                var attack = Math.Min(1d, time / 0.0035d);
+                var release = time <= durationSeconds ? 1d : Math.Exp(-(time - durationSeconds) * 6d);
+                var bodyDecay = Math.Exp(-time * 1.8d) * 0.65d + Math.Exp(-time * 0.35d) * 0.35d;
+                var envelope = attack * bodyDecay * release * 0.13d * level * gain;
+
+                var hammerNoise = Math.Sin(2d * Math.PI * frequency * 14.5d * time) * Math.Exp(-time * 110d) * 0.22d;
+                var fundamental = Math.Sin(2d * Math.PI * (frequency * Math.Sqrt(1d + B)) * time);
+                var h2 = Math.Sin(2d * Math.PI * (2d * frequency * Math.Sqrt(1d + B * 4d)) * time) * 0.42d;
+                var h3 = Math.Sin(2d * Math.PI * (3d * frequency * Math.Sqrt(1d + B * 9d)) * time) * 0.28d;
+                var h4 = Math.Sin(2d * Math.PI * (4d * frequency * Math.Sqrt(1d + B * 16d)) * time) * 0.18d;
+                var h5 = Math.Sin(2d * Math.PI * (5d * frequency * Math.Sqrt(1d + B * 25d)) * time) * 0.12d;
+                var h6 = Math.Sin(2d * Math.PI * (6d * frequency * Math.Sqrt(1d + B * 36d)) * time) * 0.08d;
+                var h7 = Math.Sin(2d * Math.PI * (7d * frequency * Math.Sqrt(1d + B * 49d)) * time) * 0.05d;
+                var h8 = Math.Sin(2d * Math.PI * (8d * frequency * Math.Sqrt(1d + B * 64d)) * time) * 0.03d;
+                var stringBeating = Math.Sin(2d * Math.PI * (frequency * 1.0018d) * time) * 0.14d;
+
+                sampleVal = (fundamental + h2 + h3 + h4 + h5 + h6 + h7 + h8 + stringBeating + hammerNoise) * envelope;
+            }
+
+            samples[start + index] += (float)sampleVal;
         }
     }
 

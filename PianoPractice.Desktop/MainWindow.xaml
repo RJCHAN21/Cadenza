@@ -902,6 +902,39 @@
             <TextBlock Text="This controls only the notes you play; it is separate from song accompaniment."
                        Foreground="{StaticResource Muted}" FontSize="9.5" TextWrapping="Wrap" Margin="0,0,0,12" />
 
+            <Separator Background="{StaticResource Line}" Margin="0,4,0,12" />
+            <TextBlock Text="SOUND PRESETS / INSTRUMENTS" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" Margin="0,0,0,10" />
+
+            <Grid Margin="0,0,0,10">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="220" />
+              </Grid.ColumnDefinitions>
+              <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="Listen Mode Sound" Foreground="{StaticResource Ink}" FontWeight="SemiBold" />
+                <TextBlock Text="Instrument used for Listen Mode &amp; score playback" Foreground="{StaticResource Muted}" FontSize="9.5" TextWrapping="Wrap" />
+              </StackPanel>
+              <ComboBox Grid.Column="1" ItemsSource="{Binding SoundPresets}" SelectedItem="{Binding PlaybackSoundPreset, Mode=TwoWay}"
+                        DisplayMemberPath="Name" Foreground="#11161C" Background="#F4F1E8" Height="30" VerticalContentAlignment="Center" />
+            </Grid>
+
+            <Grid Margin="0,0,0,10">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="220" />
+              </Grid.ColumnDefinitions>
+              <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="Live Playback Sound" Foreground="{StaticResource Ink}" FontWeight="SemiBold" />
+                <TextBlock Text="Instrument used when playing your keyboard live" Foreground="{StaticResource Muted}" FontSize="9.5" TextWrapping="Wrap" />
+              </StackPanel>
+              <ComboBox Grid.Column="1" ItemsSource="{Binding SoundPresets}" SelectedItem="{Binding LiveSoundPreset, Mode=TwoWay}"
+                        DisplayMemberPath="Name" Foreground="#11161C" Background="#F4F1E8" Height="30" VerticalContentAlignment="Center" />
+            </Grid>
+
+            <CheckBox Content="Match Listen Mode Sound Engine" IsChecked="{Binding MatchPlaybackSynthEnabled, Mode=TwoWay}" Margin="0,4,0,2" />
+            <TextBlock Text="Routes your live key playing through the software synth to match Listen Mode audio. Note: Software synthesis may slightly lower audio fidelity compared to native Windows General MIDI."
+                       Foreground="{StaticResource Muted}" FontSize="9.5" TextWrapping="Wrap" Margin="22,0,0,10" />
+
             <StackPanel Visibility="{Binding HasVocalTrack, Converter={StaticResource BoolToVisibility}}">
               <TextBlock Text="Vocals" Foreground="{StaticResource Ink}" FontWeight="SemiBold" />
             </StackPanel>

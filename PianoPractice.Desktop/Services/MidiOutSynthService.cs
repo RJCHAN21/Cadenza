@@ -10,6 +10,21 @@ public sealed class MidiOutSynthService : IDisposable
 
     public bool IsOpen => _handle != nint.Zero;
     public int VolumePercent { get; set; } = 85;
+    public int ProgramNumber { get; set; } = 0;
+
+    public MidiOutputResult SetProgram(int patchNumber, int channel = 0)
+    {
+        ProgramNumber = Math.Clamp(patchNumber, 0, 127);
+        if (!IsOpen)
+        {
+            var ready = Open();
+            if (!ready.Success) return ready;
+        }
+        var result = SendShort(0xC0 | (channel & 0x0F), ProgramNumber, 0);
+        return result == NoError
+            ? new MidiOutputResult(true, $"Program change to {ProgramNumber} sent.")
+            : new MidiOutputResult(false, DescribeError("midiOutShortMsg(program-change)", result));
+    }
 
     public MidiOutputResult Open()
     {
@@ -23,12 +38,12 @@ public sealed class MidiOutSynthService : IDisposable
             return new MidiOutputResult(false, DescribeError("midiOutOpen", result));
         }
 
-        var programResult = SendShort(0xC0, 0, 0); // General MIDI acoustic grand piano.
+        var programResult = SendShort(0xC0, ProgramNumber, 0);
         var channelVolumeResult = programResult == NoError
             ? SendShort(0xB0, 7, 127) // Keep the synth channel at full calibrated gain; the mixer controls note velocity.
             : programResult;
         return channelVolumeResult == NoError
-            ? new MidiOutputResult(true, "Windows MIDI piano output is ready (Acoustic Grand Piano).")
+            ? new MidiOutputResult(true, "Windows MIDI piano output is ready.")
             : new MidiOutputResult(false, DescribeError("midiOutShortMsg(piano setup)", channelVolumeResult));
     }
 

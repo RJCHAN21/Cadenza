@@ -137,6 +137,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private bool _hintModeEnabled;
     private int _notationZoomPercent = 100;
     private SongProgressRecord? _currentSongProgress;
+    private AudioSoundPreset _playbackSoundPreset = AudioSoundPreset.AcousticGrand;
+    private AudioSoundPreset _liveSoundPreset = AudioSoundPreset.AcousticGrand;
+    private bool _matchPlaybackSynthEnabled;
 
     public MainWindowViewModel(string? profilePath = null)
     {
@@ -166,9 +169,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _latencyMilliseconds = Math.Clamp(settings.LatencyMilliseconds, -250, 500);
         _metronomeEnabled = settings.MetronomeEnabled;
         _useKeyboardSimulation = settings.ComputerKeyboardEnabled;
+        _playbackSoundPreset = AudioSoundPreset.FromId(settings.PlaybackSoundPresetId, AudioSoundPreset.AcousticGrand);
+        _liveSoundPreset = AudioSoundPreset.FromId(settings.LiveSoundPresetId, AudioSoundPreset.AcousticGrand);
+        _matchPlaybackSynthEnabled = settings.MatchPlaybackSynthEnabled;
         _bestStreak = (_profile.Songs ??= new Dictionary<string, SongProgressRecord>(StringComparer.OrdinalIgnoreCase))
             .Values.Select(progress => progress.BestStreak).DefaultIfEmpty(0).Max();
         ApplyMixerVolumes();
+        ApplySoundPresets();
         _lessonTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromMilliseconds(20)
@@ -592,6 +599,45 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public string MonitorVolumeLabel => $"{MonitorVolume}%";
 
+    public IReadOnlyList<AudioSoundPreset> SoundPresets => AudioSoundPreset.AllPresets;
+
+    public AudioSoundPreset PlaybackSoundPreset
+    {
+        get => _playbackSoundPreset;
+        set
+        {
+            if (!SetField(ref _playbackSoundPreset, value ?? AudioSoundPreset.AcousticGrand)) return;
+            ApplySoundPresets();
+            SaveProfileSettings();
+            if (IsPreviewPlaying && _previewUsesScore)
+            {
+                var currentBeat = CursorBeat;
+                _ = StartScorePreviewAsync(currentBeat);
+            }
+        }
+    }
+
+    public AudioSoundPreset LiveSoundPreset
+    {
+        get => _liveSoundPreset;
+        set
+        {
+            if (!SetField(ref _liveSoundPreset, value ?? AudioSoundPreset.AcousticGrand)) return;
+            ApplySoundPresets();
+            SaveProfileSettings();
+        }
+    }
+
+    public bool MatchPlaybackSynthEnabled
+    {
+        get => _matchPlaybackSynthEnabled;
+        set
+        {
+            if (!SetField(ref _matchPlaybackSynthEnabled, value)) return;
+            SaveProfileSettings();
+        }
+    }
+
     public int OverallVolume
     {
         get => _overallVolume;
@@ -892,7 +938,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             for (var measure = 1; measure <= _score.MeasureCount; measure++) MeasureNumbers.Add(measure);
             var savedSettings = _profile.Settings ??= new CadenzaUserSettings();
             _focusStartMeasure = Math.Clamp(savedSettings.FocusStartMeasure, 1, _score.MeasureCount);
-            _focusEndMeasure = savedSettings.FocusEndMeasure <= 0
+            _focusEndMeasure = savedSettings.FocusEndMeasure <= 0 || savedSettings.FocusEndMeasure > _score.MeasureCount
                 ? _score.MeasureCount
                 : Math.Clamp(savedSettings.FocusEndMeasure, _focusStartMeasure, _score.MeasureCount);
             var songKey = GetSongProgressKey(_score);
@@ -1171,6 +1217,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         PreviewStatusLabel = "Rendering the local preview...";
         try
         {
+            var token = _previewCancellation.Token;
             var waveData = await _audioService.BuildPreviewAsync(
                 _score,
                 IsMetronomeAudible,
@@ -1180,8 +1227,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 InstrumentalMuted ? 0 : EffectiveMixerVolume(InstrumentalVolume),
                 EffectiveMixerVolume(MetronomeVolume),
                 null,
-                _previewCancellation.Token);
+                PlaybackSoundPreset.Id,
+                token);
             _audioService.PlayPreview(waveData);
+
             _previewUsesScore = true;
             _previewStartBeat = startBeat;
             _previewEndBeat = endBeat;
@@ -1193,7 +1242,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             IsPreviewPlaying = true;
             RaisePreviewStateProperties();
             PreviewStatusLabel = $"Playing from bar {MeasureAtBeat(startBeat)}.";
-            var token = _previewCancellation.Token;
             _ = FinishPreviewWhenDoneAsync(token, TimeSpan.FromSeconds((endBeat - startBeat + 1.5) * 60d / EffectiveLessonTempoBpm));
         }
         catch (OperationCanceledException)
@@ -1207,6 +1255,64 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             PreviewStatusLabel = $"Preview unavailable: {exception.Message}";
             StatusMessage = PreviewStatusLabel;
             RaisePreviewStateProperties();
+        }
+    }
+
+    private async Task PlayScoreMidiPreviewAsync(ScoreDocument score, double startBeat, double endBeat, CancellationToken token)
+    {
+        _accompanimentSynth.Open();
+        _accompanimentSynth.SetProgram(PlaybackSoundPreset.PatchNumber);
+        var vol = EffectiveMixerVolume(InstrumentalVolume);
+        _accompanimentSynth.VolumePercent = InstrumentalMuted ? 0 : (vol > 0 ? vol : 85);
+
+        var notes = score.Notes
+            .Where(note => note.OnsetBeats >= startBeat && note.OnsetBeats < endBeat)
+            .OrderBy(note => note.OnsetBeats)
+            .ToList();
+
+        var secondsPerBeat = 60d / EffectiveLessonTempoBpm;
+        var sw = Stopwatch.StartNew();
+        var activeNotes = new List<(ScoreNote note, double endSec)>();
+
+        foreach (var note in notes)
+        {
+            if (token.IsCancellationRequested) break;
+            var targetSec = (note.OnsetBeats - startBeat) * secondsPerBeat;
+
+            while (!token.IsCancellationRequested)
+            {
+                var currentSec = sw.Elapsed.TotalSeconds;
+                for (int i = activeNotes.Count - 1; i >= 0; i--)
+                {
+                    if (currentSec >= activeNotes[i].endSec)
+                    {
+                        _accompanimentSynth.NoteOff(activeNotes[i].note.MidiNoteNumber);
+                        activeNotes.RemoveAt(i);
+                    }
+                }
+                if (currentSec >= targetSec) break;
+                var remainingMs = Math.Min(15, (targetSec - currentSec) * 1000d);
+                if (remainingMs > 1) await Task.Delay((int)remainingMs, token);
+                else await Task.Yield();
+            }
+
+            if (token.IsCancellationRequested) break;
+            _accompanimentSynth.NoteOn(note.MidiNoteNumber, 92);
+            activeNotes.Add((note, targetSec + note.DurationBeats * secondsPerBeat));
+        }
+
+        while (activeNotes.Count > 0 && !token.IsCancellationRequested)
+        {
+            await Task.Delay(20, token);
+            var currentSec = sw.Elapsed.TotalSeconds;
+            for (int i = activeNotes.Count - 1; i >= 0; i--)
+            {
+                if (currentSec >= activeNotes[i].endSec)
+                {
+                    _accompanimentSynth.NoteOff(activeNotes[i].note.MidiNoteNumber);
+                    activeNotes.RemoveAt(i);
+                }
+            }
         }
     }
 
@@ -1239,10 +1345,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             OnPropertyChanged(nameof(HasMidiReference));
             OnPropertyChanged(nameof(CanPlayMidiReference));
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException)
+        catch (Exception exception)
         {
             StatusMessage = $"MIDI import failed: {exception.Message}";
-            throw;
         }
     }
 
@@ -1274,6 +1379,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 IsMetronomeAudible,
                 InstrumentalMuted ? 0 : EffectiveMixerVolume(InstrumentalVolume),
                 EffectiveMixerVolume(MetronomeVolume),
+                PlaybackSoundPreset.Id,
                 _previewCancellation.Token);
             _audioService.PlayPreview(wave);
             _previewUsesScore = false;
@@ -2000,10 +2106,19 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         InputActivityLabel = $"{source} note-on: {MidiNoteFormatter.Format(midiNoteNumber)} · velocity {velocity} · {DateTime.Now:HH:mm:ss.fff}";
         if (MidiMonitorEnabled)
         {
-            var monitorResult = _liveSynth.NoteOn(midiNoteNumber, velocity);
-            LiveMonitorStatus = monitorResult.Success
-                ? $"Monitor sounded {MidiNoteFormatter.Format(midiNoteNumber)} from {source}."
-                : $"Audio monitor error: {monitorResult.Message}";
+            if (MatchPlaybackSynthEnabled)
+            {
+                var presetId = LiveSoundPreset?.Id ?? PlaybackSoundPreset.Id;
+                _audioService.PlayLiveNote(midiNoteNumber, velocity, EffectiveMixerVolume(MonitorVolume), presetId);
+                LiveMonitorStatus = $"Monitor sounded {MidiNoteFormatter.Format(midiNoteNumber)} from {source} (software synth).";
+            }
+            else
+            {
+                var monitorResult = _liveSynth.NoteOn(midiNoteNumber, velocity);
+                LiveMonitorStatus = monitorResult.Success
+                    ? $"Monitor sounded {MidiNoteFormatter.Format(midiNoteNumber)} from {source}."
+                    : $"Audio monitor error: {monitorResult.Message}";
+            }
         }
         if (IsCalibrationActive && _calibrationClickIndex >= 0 && _calibrationCapturedForClick != _calibrationClickIndex)
         {
@@ -2436,11 +2551,15 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         settings.HintModeEnabled = HintModeEnabled;
         settings.NotationZoomPercent = NotationZoomPercent;
         settings.FocusStartMeasure = FocusStartMeasure;
-        settings.FocusEndMeasure = FocusEndMeasure;
+        settings.FocusEndMeasure = _score is not null && FocusEndMeasure == _score.MeasureCount ? 0 : FocusEndMeasure;
         settings.PedalEnabled = PedalEnabled;
         settings.LatencyMilliseconds = LatencyMilliseconds;
         settings.MetronomeEnabled = MetronomeEnabled;
         settings.ComputerKeyboardEnabled = UseKeyboardSimulation;
+        settings.PlaybackSoundPresetId = PlaybackSoundPreset.Id;
+        settings.LiveSoundPresetId = LiveSoundPreset.Id;
+        settings.MatchPlaybackSynthEnabled = MatchPlaybackSynthEnabled;
+        if (_score?.SourcePath is not null) settings.LastOpenedScorePath = _score.SourcePath;
         TrySaveProfile();
     }
 
@@ -2451,6 +2570,27 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     {
         _liveSynth.VolumePercent = EffectiveMixerVolume(MonitorVolume);
         _accompanimentSynth.VolumePercent = EffectiveMixerVolume(OtherHandAccompanimentVolume);
+    }
+
+    private void ApplySoundPresets()
+    {
+        if (_liveSoundPreset.IsSoftSynth)
+        {
+            _liveSynth.SetProgram(0);
+        }
+        else
+        {
+            _liveSynth.SetProgram(_liveSoundPreset.PatchNumber);
+        }
+
+        if (_playbackSoundPreset.IsSoftSynth)
+        {
+            _accompanimentSynth.SetProgram(0);
+        }
+        else
+        {
+            _accompanimentSynth.SetProgram(_playbackSoundPreset.PatchNumber);
+        }
     }
 
     private void PersistCompletedAttempt(TimeSpan elapsed)
