@@ -1,0 +1,1825 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #101318; }
+    body { font-family: "Segoe UI", sans-serif; }
+    #stage { position: relative; width: 100%; height: 100%; display: grid; place-items: center; overflow: hidden; }
+    #notation {
+      position: relative; top: 0; width: 100%; max-height: 100%; transform-origin: center center;
+      transition: top 170ms cubic-bezier(.22,.75,.3,1), width 160ms ease;
+    }
+    #notation svg { display: block; width: 100%; height: auto; max-height: 100vh; color: #f6f2e9 !important; }
+    #notation svg g, #notation svg text, #notation svg tspan { color: #f6f2e9 !important; }
+    #stage.continuous-mode #notation {
+      position: absolute; left: 0; top: 0; width: max-content !important; max-height: none;
+      justify-self: start; align-self: start;
+      transform-origin: 0 0; transition: none; will-change: transform;
+    }
+    #stage.continuous-mode #notation svg {
+      max-height: none;
+    }
+    #playhead {
+      position: absolute; z-index: 5; top: 5%; height: 90%; width: 2px;
+      background: #42d9f5; box-shadow: 0 0 14px rgba(66,217,245,.72);
+      transform: translateX(-1px); pointer-events: none; opacity: 0;
+    }
+    #playhead::before {
+      content: ""; position: absolute; top: -3px; left: -3px; width: 8px; height: 8px;
+      border-radius: 50%; background: #8beaff;
+    }
+    #notation g.note.playing {
+      filter: drop-shadow(0 0 5px rgba(66,217,245,.95));
+    }
+    #notation g.note.expected {
+      filter: drop-shadow(0 0 6px rgba(66,217,245,.95));
+    }
+    #notation g.note.feedback-correct .notehead {
+      filter:
+        drop-shadow(0 0 1px rgba(4,30,17,1))
+        drop-shadow(0 0 8px rgba(25,244,123,1))
+        drop-shadow(0 0 14px rgba(25,244,123,.6));
+    }
+    #notation g.note.feedback-correct .notehead,
+    #notation g.note.feedback-correct .notehead *,
+    #notation g.note.audit-correct .notehead,
+    #notation g.note.audit-correct .notehead * {
+      color: #19f47b !important; fill: #19f47b !important; stroke: #19f47b !important;
+    }
+    #notation g.note.feedback-wrong .notehead,
+    #notation g.note.feedback-wrong .notehead *,
+    #notation g.note.feedback-missed .notehead,
+    #notation g.note.feedback-missed .notehead *,
+    #notation g.note.audit-missed .notehead,
+    #notation g.note.audit-missed .notehead * {
+      color: #ff6577 !important; fill: #ff6577 !important; stroke: #ff6577 !important;
+      filter: drop-shadow(0 0 6px rgba(255,101,119,.9));
+    }
+    #notation g.note.feedback-early .notehead,
+    #notation g.note.feedback-early .notehead *,
+    #notation g.note.audit-early .notehead,
+    #notation g.note.audit-early .notehead * {
+      color: #ffb54d !important; fill: #ffb54d !important; stroke: #ffb54d !important;
+    }
+    #notation g.note.feedback-hold {
+      filter: drop-shadow(0 0 7px rgba(66,217,245,1));
+    }
+    #notation g.note.feedback-early {
+      filter: drop-shadow(0 0 7px rgba(255,181,77,1));
+    }
+    #notation g.note.feedback-missed {
+      filter: drop-shadow(0 0 7px rgba(255,101,119,1));
+    }
+    #feedback {
+      position: absolute; z-index: 7; top: 8%; transform: translate(-50%, -50%) scale(.85);
+      min-width: 34px; height: 34px; padding: 0 8px; border-radius: 17px;
+      display: grid; place-items: center; color: #081014; font: 700 13px "Segoe UI", sans-serif;
+      opacity: 0; pointer-events: none; transition: opacity 100ms ease, transform 140ms ease;
+    }
+    #feedback.visible { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    #feedback.correct { background: #19f47b; box-shadow: 0 0 16px rgba(25,244,123,.75); }
+    #feedback.wrong { background: #ff6577; box-shadow: 0 0 16px rgba(255,101,119,.7); }
+    #feedback.hold { background: #42d9f5; box-shadow: 0 0 16px rgba(66,217,245,.65); }
+    #feedback.early { background: #ffb54d; box-shadow: 0 0 16px rgba(255,181,77,.65); }
+    #practiceWrongNote {
+      position: absolute; inset: 0; width: 100%; height: 100%; z-index: 8;
+      overflow: visible; pointer-events: none; display: none;
+    }
+    #practiceWrongNote .wrong-feedback {
+      filter: drop-shadow(0 0 6px rgba(255,101,119,.9));
+    }
+    #practiceWrongNote .correct-feedback {
+      filter:
+        drop-shadow(0 0 2px rgba(4,30,17,1))
+        drop-shadow(0 0 8px rgba(25,244,123,1));
+    }
+    #practiceWrongNote .wrong-notehead { fill: #ff6577; stroke: #ff6577; }
+    #practiceWrongNote .correct-notehead { fill: #19f47b; stroke: #19f47b; }
+    #practiceWrongNote .wrong-ledger { stroke: #ff6577; stroke-width: 1.5; stroke-linecap: round; }
+    #practiceWrongNote .wrong-accidental {
+      fill: #ff6577; font: 700 21px "Segoe UI Symbol", "Segoe UI", sans-serif;
+    }
+    #audit { position: absolute; inset: 0; z-index: 6; pointer-events: none; }
+    .audit-mark {
+      position: absolute; transform: translate(-50%, -50%); min-width: 21px; height: 21px;
+      padding: 0 5px; border-radius: 11px; display: grid; place-items: center;
+      color: #071014; font: 800 10px "Segoe UI", sans-serif; border: 2px solid #101318;
+    }
+    .audit-mark.correct { background: #19f47b; }
+    .audit-mark.missed, .audit-mark.extra, .audit-mark.wrong { background: #ff6577; border-radius: 3px; transform: translate(-50%, -50%) rotate(45deg); }
+    .audit-mark.missed span, .audit-mark.extra span, .audit-mark.wrong span { transform: rotate(-45deg); }
+    .audit-mark.early { background: #ffb54d; }
+    .audit-pitch-note {
+      position: absolute; width: 15px; height: 10px; border-radius: 50%;
+      transform: translate(-50%, -50%) rotate(-12deg);
+      background: #ff6577; box-shadow: 0 0 6px rgba(255,101,119,.9);
+    }
+    .audit-pitch-note::after {
+      content: attr(data-label); position: absolute; left: -24px; top: -9px;
+      color: #ff6577; font: 700 18px "Segoe UI Symbol", "Segoe UI", sans-serif;
+      transform: rotate(12deg);
+    }
+    #message { color: #aeb3bc; font-size: 13px; text-align: center; padding: 30px; }
+    /* The compact guide now lives in the native lesson-information row.
+       Hiding the legacy renderer lane keeps Hint mode from shifting the score. */
+    #hintLane { display: none !important; }
+    #stage.hints #notation { width: 100%; }
+    #stage.hand-right #notation g.staff.cadenza-bass,
+    #stage.hand-left #notation g.staff.cadenza-treble {
+      opacity: .30;
+    }
+    #notation g.staff {
+      transition: opacity 150ms ease;
+    }
+    #hintTitle { color: #8beaff; font-size: 10px; font-weight: 700; letter-spacing: .08em; }
+    #hintNotes { font: 700 18px "Segoe UI", sans-serif; color: #f6f2e9; }
+    #hintKeys { display: flex; gap: 6px; margin-left: auto; }
+    .hint-key { min-width: 34px; padding: 7px 8px; border-radius: 6px; background: #f6f2e9; color: #11161c; text-align: center; font-weight: 700; }
+    @media (prefers-reduced-motion: reduce) {
+      #notation { transition: none; }
+      #playhead { box-shadow: none; }
+    }
+  </style>
+  <script src="verovio-toolkit-wasm.js" defer></script>
+</head>
+<body>
+  <div id="stage">
+    <div id="message">Preparing the engraving engine…</div>
+    <div id="notation"></div>
+    <div id="playhead"></div>
+    <div id="audit"></div>
+    <svg id="practiceWrongNote" aria-hidden="true"></svg>
+    <div id="feedback" aria-live="polite"></div>
+    <div id="hintLane"><div><div id="hintTitle">NEXT NOTES</div><div id="hintNotes">—</div></div><div id="hintKeys"></div></div>
+  </div>
+  <script>
+    let toolkit = null;
+    let timemap = [];
+    let currentPage = 1;
+    let pageCount = 0;
+    let bpm = 120;
+    let readingMode = "Page";
+    let playbackStart = 0;
+    let playbackOffsetMs = 0;
+    let playing = false;
+    let frameHandle = 0;
+    let userZoom = 1;
+    let hintMode = false;
+    let handMode = "BothHands";
+    let keySignature = "";
+    const auditTrail = [];
+    let auditVisible = false;
+    let lessonRunning = false;
+    let lessonMode = "WaitForYou";
+    let pendingPage = 0;
+    let lastPositionKey = "";
+    let pageTransitionTimer = 0;
+    let pageTransitionGeneration = 0;
+    let latestRequestedBeat = 0;
+    let lastAuthoritativeBeat = 0;
+    let timelineRunning = false;
+    let continuousOffsetX = 24;
+    let continuousOffsetY = 0;
+    let lastContinuousScaledX = 0;
+    let continuousCoordinateCache = new WeakMap();
+    let continuousEndX = null;
+    let runtimeTelemetryGeneration = 0;
+    let runtimeTelemetry = null;
+    let lastLayoutValidation = null;
+    const elementPageIndex = new Map();
+
+    const notation = document.getElementById("notation");
+    const message = document.getElementById("message");
+    const playhead = document.getElementById("playhead");
+    const feedback = document.getElementById("feedback");
+    const audit = document.getElementById("audit");
+    const practiceWrongNote = document.getElementById("practiceWrongNote");
+    const stage = document.getElementById("stage");
+    const hintNotes = document.getElementById("hintNotes");
+    const hintKeys = document.getElementById("hintKeys");
+    let feedbackTimer = 0;
+    let wrongNoteTimer = 0;
+    let lessonGeneration = 0;
+    const persistentCorrectFeedback = new Map();
+    let activeWrongFeedback = null;
+    let feedbackTelemetry = {
+      generation: 0,
+      received: 0,
+      receivedWrong: 0,
+      receivedCorrect: 0,
+      renderedWrong: 0,
+      renderedCorrect: 0,
+      failedWrong: 0,
+      lastDispatchId: 0,
+      dispatchGaps: 0
+    };
+
+    function post(type, detail = {}) {
+      window.chrome?.webview?.postMessage({ type, ...detail });
+    }
+
+    function applyReadingModeClass() {
+      stage.classList.toggle("page-mode", readingMode === "Page");
+      stage.classList.toggle("continuous-mode", readingMode === "Continuous");
+    }
+
+    function optionsForMode(mode) {
+      const continuous = mode === "Continuous";
+      const scale = 56;
+      const normalWidth = 2200;
+      const width = normalWidth;
+      // Page mode uses two comfortably spaced systems. Continuous mode uses
+      // Verovio's canonical no-break layout: one horizontally growing grand
+      // staff whose intrinsic glyph scale remains identical to Page mode.
+      const height = continuous ? 520 : 1050;
+      return {
+        pageWidth: Math.round(width),
+        pageHeight: Math.round(height),
+        scale,
+        unit: 8.4,
+        adjustPageHeight: continuous,
+        adjustPageWidth: continuous,
+        breaks: continuous ? "none" : "auto",
+        spacingLinear: 0.30,
+        spacingNonLinear: 0.68,
+        minLastJustification: 0.0,
+        footer: "none",
+        header: "none",
+        pageMarginTop: 70,
+        pageMarginBottom: 90,
+        pageMarginLeft: 35,
+        pageMarginRight: 20,
+        font: "Bravura",
+        expandAlways: true,
+        svgViewBox: true,
+        svgHtml5: true,
+        svgAdditionalAttribute: ["note@pname", "note@oct", "note@pnum", "note@accid", "note@accid.ges", "measure@n"]
+      };
+    }
+
+    function loadScore(base64, zipped, mode, scoreBpm, scoreKey = "") {
+      try {
+        auditTrail.length = 0;
+        audit.innerHTML = "";
+        readingMode = mode || "Page";
+        applyReadingModeClass();
+        bpm = Number(scoreBpm) || 120;
+        keySignature = String(scoreKey || "");
+        toolkit.setOptions(optionsForMode(readingMode));
+        const loaded = zipped
+          ? toolkit.loadZipDataBase64(base64)
+          : toolkit.loadData(new TextDecoder("utf-8").decode(Uint8Array.from(atob(base64), character => character.charCodeAt(0))));
+        if (!loaded) throw new Error("Verovio could not load this MusicXML source.");
+        const renderedTimemap = toolkit.renderToTimemap({ includeMeasures: true, includeRests: true });
+        timemap = typeof renderedTimemap === "string" ? JSON.parse(renderedTimemap || "[]") : (renderedTimemap || []);
+        window.__cadenzaTimemap = timemap;
+        pageCount = toolkit.getPageCount();
+        rebuildPageIndex();
+        currentPage = 1;
+        renderPage(1, false);
+        message.style.display = "none";
+        post("rendered", { pages: pageCount, version: toolkit.getVersion(), mode: readingMode });
+      } catch (error) {
+        message.style.display = "block";
+        message.textContent = `Notation could not be engraved: ${error.message || error}`;
+        post("error", { message: String(error.message || error) });
+      }
+    }
+
+    function setReadingMode(mode) {
+      if (!toolkit || !timemap.length) {
+        readingMode = mode;
+        applyReadingModeClass();
+        return;
+      }
+      readingMode = mode;
+      applyReadingModeClass();
+      toolkit.setOptions(optionsForMode(mode));
+      toolkit.redoLayout();
+      pageCount = toolkit.getPageCount();
+      rebuildPageIndex();
+      currentPage = 1;
+      resetContinuousViewport();
+      renderPage(1, false, 0, renderLatestCursor);
+      post("modeChanged", { mode, pages: pageCount });
+    }
+
+    function setHintMode(enabled) {
+      hintMode = Boolean(enabled);
+      stage.classList.toggle("hints", hintMode);
+      requestAnimationFrame(() => {
+        applyHandFocus();
+        alignNotationVertically();
+        if (toolkit && timemap.length) renderLatestCursor();
+        validateRendererLayout();
+      });
+    }
+
+    function setHandMode(mode) {
+      handMode = String(mode || "BothHands");
+      stage.classList.toggle("hand-left", handMode === "LeftHand");
+      stage.classList.toggle("hand-right", handMode === "RightHand");
+      applyHandFocus();
+    }
+
+    function applyHandFocus() {
+      for (const system of notation.querySelectorAll("g.system")) {
+        const staves = [...system.querySelectorAll("g.staff")];
+        const centers = staves.map(staff => {
+          const bounds = staff.getBBox();
+          return bounds.y + bounds.height / 2;
+        });
+        if (!centers.length) continue;
+        const split = (Math.min(...centers) + Math.max(...centers)) / 2;
+        staves.forEach((staff, index) => {
+          const isTreble = centers[index] < split;
+          staff.classList.toggle("cadenza-treble", isTreble);
+          staff.classList.toggle("cadenza-bass", !isTreble);
+        });
+      }
+    }
+
+    function renderPage(page, animate = true, direction = 0, onRendered = null) {
+      page = Math.max(1, Math.min(pageCount || 1, page));
+      clearTimeout(pageTransitionTimer);
+      const generation = ++pageTransitionGeneration;
+      pendingPage = page;
+      playhead.style.opacity = "0";
+      // Engrave before changing the visible DOM, then swap synchronously. The
+      // authoritative WPF clock keeps running and the first cursor render on the
+      // new page occurs in this same JavaScript turn.
+      const renderedSvg = toolkit.renderToSVG(page, {});
+      const apply = () => {
+        if (generation !== pageTransitionGeneration) return;
+        notation.innerHTML = renderedSvg;
+        invalidateContinuousCoordinates();
+        applyIvoryInk();
+        applyHandFocus();
+        if (readingMode === "Continuous") resetContinuousViewport();
+        applyZoom();
+        scheduleSettledAlignment(generation);
+        currentPage = page;
+        rebuildAudit();
+        reapplyLessonFeedback();
+        pendingPage = 0;
+        const systems = Math.max(1, notation.querySelectorAll("g.system").length);
+        lastPositionKey = "";
+        post("pageChanged", { page: currentPage, pages: pageCount, system: 1, systems });
+        if (readingMode === "Page" && animate && direction !== 0 && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          notation.style.transition = "none";
+          notation.style.top = `${direction > 0 ? 34 : -34}px`;
+          void notation.offsetHeight;
+          notation.style.transition = "";
+          requestAnimationFrame(() => {
+            if (generation === pageTransitionGeneration) notation.style.top = "0px";
+          });
+        } else {
+          notation.style.top = "0px";
+        }
+        if (typeof onRendered === "function") onRendered();
+      };
+      apply();
+    }
+
+    // Verovio intentionally emits canonical SVG paint values. Dark mode must
+    // recolor the actual SVG primitives rather than relying on inherited HTML color.
+    function applyIvoryInk() {
+      const ink = "#f6f2e9";
+      const svg = notation.querySelector("svg");
+      if (!svg) return;
+      svg.style.color = ink;
+      svg.querySelectorAll("*").forEach(element => {
+        const computed = getComputedStyle(element);
+        if (computed.fill && computed.fill !== "none" && computed.fill !== "transparent") {
+          element.style.setProperty("fill", ink, "important");
+        }
+        if (computed.stroke && computed.stroke !== "none" && computed.stroke !== "transparent") {
+          element.style.setProperty("stroke", ink, "important");
+        }
+        element.style.setProperty("color", ink, "important");
+      });
+    }
+
+    function applyZoom() {
+      if (readingMode === "Continuous") {
+        notation.style.width = "max-content";
+        sizeContinuousSvg();
+        alignContinuousSystem();
+      } else {
+        notation.style.width = `${userZoom * 100}%`;
+        centerPageSystems();
+      }
+    }
+
+    function sizeContinuousSvg() {
+      if (readingMode !== "Continuous") return;
+      const svg = notation.querySelector("svg");
+      const viewBox = svg?.viewBox?.baseVal;
+      if (!svg || !viewBox?.width || !viewBox?.height) return;
+      // Page mode maps Verovio's 2200-unit page width to the available stage
+      // width. Use the same mapping for the one-system stream so notation
+      // keeps the established staff/glyph size while only its width grows.
+      const pageViewBoxWidth = 2200 * 56 / 100;
+      const pageScale = stage.clientWidth / pageViewBoxWidth;
+      svg.style.setProperty("width", `${viewBox.width * pageScale}px`, "important");
+      svg.style.setProperty("height", `${viewBox.height * pageScale}px`, "important");
+      invalidateContinuousCoordinates();
+    }
+
+    function resetContinuousViewport() {
+      continuousOffsetX = 24;
+      continuousOffsetY = 0;
+      lastContinuousScaledX = 0;
+      if (readingMode === "Continuous") {
+        applyContinuousTransform();
+        if (notation.querySelector("svg")) alignContinuousSystem();
+      }
+    }
+
+    function applyContinuousTransform() {
+      notation.style.transform =
+        `translate3d(${continuousOffsetX}px, ${continuousOffsetY}px, 0) scale(${userZoom})`;
+    }
+
+    function invalidateContinuousCoordinates() {
+      continuousCoordinateCache = new WeakMap();
+      continuousEndX = null;
+    }
+
+    function renderedSystemBounds() {
+      const systems = [...notation.querySelectorAll("g.system")];
+      if (!systems.length) return null;
+      const rects = systems.map(system => system.getBoundingClientRect());
+      return {
+        top: Math.min(...rects.map(rect => rect.top)),
+        bottom: Math.max(...rects.map(rect => rect.bottom))
+      };
+    }
+
+    function renderedContentBounds() {
+      const svg = notation.querySelector("svg");
+      if (!svg) return null;
+      try {
+        // SVG text rectangles include the font em-box, including substantial
+        // invisible ascent above tempo and harmony glyphs. Center the painted
+        // notation primitives so the visible grand staffs are optically and
+        // geometrically balanced; text remains part of the same transform.
+        const rects = [...svg.querySelectorAll("path,use,line,polyline,polygon,circle,ellipse")]
+          .filter(element => !element.closest("defs,clipPath,mask,pattern,symbol"))
+          .filter(element => {
+            const style = getComputedStyle(element);
+            return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || 1) > 0;
+          })
+          .map(element => element.getBoundingClientRect())
+          .filter(rect => rect.width > .1 || rect.height > .1);
+        if (!rects.length) return renderedSystemBounds();
+        return {
+          top: Math.min(...rects.map(rect => rect.top)),
+          bottom: Math.max(...rects.map(rect => rect.bottom))
+        };
+      } catch (error) {
+        post("layoutError", { mode: readingMode, message: String(error?.message || error) });
+        return renderedSystemBounds();
+      }
+    }
+
+    function centerPageSystems() {
+      if (readingMode !== "Page") return;
+      const priorTransition = notation.style.transition;
+      notation.style.transition = "none";
+      notation.style.transform = "translateY(0px)";
+      const bounds = renderedContentBounds();
+      if (!bounds) {
+        notation.style.transition = priorTransition;
+        return;
+      }
+      const stageRect = stage.getBoundingClientRect();
+      const systemsCenter = (bounds.top + bounds.bottom) / 2;
+      const stageCenter = stageRect.top + stageRect.height / 2;
+      notation.style.transform = `translateY(${stageCenter - systemsCenter}px)`;
+      const settledBounds = renderedContentBounds();
+      post("alignmentTelemetry", {
+        mode: readingMode,
+        hintMode,
+        stageTop: stageRect.top,
+        stageHeight: stageRect.height,
+        contentTopBefore: bounds.top,
+        contentBottomBefore: bounds.bottom,
+        appliedY: stageCenter - systemsCenter,
+        contentTopAfter: settledBounds?.top ?? null,
+        contentBottomAfter: settledBounds?.bottom ?? null,
+        topGap: settledBounds ? settledBounds.top - stageRect.top : null,
+        bottomGap: settledBounds ? stageRect.bottom - settledBounds.bottom : null,
+        gapDifference: settledBounds
+          ? Math.abs((settledBounds.top - stageRect.top) - (stageRect.bottom - settledBounds.bottom))
+          : null
+      });
+      notation.style.transition = priorTransition;
+    }
+
+    function alignContinuousSystem() {
+      if (readingMode !== "Continuous") return;
+      continuousOffsetY = 0;
+      applyContinuousTransform();
+      const bounds = renderedContentBounds();
+      if (!bounds) return;
+      const stageRect = stage.getBoundingClientRect();
+      const systemsCenter = (bounds.top + bounds.bottom) / 2;
+      const stageCenter = stageRect.top + stageRect.height / 2;
+      continuousOffsetY = stageCenter - systemsCenter;
+      applyContinuousTransform();
+      const settledBounds = renderedContentBounds();
+      post("alignmentTelemetry", {
+        mode: readingMode,
+        stageTop: stageRect.top,
+        stageHeight: stageRect.height,
+        contentTopBefore: bounds.top,
+        contentBottomBefore: bounds.bottom,
+        appliedY: continuousOffsetY,
+        contentTopAfter: settledBounds?.top ?? null,
+        contentBottomAfter: settledBounds?.bottom ?? null,
+        topGap: settledBounds ? settledBounds.top - stageRect.top : null,
+        bottomGap: settledBounds ? stageRect.bottom - settledBounds.bottom : null,
+        gapDifference: settledBounds
+          ? Math.abs((settledBounds.top - stageRect.top) - (stageRect.bottom - settledBounds.bottom))
+          : null,
+        centerError: settledBounds
+          ? Math.abs((settledBounds.top + settledBounds.bottom) / 2 - stageCenter)
+          : null
+      });
+    }
+
+    function alignNotationVertically() {
+      if (readingMode === "Continuous") alignContinuousSystem();
+      else centerPageSystems();
+    }
+
+    function scheduleSettledAlignment(generation = pageTransitionGeneration) {
+      const align = () => {
+        if (generation !== pageTransitionGeneration || !notation.querySelector("svg")) return;
+        alignNotationVertically();
+        if (timemap.length) renderLatestCursor();
+      };
+      requestAnimationFrame(() => requestAnimationFrame(align));
+      setTimeout(() => {
+        align();
+        validateRendererLayout();
+      }, 180);
+    }
+
+    function setZoom(percent) {
+      userZoom = Math.max(.8, Math.min(1.65, Number(percent || 100) / 100));
+      applyZoom();
+      post("zoomChanged", { percent: Math.round(userZoom * 100) });
+    }
+
+    function setTempo(nextBpm) {
+      bpm = Math.max(20, Math.min(300, Number(nextBpm) || bpm));
+    }
+
+    function changePage(delta) {
+      if (!toolkit || !pageCount) return;
+      if (pendingPage) return;
+      const direction = Math.sign(Number(delta || 0));
+      const targetPage = Math.max(1, Math.min(pageCount, currentPage + direction));
+      if (targetPage === currentPage) return;
+      renderPage(targetPage, true, direction);
+    }
+
+    function rebuildPageIndex() {
+      elementPageIndex.clear();
+      const parser = new DOMParser();
+      for (let page = 1; page <= pageCount; page++) {
+        const document = parser.parseFromString(toolkit.renderToSVG(page, {}), "image/svg+xml");
+        for (const element of document.querySelectorAll("[data-id]")) {
+          elementPageIndex.set(element.getAttribute("data-id"), page);
+        }
+      }
+    }
+
+    function pageForEvent(event) {
+      for (const id of positionIds(event)) {
+        const page = elementPageIndex.get(id);
+        if (page) return page;
+      }
+      return currentPage;
+    }
+
+    function keyAccidentalForPname(pname) {
+      const tonic = keySignature.match(/^[A-G](?:b|#)?/)?.[0] || "";
+      const flatKeys = { F: 1, Bb: 2, Eb: 3, Ab: 4, Db: 5, Gb: 6, Cb: 7 };
+      const sharpKeys = { G: 1, D: 2, A: 3, E: 4, B: 5, "F#": 6, "C#": 7 };
+      const flatOrder = ["B", "E", "A", "D", "G", "C", "F"];
+      const sharpOrder = ["F", "C", "G", "D", "A", "E", "B"];
+      if (flatOrder.slice(0, flatKeys[tonic] || 0).includes(pname)) return -1;
+      if (sharpOrder.slice(0, sharpKeys[tonic] || 0).includes(pname)) return 1;
+      return 0;
+    }
+
+    function midiFromElement(element) {
+      if (!element) return null;
+      const note = element.closest?.("g.note") || element;
+      const id = note.id || note.getAttribute("data-id") || element.id || element.getAttribute("data-id");
+      let toolkitAttributes = null;
+      try {
+        toolkitAttributes = id && toolkit?.getElementAttr ? toolkit.getElementAttr(id) : null;
+      } catch {
+        toolkitAttributes = null;
+      }
+      const attribute = name =>
+        note.getAttribute(`data-${name}`) ??
+        element.getAttribute(`data-${name}`) ??
+        toolkitAttributes?.[name] ??
+        toolkitAttributes?.[name.replace(".", "-")] ??
+        null;
+      const pnum = Number(attribute("pnum"));
+      if (Number.isFinite(pnum) && pnum > 0) return pnum;
+      const pname = (attribute("pname") || "").toUpperCase();
+      const octave = Number(attribute("oct"));
+      if (!pname || !Number.isFinite(octave)) return null;
+      const base = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[pname];
+      const accidentalValue = attribute("accid") || attribute("accid.ges") || "";
+      const accidental = { ff: -2, f: -1, n: 0, s: 1, ss: 2 }[accidentalValue] ??
+        keyAccidentalForPname(pname);
+      return (octave + 1) * 12 + base + accidental;
+    }
+
+    function elementsForEvent(event, midiNote, staffNumber = 0) {
+      const elements = (event?.on || [])
+        .map(elementForVerovioId)
+        .filter(Boolean)
+        .map(element => element.closest?.("g.note") || element);
+      const unique = [...new Set(elements)];
+      const staffClass = Number(staffNumber) === 1 ? "cadenza-treble" :
+        Number(staffNumber) === 2 ? "cadenza-bass" : "";
+      const staffMatches = staffClass
+        ? unique.filter(element => element.closest("g.staff")?.classList.contains(staffClass))
+        : unique;
+      const candidates = staffMatches.length ? staffMatches : unique;
+      if (midiNote == null) return candidates;
+      const matches = candidates.filter(element => midiFromElement(element) === Number(midiNote));
+      return matches.length ? matches : candidates.slice(0, 1);
+    }
+
+    function midiName(midiNote) {
+      if (midiNote == null) return "";
+      const names = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
+      const value = Number(midiNote);
+      return `${names[(value % 12 + 12) % 12]}${Math.floor(value / 12) - 1}`;
+    }
+
+    function pitchSpelling(midiNote) {
+      const value = Math.max(0, Math.min(127, Number(midiNote)));
+      const pitchClass = (value % 12 + 12) % 12;
+      const spellings = [
+        ["C", 0, 0], ["D", -1, 1], ["D", 0, 1], ["E", -1, 2],
+        ["E", 0, 2], ["F", 0, 3], ["G", -1, 4], ["G", 0, 4],
+        ["A", -1, 5], ["A", 0, 5], ["B", -1, 6], ["B", 0, 6]
+      ];
+      const [pname, accidental, degree] = spellings[pitchClass];
+      const octave = Math.floor(value / 12) - 1;
+      return { pname, accidental, octave, diatonic: octave * 7 + degree };
+    }
+
+    function elementDiatonic(element) {
+      const midi = midiFromElement(element);
+      if (midi != null) return pitchSpelling(midi).diatonic;
+      const pname = (element?.getAttribute("data-pname") || "").toUpperCase();
+      const octave = Number(element?.getAttribute("data-oct"));
+      const degree = { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B: 6 }[pname];
+      return Number.isFinite(octave) && degree != null ? octave * 7 + degree : null;
+    }
+
+    function staffStepPixels(staff) {
+      const samples = [...staff.querySelectorAll("g.note")]
+        .map(node => ({ node, diatonic: elementDiatonic(node) }))
+        .filter(sample => sample.diatonic != null && sample.node.querySelector(".notehead"));
+      const ratios = [];
+      for (let left = 0; left < samples.length; left++) {
+        const leftRect = samples[left].node.querySelector(".notehead").getBoundingClientRect();
+        for (let right = left + 1; right < Math.min(samples.length, left + 18); right++) {
+          const delta = Math.abs(samples[right].diatonic - samples[left].diatonic);
+          if (!delta || delta > 8) continue;
+          const rightRect = samples[right].node.querySelector(".notehead").getBoundingClientRect();
+          const ratio = Math.abs((rightRect.top + rightRect.height / 2) -
+            (leftRect.top + leftRect.height / 2)) / delta;
+          if (ratio >= 2 && ratio <= 12) ratios.push(ratio);
+        }
+      }
+      if (ratios.length) {
+        ratios.sort((a, b) => a - b);
+        return ratios[Math.floor(ratios.length / 2)];
+      }
+      const head = samples[0]?.node.querySelector(".notehead")?.getBoundingClientRect();
+      return Math.max(3.5, (head?.height || 9) * .55);
+    }
+
+    function pitchPoint(event, midiNote, staffNumber = 0) {
+      if (midiNote == null) return null;
+      const eventElements = elementsForEvent(event, null);
+      const system = eventElements[0]?.closest("g.system") || [...notation.querySelectorAll("g.system")][0];
+      if (!system) return null;
+      const contextualStaff = Number(staffNumber) === 1 || Number(staffNumber) === 2
+        ? Number(staffNumber)
+        : eventElements
+            .map(element => ({
+              staff: element.closest("g.staff"),
+              midi: midiFromElement(element)
+            }))
+            .filter(item => item.staff && item.midi != null)
+            .sort((left, right) => Math.abs(left.midi - Number(midiNote)) - Math.abs(right.midi - Number(midiNote)))[0]
+            ?.staff?.classList.contains("cadenza-bass") ? 2 : 0;
+      const wantsTreble = contextualStaff === 1 || (contextualStaff === 0 && Number(midiNote) >= 60);
+      const preferredClass = wantsTreble ? "cadenza-treble" : "cadenza-bass";
+      const staffs = [...system.querySelectorAll("g.staff")];
+      const staff = staffs.find(node => node.classList.contains(preferredClass)) ||
+        (wantsTreble ? staffs[0] : staffs.at(-1));
+      if (!staff) return null;
+
+      const target = pitchSpelling(midiNote);
+      const anchors = [...staff.querySelectorAll("g.note")]
+        .map(node => ({
+          node,
+          midi: midiFromElement(node),
+          diatonic: elementDiatonic(node),
+          head: node.querySelector(".notehead")
+        }))
+        .filter(anchor => anchor.midi != null && anchor.diatonic != null && anchor.head);
+      const stageRect = stage.getBoundingClientRect();
+      const eventX = eventViewportCenter(event);
+      if (eventX == null) return null;
+      let y;
+      let step;
+      let top;
+      let bottom;
+      if (anchors.length) {
+        anchors.sort((a, b) => Math.abs(a.midi - midiNote) - Math.abs(b.midi - midiNote));
+        const anchor = anchors[0];
+        const anchorRect = anchor.head.getBoundingClientRect();
+        step = staffStepPixels(staff);
+        y = anchorRect.top + anchorRect.height / 2 - stageRect.top -
+          (target.diatonic - anchor.diatonic) * step;
+        const referenceBottomMidi = wantsTreble ? 64 : 43;
+        const referenceTopMidi = wantsTreble ? 77 : 57;
+        bottom = y + (target.diatonic - pitchSpelling(referenceBottomMidi).diatonic) * step;
+        top = y + (target.diatonic - pitchSpelling(referenceTopMidi).diatonic) * step;
+      } else {
+        // Some Verovio systems keep staff lines and note layers as siblings, and
+        // an otherwise valid staff may contain no note anchors at this onset.
+        // Derive canonical clef geometry from the five rendered staff lines.
+        const staffRect = staff.getBoundingClientRect();
+        const lineCenters = [...staff.querySelectorAll("path, line, polyline")]
+          .map(node => node.getBoundingClientRect())
+          .filter(rect => rect.width >= Math.max(80, staffRect.width * .45) && rect.height <= 4)
+          .map(rect => rect.top + rect.height / 2 - stageRect.top)
+          .sort((left, right) => left - right)
+          .filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > 1);
+        top = lineCenters[0] ?? staffRect.top - stageRect.top;
+        bottom = lineCenters.at(-1) ?? staffRect.bottom - stageRect.top;
+        if (!(bottom > top)) return null;
+        step = (bottom - top) / 8;
+        const bottomLineDiatonic = wantsTreble
+          ? pitchSpelling(64).diatonic  // E4, treble bottom line
+          : pitchSpelling(43).diatonic; // G2, bass bottom line
+        y = bottom - (target.diatonic - bottomLineDiatonic) * step;
+      }
+      const keyAccidental = keyAccidentalForPname(target.pname);
+      const accidental = target.accidental === keyAccidental
+        ? ""
+        : target.accidental < 0 ? "♭" : target.accidental > 0 ? "♯" : "♮";
+      return {
+        x: eventX - stageRect.left,
+        y,
+        step,
+        top,
+        bottom,
+        accidental,
+        midi: Number(midiNote),
+        staffKind: staff.classList.contains("cadenza-bass") ? "bass" : "treble"
+      };
+    }
+
+    function validateFeedbackGeometry(beat = latestRequestedBeat) {
+      const event = eventAtBeat(beat);
+      const eventElements = elementsForEvent(event, null);
+      const semanticMidis = eventElements.map(midiFromElement).filter(value => value != null);
+      const treble = pitchPoint(event, 72, 1);
+      const bass = pitchPoint(event, 48, 2);
+      const middleTreble = pitchPoint(event, 60, 1);
+      const middleBass = pitchPoint(event, 60, 2);
+      return {
+        mode: readingMode,
+        beat: Number(beat || 0),
+        eventElementCount: eventElements.length,
+        semanticMidiCount: semanticMidis.length,
+        semanticMidis,
+        treble: treble ? { x: treble.x, y: treble.y, staffKind: treble.staffKind } : null,
+        bass: bass ? { x: bass.x, y: bass.y, staffKind: bass.staffKind } : null,
+        middleTreble: middleTreble ? { x: middleTreble.x, y: middleTreble.y, staffKind: middleTreble.staffKind } : null,
+        middleBass: middleBass ? { x: middleBass.x, y: middleBass.y, staffKind: middleBass.staffKind } : null,
+        valid: Boolean(
+          treble && bass && middleTreble && middleBass &&
+          treble.staffKind === "treble" &&
+          bass.staffKind === "bass" &&
+          middleTreble.staffKind === "treble" &&
+          middleBass.staffKind === "bass" &&
+          semanticMidis.length > 0)
+      };
+    }
+
+    function updatePracticeFeedbackOverlayVisibility() {
+      practiceWrongNote.style.display = practiceWrongNote.childElementCount > 0 ? "block" : "none";
+      const wrongMidis = [...practiceWrongNote.querySelectorAll(":scope > g.wrong-feedback[data-midi]")]
+        .map(node => node.getAttribute("data-midi"));
+      if (wrongMidis.length) practiceWrongNote.setAttribute("data-midi", wrongMidis.join(","));
+      else practiceWrongNote.removeAttribute("data-midi");
+    }
+
+    function clearPracticeWrongNote(clearState = true) {
+      clearTimeout(wrongNoteTimer);
+      practiceWrongNote.querySelectorAll(":scope > g.wrong-feedback").forEach(node => node.remove());
+      updatePracticeFeedbackOverlayVisibility();
+      if (clearState) activeWrongFeedback = null;
+    }
+
+    function showPracticeWrongNote(event, midiNote, dispatchId = 0, preserveExpiry = false, staffNumber = 0) {
+      clearPracticeWrongNote(false);
+      const point = pitchPoint(event, midiNote, staffNumber);
+      if (!point) {
+        feedbackTelemetry.failedWrong++;
+        post("feedbackAck", {
+          runGeneration: lessonGeneration,
+          eventId: Number(activeWrongFeedback?.eventId || 0),
+          dispatchId: Number(dispatchId || 0),
+          kind: activeWrongFeedback?.kind || "extra",
+          rendered: false
+        });
+        requestAnimationFrame(() => {
+          if (activeWrongFeedback && activeWrongFeedback.dispatchId === Number(dispatchId || 0))
+            reapplyLessonFeedback();
+        });
+        return;
+      }
+      const svgNs = "http://www.w3.org/2000/svg";
+      const group = document.createElementNS(svgNs, "g");
+      group.setAttribute("class", "wrong-feedback");
+      group.setAttribute("data-midi", point.midi);
+      group.setAttribute("data-dispatch", Number(dispatchId || 0));
+      const addLine = y => {
+        const line = document.createElementNS(svgNs, "line");
+        line.setAttribute("x1", point.x - 11);
+        line.setAttribute("x2", point.x + 11);
+        line.setAttribute("y1", y);
+        line.setAttribute("y2", y);
+        line.setAttribute("class", "wrong-ledger");
+        group.appendChild(line);
+      };
+      const lineStep = point.step * 2;
+      if (point.y > point.bottom + point.step) {
+        for (let y = point.bottom + lineStep; y <= point.y + 1; y += lineStep) addLine(y);
+      } else if (point.y < point.top - point.step) {
+        for (let y = point.top - lineStep; y >= point.y - 1; y -= lineStep) addLine(y);
+      }
+
+      const head = document.createElementNS(svgNs, "ellipse");
+      head.setAttribute("cx", point.x);
+      head.setAttribute("cy", point.y);
+      head.setAttribute("rx", "7.5");
+      head.setAttribute("ry", "5.2");
+      head.setAttribute("class", "wrong-notehead");
+      head.setAttribute("transform", `rotate(-12 ${point.x} ${point.y})`);
+      group.appendChild(head);
+      if (point.accidental) {
+        const accidental = document.createElementNS(svgNs, "text");
+        accidental.setAttribute("x", point.x - 23);
+        accidental.setAttribute("y", point.y + 7);
+        accidental.setAttribute("class", "wrong-accidental");
+        accidental.textContent = point.accidental;
+        group.appendChild(accidental);
+      }
+      practiceWrongNote.appendChild(group);
+      updatePracticeFeedbackOverlayVisibility();
+      feedbackTelemetry.renderedWrong++;
+      post("feedbackAck", {
+        runGeneration: lessonGeneration,
+        eventId: Number(activeWrongFeedback?.eventId || 0),
+        dispatchId: Number(dispatchId || 0),
+        kind: activeWrongFeedback?.kind || "extra",
+        rendered: true,
+        renderedCount: 1,
+        staffKind: point.staffKind,
+        midiNote: point.midi
+      });
+      clearTimeout(wrongNoteTimer);
+      const remaining = Math.max(1, (activeWrongFeedback?.expiresAt ?? performance.now() + 900) - performance.now());
+      wrongNoteTimer = setTimeout(() => clearPracticeWrongNote(true), remaining);
+    }
+
+    function expectedOverlayPoint(item) {
+      const event = eventAtBeat(item.beat);
+      const targets = elementsForEvent(event, item.midiNote, item.staffNumber);
+      const target = item.noteIdentity
+        ? targets.find(node => (node.id || node.getAttribute("data-id")) === item.noteIdentity)
+        : targets[0];
+      const head = target?.matches?.(".notehead") ? target : target?.querySelector(".notehead");
+      const headRect = head?.getBoundingClientRect();
+      const stageRect = stage.getBoundingClientRect();
+      if (headRect && headRect.width > 0 && headRect.height > 0) {
+        return {
+          x: headRect.left + headRect.width / 2 - stageRect.left,
+          y: headRect.top + headRect.height / 2 - stageRect.top,
+          staffKind: item.staffNumber === 2 ? "bass" : "treble",
+          targetFound: true
+        };
+      }
+      const fallback = pitchPoint(event, item.midiNote, item.staffNumber);
+      return fallback ? { ...fallback, targetFound: false } : null;
+    }
+
+    function renderPracticeCorrectNote(key, item) {
+      if (practiceWrongNote.querySelector(`:scope > g.correct-feedback[data-feedback-key="${CSS.escape(key)}"]`))
+        return true;
+      const point = expectedOverlayPoint(item);
+      if (!point) return false;
+      const svgNs = "http://www.w3.org/2000/svg";
+      const group = document.createElementNS(svgNs, "g");
+      group.setAttribute("class", "correct-feedback");
+      group.setAttribute("data-feedback-key", key);
+      group.setAttribute("data-midi", Number(item.midiNote));
+      group.setAttribute("data-occurrence", Number(item.occurrenceIndex || 0));
+      group.setAttribute("data-note-identity", item.noteIdentity || "");
+      const head = document.createElementNS(svgNs, "ellipse");
+      head.setAttribute("cx", point.x);
+      head.setAttribute("cy", point.y);
+      head.setAttribute("rx", "7.5");
+      head.setAttribute("ry", "5.2");
+      head.setAttribute("class", "correct-notehead");
+      head.setAttribute("transform", `rotate(-12 ${point.x} ${point.y})`);
+      group.appendChild(head);
+      practiceWrongNote.appendChild(group);
+      updatePracticeFeedbackOverlayVisibility();
+      return true;
+    }
+
+    function clearPracticeCorrectNotes() {
+      practiceWrongNote.querySelectorAll(":scope > g.correct-feedback").forEach(node => node.remove());
+      updatePracticeFeedbackOverlayVisibility();
+    }
+
+    function reapplyLessonFeedback() {
+      if (!lessonRunning) return;
+      let renderedCorrectCount = 0;
+      clearPracticeCorrectNotes();
+      for (const [key, item] of persistentCorrectFeedback)
+        if (renderPracticeCorrectNote(key, item)) renderedCorrectCount++;
+      if (activeWrongFeedback) {
+        if (performance.now() >= activeWrongFeedback.expiresAt) {
+          clearPracticeWrongNote(true);
+        } else {
+          clearPracticeWrongNote(false);
+          showPracticeWrongNote(
+            eventAtBeat(activeWrongFeedback.beat),
+            activeWrongFeedback.midiNote,
+            activeWrongFeedback.dispatchId,
+            true,
+            activeWrongFeedback.staffNumber);
+        }
+      }
+      if (persistentCorrectFeedback.size > 0 || activeWrongFeedback) {
+        post("feedbackReapplied", {
+          mode: readingMode,
+          runGeneration: lessonGeneration,
+          persistentCorrectCount: persistentCorrectFeedback.size,
+          renderedCorrectCount,
+          wrongActive: Boolean(activeWrongFeedback)
+        });
+      }
+    }
+
+    function paintNotehead(noteElement, color = "#f6f2e9") {
+      if (!noteElement) return;
+      const note = noteElement.closest?.("g.note") || noteElement;
+      const nodes = [
+        ...(note.matches?.(".notehead") ? [note] : []),
+        ...note.querySelectorAll(".notehead, .notehead *")
+      ];
+      nodes.forEach(node => {
+        node.style.setProperty("fill", color, "important");
+        node.style.setProperty("stroke", color, "important");
+        node.style.setProperty("color", color, "important");
+      });
+    }
+
+    function clearNoteClass(selector, className) {
+      document.querySelectorAll(selector).forEach(node => {
+        node.classList.remove(className);
+        paintNotehead(node);
+      });
+    }
+
+    function resetAudit() {
+      auditTrail.length = 0;
+      auditVisible = false;
+      audit.innerHTML = "";
+    }
+
+    function beginLesson(mode, startBeat = 0, timed = false, runGeneration = 0) {
+      endTimeline();
+      playhead.style.opacity = "0";
+      lessonMode = String(mode || "WaitForYou");
+      lessonRunning = true;
+      lessonGeneration = Number(runGeneration || lessonGeneration + 1);
+      persistentCorrectFeedback.clear();
+      activeWrongFeedback = null;
+      feedbackTelemetry = {
+        generation: feedbackTelemetry.generation + 1,
+        received: 0,
+        receivedWrong: 0,
+        receivedCorrect: 0,
+        renderedWrong: 0,
+        renderedCorrect: 0,
+        failedWrong: 0,
+        lastDispatchId: 0,
+        dispatchGaps: 0
+      };
+      resetAudit();
+      clearPracticeWrongNote();
+      clearPracticeCorrectNotes();
+      feedback.className = "";
+      feedback.style.opacity = "0";
+      document.querySelectorAll("g.note.feedback-correct, g.note.feedback-wrong, g.note.feedback-hold, g.note.feedback-early, g.note.feedback-missed, g.note.audit-correct, g.note.audit-missed, g.note.audit-early")
+        .forEach(node => {
+          node.classList.remove("feedback-correct", "feedback-wrong", "feedback-hold", "feedback-early", "feedback-missed", "audit-correct", "audit-missed", "audit-early");
+          node.removeAttribute("data-cadenza-feedback");
+          paintNotehead(node);
+        });
+      const firstBeat = Number(startBeat || 0);
+      const firstPage = pageForEvent(eventAtBeat(firstBeat));
+      if (firstPage !== currentPage) renderPage(firstPage, false);
+      lastPositionKey = "";
+      beginTimeline(firstBeat);
+    }
+
+    function finishLesson(completed, runGeneration = 0) {
+      if (Number(runGeneration || lessonGeneration) !== lessonGeneration) return;
+      endTimeline();
+      if (Boolean(completed)) playhead.style.opacity = "0";
+      lessonRunning = false;
+      feedback.className = "";
+      feedback.style.opacity = "0";
+      clearTimeout(feedbackTimer);
+      clearPracticeWrongNote();
+      clearPracticeCorrectNotes();
+      persistentCorrectFeedback.clear();
+      document.querySelectorAll("g.note.feedback-correct, g.note.feedback-wrong, g.note.feedback-hold, g.note.feedback-early, g.note.feedback-missed")
+        .forEach(node => {
+          node.classList.remove("feedback-correct", "feedback-wrong", "feedback-hold", "feedback-early", "feedback-missed");
+          node.removeAttribute("data-cadenza-feedback");
+          paintNotehead(node);
+        });
+      auditVisible = Boolean(completed) && lessonMode === "TimedPlay";
+      if (auditVisible) rebuildAudit();
+      else resetAudit();
+      post("feedbackTelemetry", { mode: lessonMode, completed: Boolean(completed), ...feedbackTelemetry });
+    }
+
+    function getState() {
+      return {
+        currentPage,
+        pageCount,
+        pendingPage,
+        readingMode,
+        hintMode,
+        handMode,
+        playing,
+        lessonRunning,
+        lessonMode,
+        auditVisible,
+        auditCount: auditTrail.length,
+        renderedAuditCount: audit.children.length,
+        renderedPracticeCorrectCount: practiceWrongNote.querySelectorAll(":scope > g.correct-feedback").length,
+        renderedPracticeWrongCount: practiceWrongNote.querySelectorAll(":scope > g.wrong-feedback").length,
+        feedbackKind: feedback.className,
+        practiceWrongMidi: practiceWrongNote.getAttribute("data-midi"),
+        playheadLeft: parseFloat(playhead.style.left || "0"),
+        playheadTop: parseFloat(playhead.style.top || "0"),
+        playheadHeight: parseFloat(playhead.style.height || "0"),
+        cursorBeat: latestRequestedBeat,
+        continuousOffsetX,
+        continuousOffsetY,
+        finalQstamp: timemap.at(-1)?.qstamp ?? null,
+        layoutValidation: lastLayoutValidation,
+        runtimeTelemetry,
+        feedbackTelemetry,
+        feedbackGeometry: validateFeedbackGeometry()
+      };
+    }
+
+    function elementsAtBeat(beat) {
+      const event = eventAtBeat(beat);
+      return {
+        toolkit: toolkit?.getElementsAtTime(Math.max(0, Math.round(Number(beat || 0) * 60000 / bpm))) || null,
+        indexedPage: pageForEvent(event),
+        qstamp: event?.qstamp ?? null
+      };
+    }
+
+    function eventAtBeat(beat) {
+      const target = Number(beat || 0);
+      return timemap.reduce((best, event) =>
+        event.on?.length && Math.abs((event.qstamp ?? 0) - target) < Math.abs((best?.qstamp ?? 1e9) - target)
+          ? event : best, null);
+    }
+
+    function rebuildAudit() {
+      audit.innerHTML = "";
+      document.querySelectorAll("g.note.audit-correct, g.note.audit-missed, g.note.audit-early")
+        .forEach(node => {
+          node.classList.remove("audit-correct", "audit-missed", "audit-early");
+          paintNotehead(node);
+        });
+      if (!auditVisible) return;
+      for (const entry of auditTrail) {
+        const ms = entry.beat * 60000 / bpm;
+        const event = eventAtBeat(entry.beat);
+        if (pageForEvent(event) !== currentPage) continue;
+        const atTime = toolkit?.getElementsAtTime(Math.max(0, Math.round(ms)));
+        const exactNoteElement = (event?.on || [])
+          .map(elementForVerovioId)
+          .filter(Boolean)
+          .find(element => midiFromElement(element) === Number(entry.midiNote));
+        if (["extra", "wrong"].includes(entry.kind) && entry.midiNote != null) {
+          const point = pitchPoint(event, entry.midiNote);
+          if (point) {
+            const mark = document.createElement("div");
+            mark.className = "audit-pitch-note";
+            mark.style.left = `${point.x}px`;
+            mark.style.top = `${point.y}px`;
+            mark.dataset.label = point.accidental;
+            mark.title = `Extra or wrong note · ${midiName(entry.midiNote)}`;
+            audit.appendChild(mark);
+            continue;
+          }
+        }
+        const noteElement = exactNoteElement || elementsForEvent(event, entry.midiNote)[0];
+        if (noteElement && ["correct", "missed", "early"].includes(entry.kind)) {
+          noteElement.classList.add(`audit-${entry.kind}`);
+          paintNotehead(noteElement, entry.kind === "correct" ? "#19f47b" :
+            entry.kind === "missed" ? "#ff6577" : "#ffb54d");
+          continue;
+        }
+        const noteRect = noteElement?.getBoundingClientRect();
+        const x = noteRect ? noteRect.left + noteRect.width / 2 : eventViewportCenter(event);
+        if (x == null) continue;
+        const rect = noteElement?.getBoundingClientRect();
+        const mark = document.createElement("div");
+        mark.className = `audit-mark ${entry.kind}`;
+        mark.style.left = `${x}px`;
+        mark.style.top = `${Math.max(24, (rect?.top ?? innerHeight * .7) - 18)}px`;
+        const span = document.createElement("span");
+        span.textContent = entry.kind === "correct" ? "✓" :
+          entry.kind === "missed" ? "M" :
+          entry.kind === "early" ? "H" : "×";
+        mark.title = `${entry.label}${entry.midiNote == null ? "" : ` · ${midiName(entry.midiNote)}`}`;
+        mark.appendChild(span);
+        audit.appendChild(mark);
+      }
+    }
+
+    function startPlayback(offsetBeat = 0) {
+      beginTimeline(offsetBeat);
+    }
+
+    function stopPlayback() {
+      playing = false;
+      cancelAnimationFrame(frameHandle);
+    }
+
+    function beginTimeline(startBeat = 0) {
+      stopPlayback();
+      timelineRunning = true;
+      latestRequestedBeat = Math.max(0, Number(startBeat || 0));
+      lastAuthoritativeBeat = latestRequestedBeat;
+      runtimeTelemetry = createRuntimeTelemetry(latestRequestedBeat);
+      window.__cadenzaRuntimeTelemetry = runtimeTelemetry;
+      setCursorBeat(latestRequestedBeat, true);
+    }
+
+    function endTimeline() {
+      timelineRunning = false;
+      stopPlayback();
+      if (runtimeTelemetry && !runtimeTelemetry.reported) {
+        const finalQstamp = timemap.at(-1)?.qstamp ?? 0;
+        runtimeTelemetry.finalQstamp = finalQstamp;
+        runtimeTelemetry.completed = runtimeTelemetry.endBeat + .02 >= finalQstamp;
+        runtimeTelemetry.layoutValidation = lastLayoutValidation;
+        runtimeTelemetry.reported = true;
+        window.__cadenzaRuntimeTelemetry = runtimeTelemetry;
+        post("runtimeTelemetry", runtimeTelemetry);
+      }
+    }
+
+    function setCursorBeat(beat, reset = false) {
+      const requestedBeat = Math.max(0, Number(beat || 0));
+      if (!reset && timelineRunning && requestedBeat + 0.0001 < lastAuthoritativeBeat) return;
+      // The native session resets its visual cursor after a run. Freeze the
+      // completed generation before accepting that explicit rewind so the
+      // final 306-beat report is not mutated into a false backward sample.
+      if (reset && timelineRunning && requestedBeat + 0.0001 < lastAuthoritativeBeat) {
+        endTimeline();
+      }
+      if (reset && readingMode === "Continuous") resetContinuousViewport();
+      latestRequestedBeat = requestedBeat;
+      lastAuthoritativeBeat = requestedBeat;
+      renderLatestCursor();
+    }
+
+    function renderLatestCursor() {
+      const beat = latestRequestedBeat;
+      const ms = beat * 60000 / bpm;
+      const desiredPage = pageForEvent(eventAtBeat(beat));
+      if (desiredPage !== currentPage) {
+        if (!pendingPage || pendingPage !== desiredPage) {
+          const direction = desiredPage > currentPage ? 1 : -1;
+          renderPage(desiredPage, true, direction, renderLatestCursor);
+        }
+        return;
+      }
+      if (pendingPage) return;
+      updateCursor(ms, true);
+      document.querySelectorAll("g.note.expected").forEach(node => node.classList.remove("expected"));
+      const atTime = toolkit?.getElementsAtTime(Math.max(0, Math.round(ms)));
+      for (const id of atTime?.notes || []) elementForVerovioId(id)?.classList.add("expected");
+      updateHintLane(atTime, beat);
+    }
+
+    function updateHintLane(atTime, beat) {
+      if (!hintMode) return;
+      const ids = atTime?.notes?.length ? atTime.notes : (eventAtBeat(beat)?.on || []);
+      const notes = ids.map(elementForVerovioId).filter(Boolean)
+        .map(element => {
+          const pnum = Number(element.getAttribute("data-pnum"));
+          if (Number.isFinite(pnum) && pnum > 0) {
+            const names = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
+            return `${names[pnum % 12]}${Math.floor(pnum / 12) - 1}`;
+          }
+          const pname = (element.getAttribute("data-pname") || "?").toUpperCase();
+          const accidentalValue = element.getAttribute("data-accid") || element.getAttribute("data-accid.ges") || "";
+          const explicit = { f: "♭", ff: "♭♭", s: "♯", ss: "♯♯", n: "♮" }[accidentalValue] || "";
+          const tonic = keySignature.match(/^[A-G](?:b|#)?/)?.[0] || "";
+          const flatKeys = { F: 1, Bb: 2, Eb: 3, Ab: 4, Db: 5, Gb: 6, Cb: 7 };
+          const sharpKeys = { G: 1, D: 2, A: 3, E: 4, B: 5, "F#": 6, "C#": 7 };
+          const flatOrder = ["B", "E", "A", "D", "G", "C", "F"];
+          const sharpOrder = ["F", "C", "G", "D", "A", "E", "B"];
+          const keyAccidental = flatOrder.slice(0, flatKeys[tonic] || 0).includes(pname) ? "♭" :
+            sharpOrder.slice(0, sharpKeys[tonic] || 0).includes(pname) ? "♯" : "";
+          const accidental = explicit || keyAccidental;
+          return `${pname}${accidental}${element.getAttribute("data-oct") || ""}`;
+        });
+      const unique = [...new Set(notes)];
+      hintNotes.textContent = unique.length ? unique.join(" + ") : "Watch the highlighted onset";
+      hintKeys.innerHTML = "";
+      for (const note of unique) {
+        const key = document.createElement("div");
+        key.className = "hint-key";
+        key.textContent = note;
+        hintKeys.appendChild(key);
+      }
+    }
+
+    function playbackFrame(now) {
+      if (!playing) return;
+      updateCursor(playbackOffsetMs + now - playbackStart, false);
+      frameHandle = requestAnimationFrame(playbackFrame);
+    }
+
+    function eventWithNotesAtOrBefore(ms) {
+      let result = null;
+      for (const event of timemap) {
+        if (event.tstamp > ms) break;
+        if (event.on?.length) result = event;
+      }
+      return result;
+    }
+
+    function eventWithNotesAfter(ms) {
+      return timemap.find(event => event.tstamp > ms && event.on?.length) || null;
+    }
+
+    function positionIds(event) {
+      if (!event) return [];
+      // A measure-on ID identifies the bar's left boundary, not the sounding
+      // onset. Averaging it with note IDs made Continuous scroll/playhead lag
+      // behind Verovio's correctly timed note and lyric highlight.
+      if (event.on?.length) return [...event.on];
+      if (event.restsOn?.length) return [...event.restsOn];
+      return event.measureOn ? [event.measureOn] : [];
+    }
+
+    function eventWithPositionAtOrBefore(ms) {
+      let result = null;
+      for (const event of timemap) {
+        if (event.tstamp > ms) break;
+        if (positionIds(event).length) result = event;
+      }
+      return result;
+    }
+
+    function eventWithPositionAfter(ms) {
+      const positioned = timemap.find(event => event.tstamp > ms && positionIds(event).length);
+      if (positioned) return positioned;
+      const finalEvent = timemap.at(-1);
+      return finalEvent && finalEvent.tstamp > ms ? { ...finalEvent, cadenzaEnd: true } : null;
+    }
+
+    function eventViewportCenter(event) {
+      if (event?.cadenzaEnd) {
+        const system = [...notation.querySelectorAll("g.system")].at(-1);
+        return system ? system.getBoundingClientRect().right - 12 : null;
+      }
+      const ids = positionIds(event);
+      if (!ids.length) return null;
+      const centers = ids.map(elementForVerovioId)
+        .filter(Boolean)
+        .map(element => {
+          // A Verovio note group can include a long tie, slur, lyric, flag, or
+          // accidental. Its full bounding box is therefore not a reliable
+          // onset coordinate and can be thousands of score units wide. Anchor
+          // note events to the canonical SMuFL notehead geometry instead.
+          const anchor = element.matches("g.note")
+            ? (element.querySelector(":scope > g.notehead") || element.querySelector("g.notehead") || element)
+            : element;
+          const rect = anchor.getBoundingClientRect();
+          return element.matches("g.measure") ? rect.left : rect.left + rect.width / 2;
+        });
+      if (!centers.length) return null;
+      return centers.reduce((sum, value) => sum + value, 0) / centers.length;
+    }
+
+    function elementScoreX(element, useLeftEdge = false) {
+      const svg = notation.querySelector("svg");
+      if (!svg || !element || typeof element.getBBox !== "function" || typeof element.getCTM !== "function") return null;
+      try {
+        // Do not use the complete note group's bounds here. Verovio nests ties,
+        // slurs, lyrics, flags, and accidentals beneath that group; a curved
+        // span can move the group's center far beyond the actual onset and make
+        // a continuous playhead over-scroll, disappear, and then appear to run
+        // backward. The notehead is the authoritative horizontal onset anchor.
+        const anchor = element.matches("g.note")
+          ? (element.querySelector(":scope > g.notehead") || element.querySelector("g.notehead") || element)
+          : element;
+        const box = anchor.getBBox();
+        const matrix = anchor.getCTM();
+        if (!matrix) return null;
+        const point = svg.createSVGPoint();
+        point.x = useLeftEdge ? box.x : box.x + box.width / 2;
+        point.y = box.y + box.height / 2;
+        return point.matrixTransform(matrix).x;
+      } catch {
+        return null;
+      }
+    }
+
+    function eventScoreCenter(event) {
+      if (!event) return null;
+      if (event?.cadenzaEnd) {
+        if (continuousEndX != null) return continuousEndX;
+        const system = [...notation.querySelectorAll("g.system")].at(-1);
+        if (!system) return null;
+        const center = elementScoreX(system);
+        const box = system.getBBox();
+        const matrix = system.getCTM();
+        if (center == null || !matrix) return null;
+        const svg = notation.querySelector("svg");
+        const point = svg.createSVGPoint();
+        point.x = box.x + box.width;
+        point.y = box.y + box.height / 2;
+        continuousEndX = point.matrixTransform(matrix).x;
+        return continuousEndX;
+      }
+      if (continuousCoordinateCache.has(event)) return continuousCoordinateCache.get(event);
+      const values = positionIds(event)
+        .map(elementForVerovioId)
+        .filter(Boolean)
+        .map(element => elementScoreX(element, element.matches("g.measure")))
+        .filter(Number.isFinite);
+      const result = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+      continuousCoordinateCache.set(event, result);
+      return result;
+    }
+
+    function createRuntimeTelemetry(startBeat) {
+      return {
+        generation: ++runtimeTelemetryGeneration,
+        mode: readingMode,
+        startBeat,
+        endBeat: startBeat,
+        samples: 0,
+        eventCheckpoints: [],
+        lastEventKey: "",
+        lastBeat: startBeat,
+        lastOffsetX: continuousOffsetX,
+        backwardBeatCount: 0,
+        backwardOffsetCount: 0,
+        clippedPlayheadCount: 0,
+        clippedSystemCount: 0,
+        futureVisibilityShortfallCount: 0,
+        minFutureVisibleWidth: Number.POSITIVE_INFINITY,
+        maxCenterError: 0,
+        maxPlayheadAnchorError: 0,
+        maxHighlightedPlayheadError: 0,
+        reported: false
+      };
+    }
+
+    function recordRuntimeTelemetry(beat, previous, next, scoreX, visibleX, highlightedX) {
+      if (!runtimeTelemetry || runtimeTelemetry.reported || readingMode !== "Continuous") return;
+      const stageRect = stage.getBoundingClientRect();
+      const system = systemForEvent(previous || next);
+      const systemRect = system?.getBoundingClientRect();
+      const centerError = systemRect
+        ? Math.abs((systemRect.top + systemRect.bottom) / 2 - (stageRect.top + stageRect.height / 2))
+        : 0;
+      const anchorX = Math.max(180, stageRect.width * .32);
+      const hasReachedAnchor = scoreX * userZoom + 24 >= anchorX;
+      runtimeTelemetry.samples++;
+      runtimeTelemetry.endBeat = beat;
+      if (beat + .0001 < runtimeTelemetry.lastBeat) runtimeTelemetry.backwardBeatCount++;
+      if (timelineRunning && continuousOffsetX > runtimeTelemetry.lastOffsetX + .25) runtimeTelemetry.backwardOffsetCount++;
+      if (visibleX < -1 || visibleX > stageRect.width + 1) runtimeTelemetry.clippedPlayheadCount++;
+      if (systemRect && (systemRect.bottom < stageRect.top || systemRect.top > stageRect.bottom)) {
+        runtimeTelemetry.clippedSystemCount++;
+      }
+      const finalQstamp = timemap.at(-1)?.qstamp ?? beat;
+      if (systemRect && beat + 4 < finalQstamp) {
+        const futureVisibleWidth = systemRect.right - (stageRect.left + visibleX);
+        runtimeTelemetry.minFutureVisibleWidth = Math.min(runtimeTelemetry.minFutureVisibleWidth, futureVisibleWidth);
+        if (futureVisibleWidth < Math.min(280, stageRect.width * .2)) {
+          runtimeTelemetry.futureVisibilityShortfallCount++;
+        }
+      }
+      runtimeTelemetry.maxCenterError = Math.max(runtimeTelemetry.maxCenterError, centerError);
+      if (hasReachedAnchor) {
+        runtimeTelemetry.maxPlayheadAnchorError = Math.max(
+          runtimeTelemetry.maxPlayheadAnchorError,
+          Math.abs(visibleX - anchorX));
+      }
+      if (Number.isFinite(highlightedX)) {
+        runtimeTelemetry.maxHighlightedPlayheadError = Math.max(
+          runtimeTelemetry.maxHighlightedPlayheadError,
+          Math.abs(visibleX - highlightedX));
+      }
+      const eventKey = `${previous?.qstamp ?? "start"}:${next?.qstamp ?? "end"}`;
+      if (eventKey !== runtimeTelemetry.lastEventKey && runtimeTelemetry.eventCheckpoints.length < 900) {
+        runtimeTelemetry.lastEventKey = eventKey;
+        runtimeTelemetry.eventCheckpoints.push({
+          beat,
+          previousQstamp: previous?.qstamp ?? null,
+          nextQstamp: next?.qstamp ?? null,
+          scoreX,
+          offsetX: continuousOffsetX,
+          visibleX,
+          highlightedX: Number.isFinite(highlightedX) ? highlightedX : null,
+          highlightedPlayheadError: Number.isFinite(highlightedX) ? Math.abs(visibleX - highlightedX) : null,
+          stageWidth: stageRect.width,
+          centerError,
+          repeatOccurrence: positionIds(previous).some(id => String(id).includes("-rend"))
+        });
+      }
+      runtimeTelemetry.lastBeat = beat;
+      runtimeTelemetry.lastOffsetX = continuousOffsetX;
+    }
+
+    function validateRendererLayout() {
+      if (!timemap.length) return null;
+      const continuous = readingMode === "Continuous";
+      const positioned = continuous ? timemap.filter(event => positionIds(event).length) : [];
+      let priorX = -Infinity;
+      let backwardCoordinates = 0;
+      let unresolvedCoordinates = 0;
+      let repeatEvents = 0;
+      const backwardSamples = [];
+      for (const event of positioned) {
+        const x = eventScoreCenter(event);
+        if (!Number.isFinite(x)) {
+          unresolvedCoordinates++;
+          continue;
+        }
+        if (x + .5 < priorX) {
+          backwardCoordinates++;
+          if (backwardSamples.length < 8) backwardSamples.push({ qstamp: event.qstamp, priorX, x });
+        }
+        if (positionIds(event).some(id => String(id).includes("-rend"))) repeatEvents++;
+        priorX = Math.max(priorX, x);
+      }
+      const bounds = renderedContentBounds();
+      const stageRect = stage.getBoundingClientRect();
+      const centerError = bounds
+        ? Math.abs((bounds.top + bounds.bottom) / 2 - (stageRect.top + stageRect.height / 2))
+        : null;
+      lastLayoutValidation = {
+        mode: readingMode,
+        totalEvents: timemap.length,
+        positionedEvents: positioned.length,
+        repeatEvents,
+        backwardCoordinates,
+        unresolvedCoordinates,
+        finalQstamp: timemap.at(-1)?.qstamp ?? null,
+        centerError,
+        topGap: bounds ? bounds.top - stageRect.top : null,
+        bottomGap: bounds ? stageRect.bottom - bounds.bottom : null,
+        gapDifference: bounds
+          ? Math.abs((bounds.top - stageRect.top) - (stageRect.bottom - bounds.bottom))
+          : null,
+        stageWidth: stageRect.width,
+        stageHeight: stageRect.height,
+        backwardSamples
+      };
+      window.__cadenzaLayoutValidation = lastLayoutValidation;
+      post("layoutValidation", lastLayoutValidation);
+      return lastLayoutValidation;
+    }
+
+    function systemForEvent(event) {
+      if (event?.cadenzaEnd) return [...notation.querySelectorAll("g.system")].at(-1) || null;
+      return positionIds(event).map(elementForVerovioId).find(Boolean)?.closest("g.system") || null;
+    }
+
+    function elementForVerovioId(id) {
+      // svgHtml5 emits semantic data-id attributes instead of XML id attributes.
+      return document.getElementById(id) ||
+        notation.querySelector(`[data-id="${CSS.escape(String(id))}"]`);
+    }
+
+    function updateCursor(ms, immediate) {
+      if (!toolkit || !timemap.length) return;
+      const atTime = toolkit.getElementsAtTime(Math.max(0, Math.round(ms)));
+      const previous = eventWithPositionAtOrBefore(ms);
+      const next = eventWithPositionAfter(ms);
+      const desiredPage = pageForEvent(previous || next);
+      if (desiredPage !== currentPage) {
+        return;
+      }
+
+      const continuous = readingMode === "Continuous";
+      // Both modes derive onset geometry from the actual rendered notehead/rest
+      // rectangles. Continuous then adjusts the score transform by the exact
+      // screen-space delta needed to keep that same coordinate at its anchor.
+      // Mixing SVG score coordinates with viewport rectangles caused the cyan
+      // line to drift behind correctly highlighted lyrics and notes.
+      let x1 = eventViewportCenter(previous);
+      let x2 = eventViewportCenter(next);
+      if (x1 == null && x2 == null) return;
+      if (x1 == null) x1 = x2;
+      if (x2 == null) x2 = x1;
+      const span = Math.max(1, (next?.tstamp ?? ms) - (previous?.tstamp ?? ms));
+      const progress = Math.max(0, Math.min(1, (ms - (previous?.tstamp ?? ms)) / span));
+      const previousSystem = systemForEvent(previous);
+      const nextSystem = systemForEvent(next);
+      const crossesSystem = Boolean(previousSystem && nextSystem && previousSystem !== nextSystem);
+      // Never interpolate from the end of one system toward the smaller X of
+      // the next system. Hold at the current onset, then the normal event
+      // selection atomically moves to the next system when its timestamp is due.
+      const x = crossesSystem ? x1 : x1 + (x2 - x1) * progress;
+      let visibleX = x;
+      if (continuous) {
+        const stageRect = stage.getBoundingClientRect();
+        const anchorX = Math.max(180, stageRect.width * .32);
+        const previousOffsetX = continuousOffsetX;
+        let nextOffsetX = Math.min(24, previousOffsetX + anchorX - x);
+        if (timelineRunning) nextOffsetX = Math.min(continuousOffsetX, nextOffsetX);
+        continuousOffsetX = nextOffsetX;
+        applyContinuousTransform();
+        visibleX = x + continuousOffsetX - previousOffsetX;
+        const scoreX = (x - previousOffsetX) / Math.max(.01, userZoom);
+        const highlighted = (atTime?.notes || [])
+          .map(elementForVerovioId)
+          .filter(Boolean)
+          .map(element => {
+            const anchor = element.querySelector(":scope > g.notehead") || element.querySelector("g.notehead") || element;
+            const rect = anchor.getBoundingClientRect();
+            return rect.left + rect.width / 2 - stageRect.left;
+          });
+        const highlightedX = highlighted.length
+          ? highlighted.reduce((sum, value) => sum + value, 0) / highlighted.length
+          : null;
+        recordRuntimeTelemetry(ms * bpm / 60000, previous, next, scoreX, visibleX, highlightedX);
+      }
+      playhead.style.left = `${visibleX}px`;
+      playhead.style.opacity = "1";
+      const system = previousSystem || nextSystem;
+      if (system) {
+        const systemRect = system.getBoundingClientRect();
+        const stageRect = stage.getBoundingClientRect();
+        const top = Math.max(6, systemRect.top - stageRect.top - 8);
+        const bottom = Math.min(stageRect.height - 6, systemRect.bottom - stageRect.top + 8);
+        playhead.style.top = `${top}px`;
+        playhead.style.height = `${Math.max(24, bottom - top)}px`;
+        const systems = [...notation.querySelectorAll("g.system")];
+        const systemNumber = Math.max(1, systems.indexOf(system) + 1);
+        const positionKey = `${currentPage}:${systemNumber}:${systems.length}`;
+        if (positionKey !== lastPositionKey) {
+          lastPositionKey = positionKey;
+          post("position", { page: currentPage, pages: pageCount, system: systemNumber, systems: systems.length });
+        }
+      }
+
+      document.querySelectorAll("g.note.playing").forEach(node => node.classList.remove("playing"));
+      for (const id of atTime?.notes || []) elementForVerovioId(id)?.classList.add("playing");
+    }
+
+    new ResizeObserver(() => {
+      if (!toolkit || !notation.querySelector("svg")) return;
+      if (readingMode === "Continuous") sizeContinuousSvg();
+      alignNotationVertically();
+      if (timemap.length) {
+        renderLatestCursor();
+        validateRendererLayout();
+      }
+    }).observe(stage);
+
+    function showFeedback(kind, beat, midiNote = null, dispatchId = 0, runGeneration = 0, eventId = 0, occurrenceIndex = 0, staffNumber = 0) {
+      const numericRunGeneration = Number(runGeneration || 0);
+      if (!lessonRunning || (numericRunGeneration > 0 && numericRunGeneration !== lessonGeneration)) return false;
+      const numericDispatchId = Number(dispatchId || 0);
+      feedbackTelemetry.received++;
+      if (kind === "wrong" || kind === "extra") feedbackTelemetry.receivedWrong++;
+      if (kind === "correct") feedbackTelemetry.receivedCorrect++;
+      if (numericDispatchId > 0) {
+        if (feedbackTelemetry.lastDispatchId > 0 && numericDispatchId > feedbackTelemetry.lastDispatchId + 1)
+          feedbackTelemetry.dispatchGaps += numericDispatchId - feedbackTelemetry.lastDispatchId - 1;
+        feedbackTelemetry.lastDispatchId = Math.max(feedbackTelemetry.lastDispatchId, numericDispatchId);
+      }
+      const ms = Number(beat || 0) * 60000 / bpm;
+      if (lessonMode === "WaitForYou") setCursorBeat(beat);
+      const event = eventAtBeat(beat);
+      const targetElements = elementsForEvent(event, midiNote, staffNumber);
+
+      if (lessonMode === "WaitForYou" && (kind === "wrong" || kind === "extra")) {
+        activeWrongFeedback = {
+          beat: Number(beat || 0),
+          midiNote: Number(midiNote),
+          dispatchId: numericDispatchId,
+          eventId: Number(eventId || 0),
+          occurrenceIndex: Number(occurrenceIndex || 0),
+          kind,
+          staffNumber: Number(staffNumber || 0),
+          expiresAt: performance.now() + 900
+        };
+        showPracticeWrongNote(event, midiNote, numericDispatchId, false, staffNumber);
+        return true;
+      }
+      if (lessonMode === "WaitForYou" && kind === "correct") {
+        clearPracticeWrongNote();
+        const acceptedTargets = targetElements.length ? targetElements : [null];
+        const renderedKeys = [];
+        const paintedTargets = acceptedTargets.map((node, targetIndex) => {
+          const noteIdentity = node?.id || node?.getAttribute("data-id") ||
+            `${Number(beat || 0).toFixed(6)}:${Number(midiNote)}:${Number(staffNumber || 0)}:${targetIndex}`;
+          const persistentKey = `${lessonGeneration}:${Number(occurrenceIndex || 0)}:${noteIdentity}`;
+          const item = {
+            beat: Number(beat || 0),
+            midiNote: midiNote == null ? null : Number(midiNote),
+            eventId: Number(eventId || 0),
+            occurrenceIndex: Number(occurrenceIndex || 0),
+            staffNumber: Number(staffNumber || 0),
+            noteIdentity
+          };
+          persistentCorrectFeedback.set(persistentKey, item);
+          const rendered = renderPracticeCorrectNote(persistentKey, item);
+          if (rendered) renderedKeys.push(persistentKey);
+          const overlay = practiceWrongNote.querySelector(
+            `:scope > g.correct-feedback[data-feedback-key="${CSS.escape(persistentKey)}"]`);
+          const head = overlay?.querySelector(".correct-notehead");
+          const rect = head?.getBoundingClientRect();
+          const style = head ? getComputedStyle(head) : null;
+          const stageRect = stage.getBoundingClientRect();
+          const describePart = selector => {
+            const part = node?.querySelector(selector);
+            const partPaint = part?.querySelector("use, path, line, polygon, polyline") || part;
+            const partStyle = partPaint ? getComputedStyle(partPaint) : null;
+            return part ? {
+              fill: partStyle?.fill || null,
+              stroke: partStyle?.stroke || null
+            } : null;
+          };
+          return {
+            id: noteIdentity,
+            overlayKey: persistentKey,
+            overlayFound: Boolean(overlay),
+            duplicateOverlayCount: practiceWrongNote.querySelectorAll(
+              `:scope > g.correct-feedback[data-feedback-key="${CSS.escape(persistentKey)}"]`).length,
+            headFound: Boolean(head),
+            fill: style?.fill || null,
+            stroke: style?.stroke || null,
+            opacity: style?.opacity || null,
+            x: rect ? rect.left + rect.width / 2 - stageRect.left : null,
+            y: rect ? rect.top + rect.height / 2 - stageRect.top : null,
+            width: rect?.width ?? null,
+            height: rect?.height ?? null,
+            nonHeadPaint: {
+              stem: describePart(".stem"),
+              flag: describePart(".flag"),
+              accidental: describePart(".accid"),
+              beam: describePart(".beam"),
+              ledger: describePart(".ledgerLines")
+            },
+            visibleInStage: Boolean(rect &&
+              rect.right >= stageRect.left && rect.left <= stageRect.right &&
+              rect.bottom >= stageRect.top && rect.top <= stageRect.bottom)
+          };
+        });
+        feedbackTelemetry.renderedCorrect += renderedKeys.length;
+        post("feedbackAck", {
+          runGeneration: lessonGeneration,
+          eventId: Number(eventId || 0),
+          dispatchId: numericDispatchId,
+          occurrenceIndex: Number(occurrenceIndex || 0),
+          kind,
+          staffNumber: Number(staffNumber || 0),
+          rendered: renderedKeys.length > 0,
+          renderedCount: renderedKeys.length,
+          persistentCorrectCount: persistentCorrectFeedback.size,
+          paintedTargets
+        });
+        return true;
+      }
+
+      if (kind === "release") {
+        targetElements.forEach(node => node.classList.remove("feedback-hold", "feedback-early"));
+        return;
+      }
+
+      if (kind === "hold") {
+        targetElements.forEach(node => node.classList.add("feedback-hold"));
+        return;
+      }
+
+      document.querySelectorAll("g.note.feedback-wrong, g.note.feedback-early, g.note.feedback-missed")
+        .forEach(node => {
+          node.classList.remove("feedback-wrong", "feedback-early", "feedback-missed");
+          paintNotehead(node);
+        });
+      if (kind !== "correct") {
+        document.querySelectorAll("g.note.feedback-early, g.note.feedback-missed")
+          .forEach(node => node.classList.remove("feedback-early", "feedback-missed"));
+      }
+
+      const noteClass = kind === "correct" ? "feedback-correct" :
+        kind === "wrong" || kind === "extra" ? "feedback-wrong" :
+        kind === "hold" ? "feedback-hold" :
+        kind === "early" ? "feedback-early" :
+        kind === "missed" ? "feedback-missed" : "";
+      if (noteClass) {
+        const visualTargets = kind === "wrong" || kind === "extra"
+          ? elementsForEvent(event, null).filter(node => !node.classList.contains("feedback-correct"))
+          : targetElements;
+        const noteColor = kind === "correct" ? "#19f47b" :
+          kind === "wrong" || kind === "extra" || kind === "missed" ? "#ff6577" :
+          kind === "early" ? "#ffb54d" : "#f6f2e9";
+        visualTargets.forEach(node => {
+          node.classList.add(noteClass);
+          if (kind !== "hold") paintNotehead(node, noteColor);
+        });
+      }
+
+      if (lessonMode === "TimedPlay" && ["correct", "wrong", "extra", "missed", "early"].includes(kind)) {
+        auditTrail.push({
+          kind,
+          beat: Number(beat || 0),
+          midiNote: midiNote == null ? null : Number(midiNote),
+          label: kind === "correct" ? "Correct note" :
+            kind === "missed" ? "Missed expected note" :
+            kind === "early" ? "Released early" : "Extra or wrong note"
+        });
+        if (auditVisible) rebuildAudit();
+      }
+
+      const labels = { correct: "✓", wrong: "×", extra: "×", missed: "MISS", hold: "HOLD", early: "EARLY" };
+      feedback.textContent = labels[kind] || "•";
+      feedback.className = "";
+      feedback.style.opacity = "0";
+      clearTimeout(feedbackTimer);
+      feedbackTimer = setTimeout(() => {
+        document.querySelectorAll(`g.note.${noteClass}`).forEach(node => {
+          node.classList.remove(noteClass);
+          paintNotehead(node);
+        });
+      }, kind === "wrong" || kind === "extra" ? 420 : 700);
+    }
+
+    window.CadenzaNotation = { loadScore, setReadingMode, setHintMode, setHandMode, startPlayback, stopPlayback, beginTimeline, endTimeline, setCursorBeat, setZoom, setTempo, changePage, resetAudit, beginLesson, finishLesson, showFeedback, getState, elementsAtBeat, validateRendererLayout, validateFeedbackGeometry };
+
+    document.addEventListener("DOMContentLoaded", () => {
+      verovio.module.onRuntimeInitialized = () => {
+        toolkit = new verovio.toolkit();
+        post("ready", { version: toolkit.getVersion() });
+      };
+    });
+  </script>
+</body>
+</html>

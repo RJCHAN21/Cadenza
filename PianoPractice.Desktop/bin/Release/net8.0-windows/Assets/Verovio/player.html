@@ -1,0 +1,801 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #101318; }
+    body { font-family: "Segoe UI", sans-serif; }
+    #stage { position: relative; width: 100%; height: 100%; display: grid; place-items: center; overflow: hidden; }
+    #notation {
+      position: relative; top: 0; width: 100%; max-height: 100%; transform-origin: center center;
+      transition: top 170ms cubic-bezier(.22,.75,.3,1), width 160ms ease, transform 160ms ease;
+    }
+    #notation svg { display: block; width: 100%; height: auto; max-height: 100vh; color: #f6f2e9 !important; }
+    #notation svg g, #notation svg text, #notation svg tspan { color: #f6f2e9 !important; }
+    #playhead {
+      position: absolute; z-index: 5; top: 5%; height: 90%; width: 2px;
+      background: #42d9f5; box-shadow: 0 0 14px rgba(66,217,245,.72);
+      transform: translateX(-1px); pointer-events: none; opacity: 0;
+    }
+    #playhead::before {
+      content: ""; position: absolute; top: -3px; left: -3px; width: 8px; height: 8px;
+      border-radius: 50%; background: #8beaff;
+    }
+    #notation g.note.playing {
+      filter: drop-shadow(0 0 5px rgba(66,217,245,.95));
+    }
+    #notation g.note.expected {
+      filter: drop-shadow(0 0 6px rgba(66,217,245,.95));
+    }
+    #notation g.note.feedback-correct {
+      filter: drop-shadow(0 0 7px rgba(91,231,164,1));
+    }
+    #notation g.note.feedback-correct .notehead,
+    #notation g.note.feedback-correct .notehead *,
+    #notation g.note.audit-correct .notehead,
+    #notation g.note.audit-correct .notehead * {
+      color: #5be7a4 !important; fill: #5be7a4 !important; stroke: #5be7a4 !important;
+    }
+    #notation g.note.feedback-wrong .notehead,
+    #notation g.note.feedback-wrong .notehead *,
+    #notation g.note.feedback-missed .notehead,
+    #notation g.note.feedback-missed .notehead *,
+    #notation g.note.audit-missed .notehead,
+    #notation g.note.audit-missed .notehead * {
+      color: #ff6577 !important; fill: #ff6577 !important; stroke: #ff6577 !important;
+      filter: drop-shadow(0 0 6px rgba(255,101,119,.9));
+    }
+    #notation g.note.feedback-early .notehead,
+    #notation g.note.feedback-early .notehead *,
+    #notation g.note.audit-early .notehead,
+    #notation g.note.audit-early .notehead * {
+      color: #ffb54d !important; fill: #ffb54d !important; stroke: #ffb54d !important;
+    }
+    #notation g.note.feedback-hold {
+      filter: drop-shadow(0 0 7px rgba(66,217,245,1));
+    }
+    #notation g.note.feedback-early {
+      filter: drop-shadow(0 0 7px rgba(255,181,77,1));
+    }
+    #notation g.note.feedback-missed {
+      filter: drop-shadow(0 0 7px rgba(255,101,119,1));
+    }
+    #feedback {
+      position: absolute; z-index: 7; top: 8%; transform: translate(-50%, -50%) scale(.85);
+      min-width: 34px; height: 34px; padding: 0 8px; border-radius: 17px;
+      display: grid; place-items: center; color: #081014; font: 700 13px "Segoe UI", sans-serif;
+      opacity: 0; pointer-events: none; transition: opacity 100ms ease, transform 140ms ease;
+    }
+    #feedback.visible { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    #feedback.correct { background: #5be7a4; box-shadow: 0 0 16px rgba(91,231,164,.7); }
+    #feedback.wrong { background: #ff6577; box-shadow: 0 0 16px rgba(255,101,119,.7); }
+    #feedback.hold { background: #42d9f5; box-shadow: 0 0 16px rgba(66,217,245,.65); }
+    #feedback.early { background: #ffb54d; box-shadow: 0 0 16px rgba(255,181,77,.65); }
+    #audit { position: absolute; inset: 0; z-index: 6; pointer-events: none; }
+    .audit-mark {
+      position: absolute; transform: translate(-50%, -50%); min-width: 21px; height: 21px;
+      padding: 0 5px; border-radius: 11px; display: grid; place-items: center;
+      color: #071014; font: 800 10px "Segoe UI", sans-serif; border: 2px solid #101318;
+    }
+    .audit-mark.correct { background: #5be7a4; }
+    .audit-mark.missed, .audit-mark.extra, .audit-mark.wrong { background: #ff6577; border-radius: 3px; transform: translate(-50%, -50%) rotate(45deg); }
+    .audit-mark.missed span, .audit-mark.extra span, .audit-mark.wrong span { transform: rotate(-45deg); }
+    .audit-mark.early { background: #ffb54d; }
+    #message { color: #aeb3bc; font-size: 13px; text-align: center; padding: 30px; }
+    /* The compact guide now lives in the native lesson-information row.
+       Hiding the legacy renderer lane keeps Hint mode from shifting the score. */
+    #hintLane { display: none !important; }
+    #stage.hints #notation { width: 100%; }
+    #stage.page-mode #notation,
+    #stage.continuous-mode #notation { transform: translateY(0); }
+    #stage.hand-right #notation g.staff.cadenza-bass,
+    #stage.hand-left #notation g.staff.cadenza-treble {
+      opacity: .30;
+    }
+    #notation g.staff {
+      transition: opacity 150ms ease;
+    }
+    #hintTitle { color: #8beaff; font-size: 10px; font-weight: 700; letter-spacing: .08em; }
+    #hintNotes { font: 700 18px "Segoe UI", sans-serif; color: #f6f2e9; }
+    #hintKeys { display: flex; gap: 6px; margin-left: auto; }
+    .hint-key { min-width: 34px; padding: 7px 8px; border-radius: 6px; background: #f6f2e9; color: #11161c; text-align: center; font-weight: 700; }
+    @media (prefers-reduced-motion: reduce) {
+      #notation { transition: none; }
+      #playhead { box-shadow: none; }
+    }
+  </style>
+  <script src="verovio-toolkit-wasm.js" defer></script>
+</head>
+<body>
+  <div id="stage">
+    <div id="message">Preparing the engraving engine…</div>
+    <div id="notation"></div>
+    <div id="playhead"></div>
+    <div id="audit"></div>
+    <div id="feedback" aria-live="polite"></div>
+    <div id="hintLane"><div><div id="hintTitle">NEXT NOTES</div><div id="hintNotes">—</div></div><div id="hintKeys"></div></div>
+  </div>
+  <script>
+    let toolkit = null;
+    let timemap = [];
+    let currentPage = 1;
+    let pageCount = 0;
+    let bpm = 120;
+    let readingMode = "Page";
+    let playbackStart = 0;
+    let playbackOffsetMs = 0;
+    let playing = false;
+    let frameHandle = 0;
+    let userZoom = 1;
+    let hintMode = false;
+    let handMode = "BothHands";
+    let keySignature = "";
+    const auditTrail = [];
+    let auditVisible = false;
+    let lessonRunning = false;
+    let lessonMode = "WaitForYou";
+    let pendingPage = 0;
+    let lastPositionKey = "";
+    let pageTransitionTimer = 0;
+    let pageTransitionGeneration = 0;
+    let latestRequestedBeat = 0;
+    let lastAuthoritativeBeat = 0;
+    let timelineRunning = false;
+    const elementPageIndex = new Map();
+
+    const notation = document.getElementById("notation");
+    const message = document.getElementById("message");
+    const playhead = document.getElementById("playhead");
+    const feedback = document.getElementById("feedback");
+    const audit = document.getElementById("audit");
+    const stage = document.getElementById("stage");
+    const hintNotes = document.getElementById("hintNotes");
+    const hintKeys = document.getElementById("hintKeys");
+    let feedbackTimer = 0;
+
+    function post(type, detail = {}) {
+      window.chrome?.webview?.postMessage({ type, ...detail });
+    }
+
+    function applyReadingModeClass() {
+      stage.classList.toggle("page-mode", readingMode === "Page");
+      stage.classList.toggle("continuous-mode", readingMode === "Continuous");
+    }
+
+    function optionsForMode(mode) {
+      const scale = mode === "Continuous" ? 58 : 56;
+      const normalWidth = 2200;
+      const width = normalWidth;
+      // A focused phrase in Continuous mode; two comfortably spaced systems
+      // in Page mode at a normal 16:9 desktop viewport. The page aspect ratio
+      // deliberately follows the reading viewport so systems use its width
+      // instead of being height-fitted into a narrow center column.
+      const height = mode === "Continuous" ? 520 : 1050;
+      return {
+        pageWidth: Math.round(width),
+        pageHeight: Math.round(height),
+        scale,
+        unit: 8.4,
+        adjustPageHeight: mode === "Continuous",
+        breaks: "auto",
+        spacingLinear: 0.30,
+        spacingNonLinear: 0.68,
+        minLastJustification: 0.0,
+        footer: "none",
+        header: "none",
+        pageMarginTop: 70,
+        pageMarginBottom: 90,
+        pageMarginLeft: 35,
+        pageMarginRight: 20,
+        font: "Bravura",
+        expandNever: true,
+        svgViewBox: true,
+        svgHtml5: true,
+        svgAdditionalAttribute: ["note@pname", "note@oct", "note@pnum", "note@accid", "note@accid.ges", "measure@n"]
+      };
+    }
+
+    function loadScore(base64, zipped, mode, scoreBpm, scoreKey = "") {
+      try {
+        auditTrail.length = 0;
+        audit.innerHTML = "";
+        readingMode = mode || "Page";
+        applyReadingModeClass();
+        bpm = Number(scoreBpm) || 120;
+        keySignature = String(scoreKey || "");
+        toolkit.setOptions(optionsForMode(readingMode));
+        const loaded = zipped
+          ? toolkit.loadZipDataBase64(base64)
+          : toolkit.loadData(new TextDecoder("utf-8").decode(Uint8Array.from(atob(base64), character => character.charCodeAt(0))));
+        if (!loaded) throw new Error("Verovio could not load this MusicXML source.");
+        const renderedTimemap = toolkit.renderToTimemap({ includeMeasures: true, includeRests: true });
+        timemap = typeof renderedTimemap === "string" ? JSON.parse(renderedTimemap || "[]") : (renderedTimemap || []);
+        window.__cadenzaTimemap = timemap;
+        pageCount = toolkit.getPageCount();
+        rebuildPageIndex();
+        currentPage = 1;
+        renderPage(1, false);
+        message.style.display = "none";
+        post("rendered", { pages: pageCount, version: toolkit.getVersion(), mode: readingMode });
+      } catch (error) {
+        message.style.display = "block";
+        message.textContent = `Notation could not be engraved: ${error.message || error}`;
+        post("error", { message: String(error.message || error) });
+      }
+    }
+
+    function setReadingMode(mode) {
+      if (!toolkit || !timemap.length) {
+        readingMode = mode;
+        applyReadingModeClass();
+        return;
+      }
+      readingMode = mode;
+      applyReadingModeClass();
+      toolkit.setOptions(optionsForMode(mode));
+      toolkit.redoLayout();
+      pageCount = toolkit.getPageCount();
+      rebuildPageIndex();
+      currentPage = 1;
+      renderPage(1, false);
+      post("modeChanged", { mode, pages: pageCount });
+    }
+
+    function setHintMode(enabled) {
+      hintMode = Boolean(enabled);
+      stage.classList.toggle("hints", hintMode);
+      requestAnimationFrame(applyHandFocus);
+      if (toolkit && timemap.length) renderLatestCursor();
+    }
+
+    function setHandMode(mode) {
+      handMode = String(mode || "BothHands");
+      stage.classList.toggle("hand-left", handMode === "LeftHand");
+      stage.classList.toggle("hand-right", handMode === "RightHand");
+      applyHandFocus();
+    }
+
+    function applyHandFocus() {
+      for (const system of notation.querySelectorAll("g.system")) {
+        const staves = [...system.querySelectorAll("g.staff")];
+        const centers = staves.map(staff => {
+          const bounds = staff.getBBox();
+          return bounds.y + bounds.height / 2;
+        });
+        if (!centers.length) continue;
+        const split = (Math.min(...centers) + Math.max(...centers)) / 2;
+        staves.forEach((staff, index) => {
+          const isTreble = centers[index] < split;
+          staff.classList.toggle("cadenza-treble", isTreble);
+          staff.classList.toggle("cadenza-bass", !isTreble);
+        });
+      }
+    }
+
+    function renderPage(page, animate = true, direction = 0, onRendered = null) {
+      page = Math.max(1, Math.min(pageCount || 1, page));
+      clearTimeout(pageTransitionTimer);
+      const generation = ++pageTransitionGeneration;
+      pendingPage = page;
+      playhead.style.opacity = "0";
+      // Engrave before changing the visible DOM, then swap synchronously. The
+      // authoritative WPF clock keeps running and the first cursor render on the
+      // new page occurs in this same JavaScript turn.
+      const renderedSvg = toolkit.renderToSVG(page, {});
+      const apply = () => {
+        if (generation !== pageTransitionGeneration) return;
+        notation.innerHTML = renderedSvg;
+        applyIvoryInk();
+        applyHandFocus();
+        applyZoom();
+        currentPage = page;
+        rebuildAudit();
+        pendingPage = 0;
+        const systems = Math.max(1, notation.querySelectorAll("g.system").length);
+        lastPositionKey = "";
+        post("pageChanged", { page: currentPage, pages: pageCount, system: 1, systems });
+        if (animate && direction !== 0 && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          notation.style.transition = "none";
+          notation.style.top = `${direction > 0 ? 34 : -34}px`;
+          void notation.offsetHeight;
+          notation.style.transition = "";
+          requestAnimationFrame(() => {
+            if (generation === pageTransitionGeneration) notation.style.top = "0px";
+          });
+        } else {
+          notation.style.top = "0px";
+        }
+        if (typeof onRendered === "function") onRendered();
+      };
+      apply();
+    }
+
+    // Verovio intentionally emits canonical SVG paint values. Dark mode must
+    // recolor the actual SVG primitives rather than relying on inherited HTML color.
+    function applyIvoryInk() {
+      const ink = "#f6f2e9";
+      const svg = notation.querySelector("svg");
+      if (!svg) return;
+      svg.style.color = ink;
+      svg.querySelectorAll("*").forEach(element => {
+        const computed = getComputedStyle(element);
+        if (computed.fill && computed.fill !== "none" && computed.fill !== "transparent") {
+          element.style.setProperty("fill", ink, "important");
+        }
+        if (computed.stroke && computed.stroke !== "none" && computed.stroke !== "transparent") {
+          element.style.setProperty("stroke", ink, "important");
+        }
+        element.style.setProperty("color", ink, "important");
+      });
+    }
+
+    function applyZoom() {
+      notation.style.width = `${userZoom * 100}%`;
+    }
+
+    function setZoom(percent) {
+      userZoom = Math.max(.8, Math.min(1.65, Number(percent || 100) / 100));
+      applyZoom();
+      post("zoomChanged", { percent: Math.round(userZoom * 100) });
+    }
+
+    function setTempo(nextBpm) {
+      bpm = Math.max(20, Math.min(300, Number(nextBpm) || bpm));
+    }
+
+    function changePage(delta) {
+      if (!toolkit || !pageCount) return;
+      if (pendingPage) return;
+      const direction = Math.sign(Number(delta || 0));
+      const targetPage = Math.max(1, Math.min(pageCount, currentPage + direction));
+      if (targetPage === currentPage) return;
+      renderPage(targetPage, true, direction);
+    }
+
+    function rebuildPageIndex() {
+      elementPageIndex.clear();
+      const parser = new DOMParser();
+      for (let page = 1; page <= pageCount; page++) {
+        const document = parser.parseFromString(toolkit.renderToSVG(page, {}), "image/svg+xml");
+        for (const element of document.querySelectorAll("[data-id]")) {
+          elementPageIndex.set(element.getAttribute("data-id"), page);
+        }
+      }
+    }
+
+    function pageForEvent(event) {
+      for (const id of event?.on || []) {
+        const page = elementPageIndex.get(id);
+        if (page) return page;
+      }
+      if (event?.measureOn) return elementPageIndex.get(event.measureOn) || currentPage;
+      return currentPage;
+    }
+
+    function keyAccidentalForPname(pname) {
+      const tonic = keySignature.match(/^[A-G](?:b|#)?/)?.[0] || "";
+      const flatKeys = { F: 1, Bb: 2, Eb: 3, Ab: 4, Db: 5, Gb: 6, Cb: 7 };
+      const sharpKeys = { G: 1, D: 2, A: 3, E: 4, B: 5, "F#": 6, "C#": 7 };
+      const flatOrder = ["B", "E", "A", "D", "G", "C", "F"];
+      const sharpOrder = ["F", "C", "G", "D", "A", "E", "B"];
+      if (flatOrder.slice(0, flatKeys[tonic] || 0).includes(pname)) return -1;
+      if (sharpOrder.slice(0, sharpKeys[tonic] || 0).includes(pname)) return 1;
+      return 0;
+    }
+
+    function midiFromElement(element) {
+      if (!element) return null;
+      const pnum = Number(element.getAttribute("data-pnum"));
+      if (Number.isFinite(pnum) && pnum > 0) return pnum;
+      const pname = (element.getAttribute("data-pname") || "").toUpperCase();
+      const octave = Number(element.getAttribute("data-oct"));
+      if (!pname || !Number.isFinite(octave)) return null;
+      const base = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[pname];
+      const accidentalValue = element.getAttribute("data-accid") || element.getAttribute("data-accid.ges") || "";
+      const accidental = { ff: -2, f: -1, n: 0, s: 1, ss: 2 }[accidentalValue] ??
+        keyAccidentalForPname(pname);
+      return (octave + 1) * 12 + base + accidental;
+    }
+
+    function elementsForEvent(event, midiNote) {
+      const elements = (event?.on || []).map(elementForVerovioId).filter(Boolean);
+      if (midiNote == null) return elements;
+      const matches = elements.filter(element => midiFromElement(element) === Number(midiNote));
+      return matches.length ? matches : elements.slice(0, 1);
+    }
+
+    function midiName(midiNote) {
+      if (midiNote == null) return "";
+      const names = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
+      const value = Number(midiNote);
+      return `${names[(value % 12 + 12) % 12]}${Math.floor(value / 12) - 1}`;
+    }
+
+    function paintNotehead(noteElement, color = "#f6f2e9") {
+      if (!noteElement) return;
+      noteElement.querySelectorAll(".notehead, .notehead *").forEach(node => {
+        node.style.setProperty("fill", color, "important");
+        node.style.setProperty("color", color, "important");
+      });
+    }
+
+    function clearNoteClass(selector, className) {
+      document.querySelectorAll(selector).forEach(node => {
+        node.classList.remove(className);
+        paintNotehead(node);
+      });
+    }
+
+    function resetAudit() {
+      auditTrail.length = 0;
+      auditVisible = false;
+      audit.innerHTML = "";
+    }
+
+    function beginLesson(mode, startBeat = 0, timed = false) {
+      endTimeline();
+      playhead.style.opacity = "0";
+      lessonMode = String(mode || "WaitForYou");
+      lessonRunning = true;
+      resetAudit();
+      feedback.className = "";
+      feedback.style.opacity = "0";
+      document.querySelectorAll("g.note.feedback-correct, g.note.feedback-wrong, g.note.feedback-hold, g.note.feedback-early, g.note.feedback-missed, g.note.audit-correct, g.note.audit-missed, g.note.audit-early")
+        .forEach(node => {
+          node.classList.remove("feedback-correct", "feedback-wrong", "feedback-hold", "feedback-early", "feedback-missed", "audit-correct", "audit-missed", "audit-early");
+          paintNotehead(node);
+        });
+      const firstBeat = Number(startBeat || 0);
+      const firstPage = pageForEvent(eventAtBeat(firstBeat));
+      if (firstPage !== currentPage) renderPage(firstPage, false);
+      lastPositionKey = "";
+      beginTimeline(firstBeat);
+    }
+
+    function finishLesson(completed) {
+      endTimeline();
+      if (Boolean(completed)) playhead.style.opacity = "0";
+      lessonRunning = false;
+      feedback.className = "";
+      feedback.style.opacity = "0";
+      clearTimeout(feedbackTimer);
+      document.querySelectorAll("g.note.feedback-correct, g.note.feedback-wrong, g.note.feedback-hold, g.note.feedback-early, g.note.feedback-missed")
+        .forEach(node => {
+          node.classList.remove("feedback-correct", "feedback-wrong", "feedback-hold", "feedback-early", "feedback-missed");
+          paintNotehead(node);
+        });
+      auditVisible = Boolean(completed) && lessonMode === "TimedPlay";
+      if (auditVisible) rebuildAudit();
+      else resetAudit();
+    }
+
+    function getState() {
+      return {
+        currentPage,
+        pageCount,
+        pendingPage,
+        readingMode,
+        hintMode,
+        handMode,
+        playing,
+        lessonRunning,
+        lessonMode,
+        auditVisible,
+        auditCount: auditTrail.length,
+        renderedAuditCount: audit.children.length,
+        feedbackKind: feedback.className,
+        playheadLeft: parseFloat(playhead.style.left || "0"),
+        playheadTop: parseFloat(playhead.style.top || "0"),
+        playheadHeight: parseFloat(playhead.style.height || "0")
+      };
+    }
+
+    function elementsAtBeat(beat) {
+      const event = eventAtBeat(beat);
+      return {
+        toolkit: toolkit?.getElementsAtTime(Math.max(0, Math.round(Number(beat || 0) * 60000 / bpm))) || null,
+        indexedPage: pageForEvent(event),
+        qstamp: event?.qstamp ?? null
+      };
+    }
+
+    function eventAtBeat(beat) {
+      const target = Number(beat || 0);
+      return timemap.reduce((best, event) =>
+        event.on?.length && Math.abs((event.qstamp ?? 0) - target) < Math.abs((best?.qstamp ?? 1e9) - target)
+          ? event : best, null);
+    }
+
+    function rebuildAudit() {
+      audit.innerHTML = "";
+      document.querySelectorAll("g.note.audit-correct, g.note.audit-missed, g.note.audit-early")
+        .forEach(node => {
+          node.classList.remove("audit-correct", "audit-missed", "audit-early");
+          paintNotehead(node);
+        });
+      if (!auditVisible) return;
+      for (const entry of auditTrail) {
+        const ms = entry.beat * 60000 / bpm;
+        const event = eventAtBeat(entry.beat);
+        if (pageForEvent(event) !== currentPage) continue;
+        const atTime = toolkit?.getElementsAtTime(Math.max(0, Math.round(ms)));
+        const noteElement = elementsForEvent(event, entry.midiNote)[0];
+        if (noteElement && ["correct", "missed", "early"].includes(entry.kind)) {
+          noteElement.classList.add(`audit-${entry.kind}`);
+          paintNotehead(noteElement, entry.kind === "correct" ? "#5be7a4" :
+            entry.kind === "missed" ? "#ff6577" : "#ffb54d");
+          continue;
+        }
+        const noteRect = noteElement?.getBoundingClientRect();
+        const x = noteRect ? noteRect.left + noteRect.width / 2 : noteCenter(event);
+        if (x == null) continue;
+        const rect = noteElement?.getBoundingClientRect();
+        const mark = document.createElement("div");
+        mark.className = `audit-mark ${entry.kind}`;
+        mark.style.left = `${x}px`;
+        mark.style.top = `${Math.max(24, (rect?.top ?? innerHeight * .7) - 18)}px`;
+        const span = document.createElement("span");
+        span.textContent = entry.kind === "correct" ? "✓" :
+          entry.kind === "missed" ? "M" :
+          entry.kind === "early" ? "H" : "×";
+        mark.title = `${entry.label}${entry.midiNote == null ? "" : ` · ${midiName(entry.midiNote)}`}`;
+        mark.appendChild(span);
+        audit.appendChild(mark);
+      }
+    }
+
+    function startPlayback(offsetBeat = 0) {
+      beginTimeline(offsetBeat);
+    }
+
+    function stopPlayback() {
+      playing = false;
+      cancelAnimationFrame(frameHandle);
+    }
+
+    function beginTimeline(startBeat = 0) {
+      stopPlayback();
+      timelineRunning = true;
+      latestRequestedBeat = Math.max(0, Number(startBeat || 0));
+      lastAuthoritativeBeat = latestRequestedBeat;
+      setCursorBeat(latestRequestedBeat, true);
+    }
+
+    function endTimeline() {
+      timelineRunning = false;
+      stopPlayback();
+    }
+
+    function setCursorBeat(beat, reset = false) {
+      const requestedBeat = Math.max(0, Number(beat || 0));
+      if (!reset && timelineRunning && requestedBeat + 0.0001 < lastAuthoritativeBeat) return;
+      latestRequestedBeat = requestedBeat;
+      lastAuthoritativeBeat = requestedBeat;
+      renderLatestCursor();
+    }
+
+    function renderLatestCursor() {
+      const beat = latestRequestedBeat;
+      const ms = beat * 60000 / bpm;
+      const desiredPage = pageForEvent(eventAtBeat(beat));
+      if (desiredPage !== currentPage) {
+        if (!pendingPage || pendingPage !== desiredPage) {
+          const direction = desiredPage > currentPage ? 1 : -1;
+          renderPage(desiredPage, true, direction, renderLatestCursor);
+        }
+        return;
+      }
+      if (pendingPage) return;
+      updateCursor(ms, true);
+      document.querySelectorAll("g.note.expected").forEach(node => node.classList.remove("expected"));
+      const atTime = toolkit?.getElementsAtTime(Math.max(0, Math.round(ms)));
+      for (const id of atTime?.notes || []) elementForVerovioId(id)?.classList.add("expected");
+      updateHintLane(atTime, beat);
+    }
+
+    function updateHintLane(atTime, beat) {
+      if (!hintMode) return;
+      const ids = atTime?.notes?.length ? atTime.notes : (eventAtBeat(beat)?.on || []);
+      const notes = ids.map(elementForVerovioId).filter(Boolean)
+        .map(element => {
+          const pnum = Number(element.getAttribute("data-pnum"));
+          if (Number.isFinite(pnum) && pnum > 0) {
+            const names = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
+            return `${names[pnum % 12]}${Math.floor(pnum / 12) - 1}`;
+          }
+          const pname = (element.getAttribute("data-pname") || "?").toUpperCase();
+          const accidentalValue = element.getAttribute("data-accid") || element.getAttribute("data-accid.ges") || "";
+          const explicit = { f: "♭", ff: "♭♭", s: "♯", ss: "♯♯", n: "♮" }[accidentalValue] || "";
+          const tonic = keySignature.match(/^[A-G](?:b|#)?/)?.[0] || "";
+          const flatKeys = { F: 1, Bb: 2, Eb: 3, Ab: 4, Db: 5, Gb: 6, Cb: 7 };
+          const sharpKeys = { G: 1, D: 2, A: 3, E: 4, B: 5, "F#": 6, "C#": 7 };
+          const flatOrder = ["B", "E", "A", "D", "G", "C", "F"];
+          const sharpOrder = ["F", "C", "G", "D", "A", "E", "B"];
+          const keyAccidental = flatOrder.slice(0, flatKeys[tonic] || 0).includes(pname) ? "♭" :
+            sharpOrder.slice(0, sharpKeys[tonic] || 0).includes(pname) ? "♯" : "";
+          const accidental = explicit || keyAccidental;
+          return `${pname}${accidental}${element.getAttribute("data-oct") || ""}`;
+        });
+      const unique = [...new Set(notes)];
+      hintNotes.textContent = unique.length ? unique.join(" + ") : "Watch the highlighted onset";
+      hintKeys.innerHTML = "";
+      for (const note of unique) {
+        const key = document.createElement("div");
+        key.className = "hint-key";
+        key.textContent = note;
+        hintKeys.appendChild(key);
+      }
+    }
+
+    function playbackFrame(now) {
+      if (!playing) return;
+      updateCursor(playbackOffsetMs + now - playbackStart, false);
+      frameHandle = requestAnimationFrame(playbackFrame);
+    }
+
+    function eventWithNotesAtOrBefore(ms) {
+      let result = null;
+      for (const event of timemap) {
+        if (event.tstamp > ms) break;
+        if (event.on?.length) result = event;
+      }
+      return result;
+    }
+
+    function eventWithNotesAfter(ms) {
+      return timemap.find(event => event.tstamp > ms && event.on?.length) || null;
+    }
+
+    function noteCenter(event) {
+      if (!event?.on?.length) return null;
+      const centers = event.on.map(elementForVerovioId)
+        .filter(Boolean)
+        .map(element => {
+          const rect = element.getBoundingClientRect();
+          return rect.left + rect.width / 2;
+        });
+      if (!centers.length) return null;
+      return centers.reduce((sum, value) => sum + value, 0) / centers.length;
+    }
+
+    function systemForEvent(event) {
+      if (!event?.on?.length) return null;
+      return event.on.map(elementForVerovioId).find(Boolean)?.closest("g.system") || null;
+    }
+
+    function elementForVerovioId(id) {
+      // svgHtml5 emits semantic data-id attributes instead of XML id attributes.
+      return document.getElementById(id) ||
+        notation.querySelector(`[data-id="${CSS.escape(String(id))}"]`);
+    }
+
+    function updateCursor(ms, immediate) {
+      if (!toolkit || !timemap.length) return;
+      const atTime = toolkit.getElementsAtTime(Math.max(0, Math.round(ms)));
+      const previous = eventWithNotesAtOrBefore(ms);
+      const next = eventWithNotesAfter(ms);
+      const desiredPage = pageForEvent(previous || next);
+      if (desiredPage !== currentPage) {
+        return;
+      }
+
+      let x1 = noteCenter(previous);
+      let x2 = noteCenter(next);
+      if (x1 == null && x2 == null) return;
+      if (x1 == null) x1 = x2;
+      if (x2 == null) x2 = x1;
+      const span = Math.max(1, (next?.tstamp ?? ms) - (previous?.tstamp ?? ms));
+      const progress = Math.max(0, Math.min(1, (ms - (previous?.tstamp ?? ms)) / span));
+      const previousSystem = systemForEvent(previous);
+      const nextSystem = systemForEvent(next);
+      const crossesSystem = Boolean(previousSystem && nextSystem && previousSystem !== nextSystem);
+      // Never interpolate from the end of one system toward the smaller X of
+      // the next system. Hold at the current onset, then the normal event
+      // selection atomically moves to the next system when its timestamp is due.
+      const x = crossesSystem ? x1 : x1 + (x2 - x1) * progress;
+      playhead.style.left = `${x}px`;
+      playhead.style.opacity = "1";
+      const system = previousSystem || nextSystem;
+      if (system) {
+        const systemRect = system.getBoundingClientRect();
+        const stageRect = stage.getBoundingClientRect();
+        const top = Math.max(6, systemRect.top - stageRect.top - 8);
+        const bottom = Math.min(stageRect.height - 6, systemRect.bottom - stageRect.top + 8);
+        playhead.style.top = `${top}px`;
+        playhead.style.height = `${Math.max(24, bottom - top)}px`;
+        const systems = [...notation.querySelectorAll("g.system")];
+        const systemNumber = Math.max(1, systems.indexOf(system) + 1);
+        const positionKey = `${currentPage}:${systemNumber}:${systems.length}`;
+        if (positionKey !== lastPositionKey) {
+          lastPositionKey = positionKey;
+          post("position", { page: currentPage, pages: pageCount, system: systemNumber, systems: systems.length });
+        }
+      }
+
+      document.querySelectorAll("g.note.playing").forEach(node => node.classList.remove("playing"));
+      for (const id of atTime?.notes || []) elementForVerovioId(id)?.classList.add("playing");
+    }
+
+    function showFeedback(kind, beat, midiNote = null) {
+      const ms = Number(beat || 0) * 60000 / bpm;
+      if (lessonMode === "WaitForYou") setCursorBeat(beat);
+      const event = eventAtBeat(beat);
+      const targetElements = elementsForEvent(event, midiNote);
+
+      if (kind === "release") {
+        targetElements.forEach(node => node.classList.remove("feedback-hold", "feedback-early"));
+        return;
+      }
+
+      if (kind === "hold") {
+        targetElements.forEach(node => node.classList.add("feedback-hold"));
+        return;
+      }
+
+      document.querySelectorAll("g.note.feedback-wrong, g.note.feedback-early, g.note.feedback-missed")
+        .forEach(node => {
+          node.classList.remove("feedback-wrong", "feedback-early", "feedback-missed");
+          paintNotehead(node);
+        });
+      if (kind !== "correct") {
+        document.querySelectorAll("g.note.feedback-early, g.note.feedback-missed")
+          .forEach(node => node.classList.remove("feedback-early", "feedback-missed"));
+      }
+
+      const noteClass = kind === "correct" ? "feedback-correct" :
+        kind === "wrong" || kind === "extra" ? "feedback-wrong" :
+        kind === "hold" ? "feedback-hold" :
+        kind === "early" ? "feedback-early" :
+        kind === "missed" ? "feedback-missed" : "";
+      if (noteClass) {
+        const visualTargets = kind === "wrong" || kind === "extra"
+          ? elementsForEvent(event, null).filter(node => !node.classList.contains("feedback-correct"))
+          : targetElements;
+        const noteColor = kind === "correct" ? "#5be7a4" :
+          kind === "wrong" || kind === "extra" || kind === "missed" ? "#ff6577" :
+          kind === "early" ? "#ffb54d" : "#f6f2e9";
+        visualTargets.forEach(node => {
+          node.classList.add(noteClass);
+          if (kind !== "hold") paintNotehead(node, noteColor);
+        });
+      }
+
+      if (lessonMode === "TimedPlay" && ["correct", "wrong", "extra", "missed", "early"].includes(kind)) {
+        auditTrail.push({
+          kind,
+          beat: Number(beat || 0),
+          midiNote: midiNote == null ? null : Number(midiNote),
+          label: kind === "correct" ? "Correct note" :
+            kind === "missed" ? "Missed expected note" :
+            kind === "early" ? "Released early" : "Extra or wrong note"
+        });
+        if (auditVisible) rebuildAudit();
+      }
+
+      const labels = { correct: "✓", wrong: "×", extra: "×", missed: "MISS", hold: "HOLD", early: "EARLY" };
+      feedback.textContent = labels[kind] || "•";
+      feedback.className = "";
+      feedback.style.opacity = "0";
+      clearTimeout(feedbackTimer);
+      feedbackTimer = setTimeout(() => {
+        document.querySelectorAll(`g.note.${noteClass}`).forEach(node => {
+          node.classList.remove(noteClass);
+          paintNotehead(node);
+        });
+      }, kind === "wrong" || kind === "extra" ? 420 : 700);
+    }
+
+    window.CadenzaNotation = { loadScore, setReadingMode, setHintMode, setHandMode, startPlayback, stopPlayback, beginTimeline, endTimeline, setCursorBeat, setZoom, setTempo, changePage, resetAudit, beginLesson, finishLesson, showFeedback, getState, elementsAtBeat };
+
+    document.addEventListener("DOMContentLoaded", () => {
+      verovio.module.onRuntimeInitialized = () => {
+        toolkit = new verovio.toolkit();
+        post("ready", { version: toolkit.getVersion() });
+      };
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,2590 @@
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Runtime.CompilerServices;
+using System.Windows;
+using System.Windows.Threading;
+using System.Xml;
+using PianoPractice.Desktop.Models;
+using PianoPractice.Desktop.Services;
+
+namespace PianoPractice.Desktop;
+
+public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
+{
+    private readonly MusicXmlImporter _importer = new();
+    private readonly MidiDeviceService _midiDeviceService = new();
+    private readonly PianoAudioService _audioService = new();
+    private readonly MidiOutSynthService _liveSynth = new();
+    private readonly MidiOutSynthService _accompanimentSynth = new();
+    private readonly MidiFileImporter _midiFileImporter = new();
+    private readonly UserProfileStore _profileStore;
+    private readonly CadenzaUserProfile _profile;
+    private readonly DispatcherTimer _lessonTimer;
+    private readonly DispatcherTimer _midiRefreshTimer;
+    private readonly Stopwatch _lessonClock = new();
+    private readonly Stopwatch _previewClock = new();
+    private readonly Stopwatch _practiceSessionClock = new();
+    private readonly SemaphoreSlim _modeTransitionGate = new(1, 1);
+    private readonly HashSet<int> _matchedNotes = [];
+    private readonly Dictionary<int, ActiveHold> _activeHolds = [];
+    private PracticeMode _selectedMode = PracticeMode.BothHands;
+    private LessonMode _selectedLessonMode = LessonMode.WaitForYou;
+    private ScoreReadingMode _readingMode = ScoreReadingMode.Page;
+    private MidiDeviceInfo? _selectedMidiDevice;
+    private ScoreDocument? _score;
+    private MidiReference? _midiReference;
+    private bool _useKeyboardSimulation;
+    private bool _metronomeEnabled = true;
+    private bool _midiMonitorEnabled = true;
+    private bool _pedalEnabled;
+    private bool _pedalDown;
+    private bool _resultsVisible;
+    private bool _isPlayerVisible;
+    private bool _isLessonActive;
+    private bool _isPreviewPlaying;
+    private bool _isPreviewBuilding;
+    private bool _isPreviewPaused;
+    private bool _isStartingLesson;
+    private bool _previewUsesScore;
+    private string _scoreTitle = "No score loaded";
+    private string _scoreByline = "Import a MusicXML or MXL score to begin.";
+    private string _sourceFileLabel = "Waiting for a score";
+    private string _scoreStatusLabel = "MusicXML is the notation source of truth";
+    private string _statusMessage = "Step 1: import a MusicXML score.";
+    private string _formatLabel = "-";
+    private string _keyLabel = "-";
+    private string _timeLabel = "-";
+    private string _tempoLabel = "-";
+    private string _measureLabel = "-";
+    private string _noteLabel = "-";
+    private string _lyricLabel = "-";
+    private string _partLabel = "-";
+    private string _midiStatusLabel = "Checking WinMM MIDI inputs...";
+    private string _midiApiDetail = "No WinMM query has run yet.";
+    private string _inputActivityLabel = "No note input received yet.";
+    private string _lessonStatusLabel = "No lesson running.";
+    private string _progressLabel = "0 / 0 expected groups";
+    private string _expectedLabel = "Import a score and start a lesson.";
+    private string _correctLabel = "0";
+    private string _missedLabel = "0";
+    private string _extraLabel = "0";
+    private string _accuracyLabel = "-";
+    private string _timingLabel = "Timing: -";
+    private string _previewStatusLabel = "Preview uses a local synthesized piano-like tone.";
+    private string _keyboardSimulationHint = "Computer piano: A S D F G H J K L ; are white keys. W E T Y U O P are black keys.";
+    private string _midiReferenceLabel = "No MIDI reference imported";
+    private string _pdfReferenceLabel = "No PDF reference imported";
+    private string _liveMonitorStatus = "MIDI monitor is on. Select a device to hear live piano.";
+    private string _resultHeadline = "Lesson complete";
+    private string _resultSummary = string.Empty;
+    private string _rewardLabel = string.Empty;
+    private string _midiLiveIndicator = "Not connected";
+    private string _lastMidiKeyLabel = "No physical MIDI event received";
+    private CancellationTokenSource? _previewCancellation;
+    private CancellationTokenSource? _modeStartCancellation;
+    private int _modeSwitchGeneration;
+    private IReadOnlyList<ScoreNoteGroup> _lessonGroups = [];
+    private int _lessonGroupIndex;
+    private int _correctCount;
+    private int _missedCount;
+    private int _extraCount;
+    private double _timingQualityTotal;
+    private double _holdQualityTotal;
+    private int _holdQualityCount;
+    private int _pedalCorrect;
+    private int _pedalAttempts;
+    private double _nextMetronomeBeat;
+    private bool _nativeInputActive;
+    private long _lessonRunGeneration;
+    private long _feedbackEventSequence;
+    private DateTime _lastLiveUpdate = DateTime.MinValue;
+    private string? _pdfReferencePath;
+    private int _monitorVolume = 85;
+    private int _overallVolume = 88;
+    private int _instrumentalVolume = 82;
+    private int _metronomeVolume = 65;
+    private int _otherHandAccompanimentVolume = 58;
+    private bool _instrumentalMuted;
+    private bool _metronomeMuted;
+    private bool _practiceFullAccompanimentEnabled;
+    private bool _performanceFullAccompanimentEnabled;
+    private bool _otherHandAccompanimentEnabled = true;
+    private byte[]? _preparedPerformanceWave;
+    private bool _performanceAudioOwnsMetronome;
+    private int _latencyMilliseconds;
+    private int _currentStreak;
+    private int _bestStreak;
+    private int _feedbackPulse;
+    private double _cursorBeat;
+    private double _feedbackBeat = -1;
+    private readonly List<double> _calibrationOffsets = [];
+    private long _lastCalibrationClickTimestamp;
+    private bool _calibrationActive;
+    private int _calibrationCapturedForClick = -1;
+    private int _calibrationClickIndex = -1;
+    private IReadOnlySet<int> _heldNoteNumbers = new HashSet<int>();
+    private DateTimeOffset? _lastMidiEventAt;
+    private int _lastIndicatorSecond = -1;
+    private int _focusStartMeasure = 1;
+    private int _focusEndMeasure = 1;
+    private int _lessonTempoPercent = 100;
+    private double _lessonStartBeat;
+    private double _previewStartBeat;
+    private double _previewEndBeat;
+    private bool _hintModeEnabled;
+    private int _notationZoomPercent = 100;
+    private SongProgressRecord? _currentSongProgress;
+
+    public MainWindowViewModel(string? profilePath = null)
+    {
+        _profileStore = new UserProfileStore(profilePath);
+        _profile = _profileStore.Load();
+        var settings = _profile.Settings ??= new CadenzaUserSettings();
+        _selectedMode = settings.HandMode;
+        _selectedLessonMode = settings.LessonMode;
+        _readingMode = settings.ScoreReadingMode;
+        _midiMonitorEnabled = settings.MidiMonitorEnabled;
+        _monitorVolume = Math.Clamp(settings.MonitorVolume, 0, 100);
+        _overallVolume = Math.Clamp(settings.OverallVolume, 0, 100);
+        _instrumentalVolume = Math.Clamp(settings.InstrumentalVolume, 0, 100);
+        _metronomeVolume = Math.Clamp(settings.MetronomeVolume, 0, 100);
+        _otherHandAccompanimentVolume = Math.Clamp(settings.OtherHandAccompanimentVolume, 0, 100);
+        _instrumentalMuted = settings.InstrumentalMuted;
+        _metronomeMuted = settings.MetronomeMuted;
+        _practiceFullAccompanimentEnabled = settings.PracticeFullAccompanimentEnabled;
+        _performanceFullAccompanimentEnabled = settings.PerformanceFullAccompanimentEnabled;
+        _otherHandAccompanimentEnabled = settings.OtherHandAccompanimentEnabled;
+        _lessonTempoPercent = Math.Clamp(settings.LessonTempoPercent, 50, 120);
+        _hintModeEnabled = settings.HintModeEnabled;
+        _notationZoomPercent = Math.Clamp(settings.NotationZoomPercent, 80, 165);
+        _focusStartMeasure = Math.Max(1, settings.FocusStartMeasure);
+        _focusEndMeasure = Math.Max(_focusStartMeasure, settings.FocusEndMeasure);
+        _pedalEnabled = settings.PedalEnabled;
+        _latencyMilliseconds = Math.Clamp(settings.LatencyMilliseconds, -250, 500);
+        _metronomeEnabled = settings.MetronomeEnabled;
+        _useKeyboardSimulation = settings.ComputerKeyboardEnabled;
+        _bestStreak = (_profile.Songs ??= new Dictionary<string, SongProgressRecord>(StringComparer.OrdinalIgnoreCase))
+            .Values.Select(progress => progress.BestStreak).DefaultIfEmpty(0).Max();
+        ApplyMixerVolumes();
+        _lessonTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(20)
+        };
+        _lessonTimer.Tick += LessonTimer_Tick;
+        _midiRefreshTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(4)
+        };
+        _midiRefreshTimer.Tick += MidiRefreshTimer_Tick;
+        _midiRefreshTimer.Start();
+        _midiDeviceService.NoteOn += MidiDeviceService_NoteOn;
+        _midiDeviceService.NoteOff += MidiDeviceService_NoteOff;
+        _midiDeviceService.ControlChange += MidiDeviceService_ControlChange;
+        _midiDeviceService.RawMessage += MidiDeviceService_RawMessage;
+        _midiDeviceService.InputError += MidiDeviceService_InputError;
+        _midiDeviceService.InputDisconnected += MidiDeviceService_InputDisconnected;
+        _midiDeviceService.Diagnostic += MidiDeviceService_Diagnostic;
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public event EventHandler? CorrectFeedback;
+    public event EventHandler? ResultsPresented;
+    public event EventHandler<LessonNoteFeedbackEvent>? NoteFeedback;
+    public event EventHandler<LessonRunStateEvent>? LessonRunStateChanged;
+
+    public ObservableCollection<MeasureSummary> Measures { get; } = [];
+    public ObservableCollection<MidiDeviceInfo> MidiDevices { get; } = [];
+    public ObservableCollection<MidiListenTrackOption> MidiListenTracks { get; } = [];
+    public ObservableCollection<string> MidiDiagnosticTrace { get; } = [];
+    public ObservableCollection<int> MeasureNumbers { get; } = [];
+
+    public string ScoreTitle { get => _scoreTitle; set => SetField(ref _scoreTitle, value); }
+    public string ScoreByline { get => _scoreByline; private set => SetField(ref _scoreByline, value); }
+    public string SourceFileLabel { get => _sourceFileLabel; private set => SetField(ref _sourceFileLabel, value); }
+    public string ScoreStatusLabel { get => _scoreStatusLabel; private set => SetField(ref _scoreStatusLabel, value); }
+    public string StatusMessage { get => _statusMessage; private set => SetField(ref _statusMessage, value); }
+    public string FormatLabel { get => _formatLabel; private set => SetField(ref _formatLabel, value); }
+    public string KeyLabel { get => _keyLabel; private set => SetField(ref _keyLabel, value); }
+    public string TimeLabel { get => _timeLabel; private set => SetField(ref _timeLabel, value); }
+    public string TempoLabel { get => _tempoLabel; private set => SetField(ref _tempoLabel, value); }
+    public string MeasureLabel { get => _measureLabel; private set => SetField(ref _measureLabel, value); }
+    public string NoteLabel { get => _noteLabel; private set => SetField(ref _noteLabel, value); }
+    public string LyricLabel { get => _lyricLabel; private set => SetField(ref _lyricLabel, value); }
+    public string PartLabel { get => _partLabel; private set => SetField(ref _partLabel, value); }
+    public string MidiStatusLabel { get => _midiStatusLabel; private set => SetField(ref _midiStatusLabel, value); }
+    public string MidiApiDetail { get => _midiApiDetail; private set => SetField(ref _midiApiDetail, value); }
+    public string InputActivityLabel { get => _inputActivityLabel; private set => SetField(ref _inputActivityLabel, value); }
+    public string LessonStatusLabel { get => _lessonStatusLabel; private set => SetField(ref _lessonStatusLabel, value); }
+    public string ProgressLabel { get => _progressLabel; private set => SetField(ref _progressLabel, value); }
+    public string ExpectedLabel
+    {
+        get => _expectedLabel;
+        private set
+        {
+            if (!SetField(ref _expectedLabel, value)) return;
+            OnPropertyChanged(nameof(NextNotesLabel));
+        }
+    }
+    public string NextNotesLabel
+    {
+        get
+        {
+            var separator = ExpectedLabel.IndexOf('|');
+            return separator >= 0 ? ExpectedLabel[(separator + 1)..].Trim() : ExpectedLabel;
+        }
+    }
+    public string CorrectLabel { get => _correctLabel; private set => SetField(ref _correctLabel, value); }
+    public string MissedLabel { get => _missedLabel; private set => SetField(ref _missedLabel, value); }
+    public string ExtraLabel { get => _extraLabel; private set => SetField(ref _extraLabel, value); }
+    public string AccuracyLabel { get => _accuracyLabel; private set => SetField(ref _accuracyLabel, value); }
+    public string TimingLabel { get => _timingLabel; private set => SetField(ref _timingLabel, value); }
+    public string PreviewStatusLabel { get => _previewStatusLabel; private set => SetField(ref _previewStatusLabel, value); }
+    public string KeyboardSimulationHint { get => _keyboardSimulationHint; private set => SetField(ref _keyboardSimulationHint, value); }
+    public string MidiReferenceLabel { get => _midiReferenceLabel; private set => SetField(ref _midiReferenceLabel, value); }
+    public string PdfReferenceLabel { get => _pdfReferenceLabel; private set => SetField(ref _pdfReferenceLabel, value); }
+    public string LiveMonitorStatus { get => _liveMonitorStatus; private set => SetField(ref _liveMonitorStatus, value); }
+    public string ResultHeadline { get => _resultHeadline; private set => SetField(ref _resultHeadline, value); }
+    public string ResultSummary { get => _resultSummary; private set => SetField(ref _resultSummary, value); }
+    public string RewardLabel { get => _rewardLabel; private set => SetField(ref _rewardLabel, value); }
+    public string MidiLiveIndicator { get => _midiLiveIndicator; private set => SetField(ref _midiLiveIndicator, value); }
+    public string LastMidiKeyLabel { get => _lastMidiKeyLabel; private set => SetField(ref _lastMidiKeyLabel, value); }
+    public string PitchCategoryLabel => $"Pitch {AccuracyLabel}";
+    public string TimingCategoryLabel => TimingLabel.Replace("Timing: ", "Timing ");
+    public string HoldCategoryLabel => _holdQualityCount == 0 ? "Hold —" : $"Hold {_holdQualityTotal / _holdQualityCount * 100:0}%";
+    public string PedalCategoryLabel
+    {
+        get
+        {
+            if (!PedalEnabled) return "Pedal not enabled";
+            if (_score?.Marks.Any(mark => mark.Kind == ScoreMarkKind.Pedal) != true) return "Pedal monitored · not graded";
+            return _pedalAttempts == 0 ? "Pedal —" : $"Pedal {_pedalCorrect * 100d / _pedalAttempts:0}%";
+        }
+    }
+    public IReadOnlySet<int> HeldNoteNumbers { get => _heldNoteNumbers; private set => SetField(ref _heldNoteNumbers, value); }
+    public ScoreDocument? CurrentScore => _score;
+    public bool HasMidiReference => _midiReference is not null;
+    public bool HasPdfReference => !string.IsNullOrWhiteSpace(_pdfReferencePath);
+    public double CursorBeat
+    {
+        get => _cursorBeat;
+        private set
+        {
+            if (!SetField(ref _cursorBeat, value)) return;
+            UpdateExpectedGuideForCursor();
+        }
+    }
+    public double FeedbackBeat { get => _feedbackBeat; private set => SetField(ref _feedbackBeat, value); }
+    public int FeedbackPulse { get => _feedbackPulse; private set => SetField(ref _feedbackPulse, value); }
+    public int CurrentStreak { get => _currentStreak; private set { if (SetField(ref _currentStreak, value)) OnPropertyChanged(nameof(StreakLabel)); } }
+    public int BestStreak { get => _bestStreak; private set => SetField(ref _bestStreak, value); }
+    public string StreakLabel => CurrentStreak == 0 ? "Build your streak" : $"{CurrentStreak} note streak";
+    public double StreakProgress => Math.Min(100, CurrentStreak * 10);
+    public bool ResultsVisible { get => _resultsVisible; private set => SetField(ref _resultsVisible, value); }
+    public bool IsPlayerVisible
+    {
+        get => _isPlayerVisible;
+        private set
+        {
+            if (SetField(ref _isPlayerVisible, value)) OnPropertyChanged(nameof(IsDashboardVisible));
+        }
+    }
+    public bool IsDashboardVisible => !IsPlayerVisible;
+    public string DashboardScoreSummary => _score is null
+        ? "No songs imported yet"
+        : $"{_score.MeasureCount} measures · {_score.TempoBpm:0} BPM · {_score.TimeSignature}";
+    public string DashboardProgressSummary => _currentSongProgress is null || _currentSongProgress.Attempts.Count == 0
+        ? "No completed attempts yet"
+        : $"{_currentSongProgress.Attempts.Count} completed · best {_currentSongProgress.Attempts.Max(attempt => attempt.AccuracyPercent):0}%";
+    public string RecentAttemptLabel => _currentSongProgress?.Attempts.LastOrDefault() is { } attempt
+        ? $"{attempt.CompletedUtc.ToLocalTime():MMM d} · {attempt.Mode} · {attempt.AccuracyPercent:0}%"
+        : "Complete a lesson to begin your history";
+    public string CumulativePracticeLabel => _currentSongProgress is null
+        ? "0 min practiced"
+        : $"{Math.Round(_currentSongProgress.CumulativePracticeSeconds / 60d):0} min practiced";
+    public int CompletedAttemptCount => _currentSongProgress?.Attempts.Count ?? 0;
+
+    public bool HasScore => _score is not null;
+    public bool HasImportValidationWarnings => _score?.ValidationWarnings.Count > 0;
+    public IReadOnlyList<ScoreValidationWarning> ImportValidationWarnings =>
+        _score?.ValidationWarnings ?? Array.Empty<ScoreValidationWarning>();
+    public string ImportWarningBadgeLabel => _score?.ValidationWarnings.Count switch
+    {
+        null or 0 => "Import verified",
+        1 => "1 import warning",
+        var count => $"{count} import warnings"
+    };
+    public string ImportValidationSummary => _score?.ValidationWarnings.Count switch
+    {
+        null or 0 => "Score navigation validated",
+        1 => _score.ValidationWarnings[0].Message,
+        _ => $"{_score.ValidationWarnings.Count} import warnings · {_score.ValidationWarnings[0].Message}"
+    };
+    public bool HasMidiHardware => MidiDevices.Count > 0;
+    public bool HasNoMidiDevices => !HasMidiHardware;
+    public string PreferredMidiDeviceLabel => string.IsNullOrWhiteSpace(_profile.Settings?.PreferredMidiDeviceName)
+        ? "No saved MIDI preference"
+        : $"Saved keyboard: {_profile.Settings.PreferredMidiDeviceName}";
+    public bool IsLessonActive { get => _isLessonActive; private set => SetField(ref _isLessonActive, value); }
+    public bool IsPreviewPlaying { get => _isPreviewPlaying; private set => SetField(ref _isPreviewPlaying, value); }
+    public bool IsPreviewBuilding { get => _isPreviewBuilding; private set => SetField(ref _isPreviewBuilding, value); }
+    public bool IsPreviewPaused { get => _isPreviewPaused; private set => SetField(ref _isPreviewPaused, value); }
+    public bool IsScorePreviewPlaying => IsPreviewPlaying && _previewUsesScore;
+    public bool CanChooseInput => !IsLessonActive;
+    public bool HasAcceptedInput => _nativeInputActive || UseKeyboardSimulation;
+    public bool CanStartLesson => HasScore && !IsLessonActive && !_isStartingLesson &&
+                                  (SelectedLessonMode == LessonMode.Listen ||
+                                   ((SelectedLessonMode == LessonMode.WaitForYou ||
+                                     !_score!.HasBlockingAssessmentWarning(FocusStartMeasure, FocusEndMeasure)) &&
+                                    !_score!.CutsRepeatRegion(FocusStartMeasure, FocusEndMeasure) &&
+                                    HasAcceptedInput &&
+                                    _lessonGroups.Count > 0));
+    public bool CanPlayMidiReference => _midiReference is { Notes.Count: > 0 } &&
+                                        MidiListenTracks.Any(track => track.IsSelected) &&
+                                        !IsPreviewBuilding;
+    public bool IsCalibrationActive { get => _calibrationActive; private set => SetField(ref _calibrationActive, value); }
+    public int FocusStartMeasure
+    {
+        get => _focusStartMeasure;
+        set
+        {
+            var next = Math.Clamp(value, 1, Math.Max(1, _score?.MeasureCount ?? 1));
+            if (!SetField(ref _focusStartMeasure, next)) return;
+            StopActiveSessionForSelectionChange();
+            if (_focusEndMeasure < next)
+            {
+                _focusEndMeasure = next;
+                OnPropertyChanged(nameof(FocusEndMeasure));
+            }
+            RefreshLessonGroups();
+            ResetPreviewPositionToRangeStart();
+            OnPropertyChanged(nameof(FocusRangeLabel));
+            SaveProfileSettings();
+        }
+    }
+    public int FocusEndMeasure
+    {
+        get => _focusEndMeasure;
+        set
+        {
+            var next = Math.Clamp(value, FocusStartMeasure, Math.Max(FocusStartMeasure, _score?.MeasureCount ?? 1));
+            if (!SetField(ref _focusEndMeasure, next)) return;
+            StopActiveSessionForSelectionChange();
+            RefreshLessonGroups();
+            ResetPreviewPositionToRangeStart();
+            OnPropertyChanged(nameof(FocusRangeLabel));
+            SaveProfileSettings();
+        }
+    }
+    public string FocusRangeLabel => $"Bars {FocusStartMeasure}–{FocusEndMeasure}";
+    public int LessonTempoPercent
+    {
+        get => _lessonTempoPercent;
+        set
+        {
+            if (!SetField(ref _lessonTempoPercent, Math.Clamp(value, 50, 120))) return;
+            OnPropertyChanged(nameof(EffectiveLessonTempoBpm));
+            OnPropertyChanged(nameof(LessonTempoLabel));
+            OnPropertyChanged(nameof(LessonTempoPercentText));
+            OnPropertyChanged(nameof(EffectiveLessonTempoBpmText));
+            OnPropertyChanged(nameof(MetronomeLabel));
+            SaveProfileSettings();
+        }
+    }
+    public double EffectiveLessonTempoBpm => (_score?.TempoBpm ?? 120) * LessonTempoPercent / 100d;
+    public string LessonTempoLabel => $"{LessonTempoPercent}% · {EffectiveLessonTempoBpm:0} BPM";
+    public string LessonTempoPercentText
+    {
+        get => LessonTempoPercent.ToString(CultureInfo.CurrentCulture);
+        set
+        {
+            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.CurrentCulture, out var percent))
+            {
+                LessonTempoPercent = Math.Clamp(percent, 50, 120);
+            }
+
+            // Restore canonical, clamped text after invalid input or an unchanged assignment.
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(EffectiveLessonTempoBpmText));
+        }
+    }
+    public string EffectiveLessonTempoBpmText
+    {
+        get => EffectiveLessonTempoBpm.ToString("0", CultureInfo.CurrentCulture);
+        set
+        {
+            if (double.TryParse(value, NumberStyles.Number, CultureInfo.CurrentCulture, out var bpm) && bpm > 0)
+            {
+                var baseTempo = Math.Max(1d, _score?.TempoBpm ?? 120d);
+                var percent = (int)Math.Round(bpm / baseTempo * 100d, MidpointRounding.AwayFromZero);
+                LessonTempoPercent = Math.Clamp(percent, 50, 120);
+            }
+
+            // The effective BPM is derived from the persisted percentage.
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(LessonTempoPercentText));
+        }
+    }
+
+    public string NoteLyricLabel => $"{NoteLabel} / {LyricLabel}";
+    public string PreviewButtonLabel => IsPreviewBuilding ? "Preparing..." : IsPreviewPlaying ? "Pause" : IsPreviewPaused ? "Resume" : "Play";
+    public bool CanUseTransport => HasScore && !IsLessonActive && !IsPreviewBuilding &&
+                                   SelectedLessonMode == LessonMode.Listen;
+    public bool HintModeEnabled
+    {
+        get => _hintModeEnabled;
+        set
+        {
+            if (!SetField(ref _hintModeEnabled, value)) return;
+            SaveProfileSettings();
+        }
+    }
+
+    public int NotationZoomPercent
+    {
+        get => _notationZoomPercent;
+        set
+        {
+            if (!SetField(ref _notationZoomPercent, Math.Clamp(value, 80, 165))) return;
+            SaveProfileSettings();
+        }
+    }
+    public string LessonButtonLabel => SelectedLessonMode switch
+    {
+        LessonMode.Listen when IsPreviewPlaying => "Pause listening",
+        LessonMode.Listen when IsPreviewPaused => "Resume listening",
+        LessonMode.Listen => "Start listening",
+        _ when IsLessonActive => "Lesson running",
+        _ when _isStartingLesson => "Preparing…",
+        LessonMode.WaitForYou => "Start practice",
+        _ => "Start performance"
+    };
+    public string MetronomeLabel => _metronomeEnabled
+        ? $"Metronome on · {EffectiveLessonTempoBpm:0} BPM"
+        : "Metronome off";
+    public string InputSourceLabel => (_nativeInputActive, UseKeyboardSimulation) switch
+    {
+        (true, true) => $"MIDI: {SelectedMidiDevice?.Name ?? "connected keyboard"} + computer keys",
+        (true, false) => $"MIDI: {SelectedMidiDevice?.Name ?? "connected keyboard"}",
+        (false, true) => "Computer keys active · no MIDI capture",
+        _ => "No active lesson input"
+    };
+    public string StartLessonReason
+    {
+        get
+        {
+            if (!HasScore) return "Import a MusicXML score first.";
+            if (SelectedLessonMode == LessonMode.Listen) return "Ready to play the selected score automatically without assessment.";
+            var blockingWarning = _score?.ValidationWarnings.FirstOrDefault(warning =>
+                warning.BlocksAssessment &&
+                warning.StartMeasure <= FocusEndMeasure &&
+                warning.EndMeasure >= FocusStartMeasure);
+            if (blockingWarning is not null && SelectedLessonMode == LessonMode.TimedPlay)
+            {
+                return $"Assessment is unavailable for bars {blockingWarning.StartMeasure}–{blockingWarning.EndMeasure}. " +
+                       "Choose a range outside this warning; full details are in the import warning badge.";
+            }
+            if (_score?.PartialRepeatReason(FocusStartMeasure, FocusEndMeasure) is { } partialRepeat) return partialRepeat;
+            if (_lessonGroups.Count == 0) return $"No playable notes were found for {SelectedModeLabel}.";
+            if (!HasAcceptedInput) return "Open Piano setup and connect a MIDI keyboard or enable computer piano keys.";
+            if (blockingWarning is not null && SelectedLessonMode == LessonMode.WaitForYou)
+            {
+                return "Ready for guided Practice. Explicit repeat barlines are followed; ambiguous volta endings remain unscored and are not saved as an assessed result.";
+            }
+            return (_nativeInputActive, UseKeyboardSimulation) switch
+            {
+                (true, true) => "Ready. Physical MIDI and computer piano keys both feed lesson scoring.",
+                (true, false) => "Ready. The selected MIDI input is connected for live capture.",
+                _ => "Ready with computer piano keys. No MIDI hardware is currently capturing."
+            };
+        }
+    }
+
+    public PracticeMode SelectedMode
+    {
+        get => _selectedMode;
+        private set
+        {
+            if (SetField(ref _selectedMode, value))
+            {
+                RefreshLessonGroups();
+                OnPropertyChanged(nameof(SelectedModeLabel));
+                OnPropertyChanged(nameof(SelectedModeDescription));
+                OnPropertyChanged(nameof(StartLessonReason));
+                SaveProfileSettings();
+            }
+        }
+    }
+
+    public LessonMode SelectedLessonMode
+    {
+        get => _selectedLessonMode;
+        private set
+        {
+            if (SetField(ref _selectedLessonMode, value))
+            {
+                OnPropertyChanged(nameof(SelectedLessonModeLabel));
+                ResetLessonStats();
+                SaveProfileSettings();
+            }
+        }
+    }
+
+    public ScoreReadingMode ReadingMode
+    {
+        get => _readingMode;
+        private set
+        {
+            if (SetField(ref _readingMode, value)) SaveProfileSettings();
+        }
+    }
+
+    public MidiDeviceInfo? SelectedMidiDevice
+    {
+        get => _selectedMidiDevice;
+        set
+        {
+            if (SetField(ref _selectedMidiDevice, value))
+            {
+                ConnectSelectedMidiDevice();
+                if (value is not null)
+                {
+                    var settings = _profile.Settings ??= new CadenzaUserSettings();
+                    settings.PreferredMidiDeviceId = value.Id;
+                    settings.PreferredMidiDeviceName = value.Name;
+                    SaveProfileSettings();
+                    OnPropertyChanged(nameof(PreferredMidiDeviceLabel));
+                }
+                OnPropertyChanged(nameof(InputSourceLabel));
+                OnPropertyChanged(nameof(StartLessonReason));
+                OnPropertyChanged(nameof(CanStartLesson));
+            }
+        }
+    }
+
+    public bool MidiMonitorEnabled
+    {
+        get => _midiMonitorEnabled;
+        set
+        {
+            if (!SetField(ref _midiMonitorEnabled, value)) return;
+            if (!value) _liveSynth.AllNotesOff();
+            LiveMonitorStatus = value
+                ? "MIDI Monitor / Thru is on. Incoming notes sound through the Windows piano output."
+                : "MIDI Monitor / Thru is off. Input is still captured and scored.";
+            SaveProfileSettings();
+        }
+    }
+
+    public int MonitorVolume
+    {
+        get => _monitorVolume;
+        set
+        {
+            if (!SetField(ref _monitorVolume, Math.Clamp(value, 0, 100))) return;
+            ApplyMixerVolumes();
+            OnPropertyChanged(nameof(MonitorVolumeLabel));
+            SaveProfileSettings();
+        }
+    }
+
+    public string MonitorVolumeLabel => $"{MonitorVolume}%";
+
+    public int OverallVolume
+    {
+        get => _overallVolume;
+        set
+        {
+            if (!SetField(ref _overallVolume, Math.Clamp(value, 0, 100))) return;
+            ApplyMixerVolumes();
+            OnPropertyChanged(nameof(OverallVolumeLabel));
+            OnPropertyChanged(nameof(IsMetronomeAudible));
+            SaveProfileSettings();
+        }
+    }
+
+    public string OverallVolumeLabel => $"{OverallVolume}%";
+
+    public int InstrumentalVolume
+    {
+        get => _instrumentalVolume;
+        set
+        {
+            if (!SetField(ref _instrumentalVolume, Math.Clamp(value, 0, 100))) return;
+            OnPropertyChanged(nameof(InstrumentalVolumeLabel));
+            SaveProfileSettings();
+        }
+    }
+
+    public string InstrumentalVolumeLabel => $"{InstrumentalVolume}%";
+
+    public bool InstrumentalMuted
+    {
+        get => _instrumentalMuted;
+        set
+        {
+            if (!SetField(ref _instrumentalMuted, value)) return;
+            OnPropertyChanged(nameof(SongAccompanimentEnabled));
+            SaveProfileSettings();
+        }
+    }
+
+    public bool SongAccompanimentEnabled
+    {
+        get => !InstrumentalMuted;
+        set => InstrumentalMuted = !value;
+    }
+
+    public int MetronomeVolume
+    {
+        get => _metronomeVolume;
+        set
+        {
+            if (!SetField(ref _metronomeVolume, Math.Clamp(value, 0, 100))) return;
+            OnPropertyChanged(nameof(MetronomeVolumeLabel));
+            SaveProfileSettings();
+        }
+    }
+
+    public string MetronomeVolumeLabel => $"{MetronomeVolume}%";
+
+    public bool MetronomeMuted
+    {
+        get => _metronomeMuted;
+        set
+        {
+            if (!SetField(ref _metronomeMuted, value)) return;
+            OnPropertyChanged(nameof(MetronomeSoundEnabled));
+            OnPropertyChanged(nameof(IsMetronomeAudible));
+            SaveProfileSettings();
+        }
+    }
+
+    public bool MetronomeSoundEnabled
+    {
+        get => !MetronomeMuted;
+        set => MetronomeMuted = !value;
+    }
+
+    public bool IsMetronomeAudible => MetronomeEnabled && !MetronomeMuted && MetronomeVolume > 0 && OverallVolume > 0;
+
+    public bool PracticeFullAccompanimentEnabled
+    {
+        get => _practiceFullAccompanimentEnabled;
+        set
+        {
+            if (!SetField(ref _practiceFullAccompanimentEnabled, value)) return;
+            SaveProfileSettings();
+        }
+    }
+
+    public bool PerformanceFullAccompanimentEnabled
+    {
+        get => _performanceFullAccompanimentEnabled;
+        set
+        {
+            if (!SetField(ref _performanceFullAccompanimentEnabled, value)) return;
+            SaveProfileSettings();
+        }
+    }
+
+    public bool OtherHandAccompanimentEnabled
+    {
+        get => _otherHandAccompanimentEnabled;
+        set
+        {
+            if (!SetField(ref _otherHandAccompanimentEnabled, value)) return;
+            if (!value) _accompanimentSynth.AllNotesOff();
+            SaveProfileSettings();
+        }
+    }
+
+    public int OtherHandAccompanimentVolume
+    {
+        get => _otherHandAccompanimentVolume;
+        set
+        {
+            if (!SetField(ref _otherHandAccompanimentVolume, Math.Clamp(value, 0, 100))) return;
+            ApplyMixerVolumes();
+            OnPropertyChanged(nameof(OtherHandAccompanimentVolumeLabel));
+            SaveProfileSettings();
+        }
+    }
+
+    public string OtherHandAccompanimentVolumeLabel => $"{OtherHandAccompanimentVolume}%";
+    public bool HasVocalTrack => false;
+    public string VocalAvailabilityLabel => "No vocal audio is included with this lesson.";
+
+    public bool PedalEnabled
+    {
+        get => _pedalEnabled;
+        set
+        {
+            if (!SetField(ref _pedalEnabled, value)) return;
+            OnPropertyChanged(nameof(PedalStatusLabel));
+            OnPropertyChanged(nameof(PedalGradingLabel));
+            OnPropertyChanged(nameof(PedalCategoryLabel));
+            OnPropertyChanged(nameof(DashboardScoreSummary));
+            OnPropertyChanged(nameof(DashboardScoreSummary));
+            StatusMessage = value
+                ? "Sustain-pedal cues are enabled. CC64 is monitored and reported; pitch scoring remains note-based."
+                : "Sustain-pedal setup is optional and currently off.";
+            SaveProfileSettings();
+        }
+    }
+
+    public string PedalStatusLabel => !PedalEnabled ? "Optional pedal disabled" : _pedalDown ? "Sustain pedal down (CC64)" : "Sustain pedal ready (CC64)";
+
+    public string PedalGradingLabel => _score?.Marks.Any(mark => mark.Kind == ScoreMarkKind.Pedal) == true
+        ? "This score contains pedal cues; CC64 timing is graded."
+        : "This score has no pedal marks. CC64 is monitored and passed through, but not graded.";
+
+    public int LatencyMilliseconds
+    {
+        get => _latencyMilliseconds;
+        set
+        {
+            if (!SetField(ref _latencyMilliseconds, Math.Clamp(value, -250, 500))) return;
+            OnPropertyChanged(nameof(LatencyLabel));
+            SaveProfileSettings();
+        }
+    }
+
+    public string LatencyLabel => LatencyMilliseconds == 0 ? "0 ms correction" : $"{LatencyMilliseconds:+0;-0} ms correction";
+
+    public async Task CalibrateLatencyAsync()
+    {
+        if (IsCalibrationActive) return;
+        if (SelectedMidiDevice is null && !UseKeyboardSimulation)
+        {
+            StatusMessage = "Select a MIDI device or enable computer keyboard input before calibration.";
+            LiveMonitorStatus = StatusMessage;
+            return;
+        }
+
+        _calibrationOffsets.Clear();
+        IsCalibrationActive = true;
+        StatusMessage = "Latency calibration: play any key immediately after each of four clicks.";
+        LiveMonitorStatus = StatusMessage;
+        try
+        {
+            await Task.Delay(700);
+            for (var index = 0; index < 4; index++)
+            {
+                _calibrationClickIndex = index;
+                _calibrationCapturedForClick = -1;
+                _lastCalibrationClickTimestamp = Stopwatch.GetTimestamp();
+                _audioService.PlayMetronomeClick(index == 0, EffectiveMixerVolume(MetronomeVolume));
+                StatusMessage = $"Latency calibration: click {index + 1}/4 — play now.";
+                await Task.Delay(850);
+            }
+
+            if (_calibrationOffsets.Count == 0)
+            {
+                StatusMessage = "Calibration received no notes. The existing latency correction was kept.";
+                LiveMonitorStatus = StatusMessage;
+            }
+            else
+            {
+                LatencyMilliseconds = (int)Math.Round(_calibrationOffsets.Average());
+                StatusMessage = $"Latency calibrated from {_calibrationOffsets.Count} response(s): {LatencyLabel}.";
+                LiveMonitorStatus = StatusMessage;
+            }
+        }
+        finally
+        {
+            IsCalibrationActive = false;
+            _calibrationClickIndex = -1;
+        }
+    }
+
+    public bool UseKeyboardSimulation
+    {
+        get => _useKeyboardSimulation;
+        set
+        {
+            if (SetField(ref _useKeyboardSimulation, value))
+            {
+                // The computer keyboard is an additional source. It must never stop
+                // or replace an active physical MIDI capture.
+                if (SelectedMidiDevice is not null && !_midiDeviceService.IsCapturing)
+                    ConnectSelectedMidiDevice();
+                MidiApiDetail = value
+                    ? "Computer piano keys are enabled alongside any connected WinMM MIDI input."
+                    : "Computer piano keys are off. Connected WinMM MIDI input remains active.";
+                LiveMonitorStatus = value
+                    ? "Computer keys enabled. Physical MIDI remains accepted whenever connected."
+                    : MidiMonitorEnabled
+                        ? "Computer keys off. Physical MIDI input and keyboard sound remain active."
+                        : "Computer keys off. Physical MIDI input remains captured for scoring.";
+                OnPropertyChanged(nameof(InputSourceLabel));
+                OnPropertyChanged(nameof(HasAcceptedInput));
+                OnPropertyChanged(nameof(StartLessonReason));
+                OnPropertyChanged(nameof(CanStartLesson));
+                KeyboardSimulationHint = value
+                    ? "A S D F G H J K L ; = white keys · W E T Y U O P = black keys · not MIDI hardware."
+                    : "Computer keyboard input is off.";
+                SaveProfileSettings();
+            }
+        }
+    }
+
+    public bool MetronomeEnabled
+    {
+        get => _metronomeEnabled;
+        set
+        {
+            if (SetField(ref _metronomeEnabled, value))
+            {
+                OnPropertyChanged(nameof(MetronomeLabel));
+                OnPropertyChanged(nameof(IsMetronomeAudible));
+                PreviewStatusLabel = value
+                    ? "Preview and lessons will use the parsed score tempo."
+                    : "Metronome is off; lesson timing still uses the parsed score tempo.";
+                SaveProfileSettings();
+            }
+        }
+    }
+
+    public string SelectedModeLabel => SelectedMode switch
+    {
+        PracticeMode.LeftHand => "Left hand",
+        PracticeMode.RightHand => "Right hand",
+        _ => "Both hands"
+    };
+
+    public string SelectedModeDescription => SelectedMode switch
+    {
+        PracticeMode.LeftHand => "Practice staff 2 while staff 1 remains visible for context.",
+        PracticeMode.RightHand => "Practice staff 1 while staff 2 remains visible for context.",
+        _ => "Practice both piano staves together."
+    };
+
+    public string SelectedLessonModeLabel => SelectedLessonMode switch
+    {
+        LessonMode.Listen => "Listen · automatic score playback",
+        LessonMode.WaitForYou => "Practice · waits for every note",
+        _ => "Performance · timed and assessed"
+    };
+
+    public void LoadScore(string path)
+    {
+        try
+        {
+            _score = _importer.Import(path);
+            ScoreTitle = NormalizeSampleTitle(_score.Title, path);
+            ScoreByline = _score.ComposerOrCreator;
+            SourceFileLabel = Path.GetFileName(_score.SourcePath);
+            ScoreStatusLabel = $"{_score.FormatVersion} | {_score.SourceContainer} | authoritative notation source";
+            FormatLabel = _score.FormatVersion;
+            KeyLabel = _score.KeySignature;
+            TimeLabel = _score.TimeSignature;
+            TempoLabel = _score.Tempo;
+            MeasureLabel = _score.MeasureCount.ToString("N0");
+            NoteLabel = _score.TotalNoteCount.ToString("N0");
+            LyricLabel = _score.TotalLyricCount.ToString("N0");
+            PartLabel = _score.Parts.Count == 0 ? "None" : string.Join(" / ", _score.Parts.Select(part => part.Name));
+            Measures.Clear();
+            foreach (var measure in _score.Measures) Measures.Add(measure);
+            MeasureNumbers.Clear();
+            for (var measure = 1; measure <= _score.MeasureCount; measure++) MeasureNumbers.Add(measure);
+            var savedSettings = _profile.Settings ??= new CadenzaUserSettings();
+            _focusStartMeasure = Math.Clamp(savedSettings.FocusStartMeasure, 1, _score.MeasureCount);
+            _focusEndMeasure = savedSettings.FocusEndMeasure <= 0
+                ? _score.MeasureCount
+                : Math.Clamp(savedSettings.FocusEndMeasure, _focusStartMeasure, _score.MeasureCount);
+            var songKey = GetSongProgressKey(_score);
+            (_profile.Songs ??= new Dictionary<string, SongProgressRecord>(StringComparer.OrdinalIgnoreCase))
+                .TryGetValue(songKey, out _currentSongProgress);
+            OnPropertyChanged(nameof(FocusStartMeasure));
+            OnPropertyChanged(nameof(FocusEndMeasure));
+            OnPropertyChanged(nameof(FocusRangeLabel));
+            OnPropertyChanged(nameof(EffectiveLessonTempoBpm));
+            OnPropertyChanged(nameof(LessonTempoLabel));
+            OnPropertyChanged(nameof(LessonTempoPercentText));
+            OnPropertyChanged(nameof(EffectiveLessonTempoBpmText));
+            OnPropertyChanged(nameof(HasScore));
+            OnPropertyChanged(nameof(CurrentScore));
+            OnPropertyChanged(nameof(HasImportValidationWarnings));
+            OnPropertyChanged(nameof(ImportValidationWarnings));
+            OnPropertyChanged(nameof(ImportWarningBadgeLabel));
+            OnPropertyChanged(nameof(ImportValidationSummary));
+            OnPropertyChanged(nameof(NoteLyricLabel));
+            OnPropertyChanged(nameof(MetronomeLabel));
+            OnPropertyChanged(nameof(PedalGradingLabel));
+            OnPropertyChanged(nameof(PedalCategoryLabel));
+            OnPropertyChanged(nameof(DashboardScoreSummary));
+            OnPropertyChanged(nameof(DashboardProgressSummary));
+            OnPropertyChanged(nameof(RecentAttemptLabel));
+            OnPropertyChanged(nameof(CumulativePracticeLabel));
+            OnPropertyChanged(nameof(CompletedAttemptCount));
+            OnPropertyChanged(nameof(CanUseTransport));
+            RefreshLessonGroups();
+            CursorBeat = _currentSongProgress is { LastPositionBeat: > 0 } progress
+                ? Math.Clamp(progress.LastPositionBeat, SelectedPreviewStartBeat, SelectedPreviewEndBeat)
+                : SelectedPreviewStartBeat;
+            StatusMessage = _score.ValidationWarnings.Count == 0
+                ? $"Loaded {ScoreTitle} | {_score.MeasureCount:N0} written measures | {_score.PerformanceMeasures.Count:N0} performed measures | {_score.TempoBpm:0} BPM."
+                : $"Loaded with {_score.ValidationWarnings.Count} validation warning(s). Listen is available; affected assessed ranges are disabled.";
+            PreviewStatusLabel = "Preview is ready. It includes a simple synthesized piano-like sound, not an audio recording.";
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException or XmlException or ArgumentException)
+        {
+            StatusMessage = $"Import failed: {exception.Message}";
+            throw;
+        }
+    }
+
+    private static string NormalizeSampleTitle(string importedTitle, string sourcePath)
+    {
+        var fileName = Path.GetFileNameWithoutExtension(sourcePath);
+        if (fileName.Contains("drivers-license", StringComparison.OrdinalIgnoreCase) ||
+            importedTitle.Replace("'", string.Empty, StringComparison.Ordinal).Contains("drivers licence", StringComparison.OrdinalIgnoreCase) ||
+            importedTitle.Replace("'", string.Empty, StringComparison.Ordinal).Contains("drivers license", StringComparison.OrdinalIgnoreCase))
+        {
+            return "drivers license";
+        }
+        return importedTitle;
+    }
+
+    public void RefreshMidiDevices() => RefreshMidiDevices(userInitiated: true);
+
+    private void RefreshMidiDevices(bool userInitiated)
+    {
+        var previousId = SelectedMidiDevice?.Id;
+        var previousName = SelectedMidiDevice?.Name;
+        var snapshot = _midiDeviceService.DiscoverInputDevices();
+        MidiDevices.Clear();
+        foreach (var device in snapshot.Devices) MidiDevices.Add(device);
+        var settings = _profile.Settings ??= new CadenzaUserSettings();
+        var match = MidiDevices.FirstOrDefault(device =>
+                string.Equals(device.Id, previousId, StringComparison.Ordinal) ||
+                (!string.IsNullOrWhiteSpace(previousName) &&
+                 string.Equals(device.Name, previousName, StringComparison.OrdinalIgnoreCase))) ??
+            UserProfileStore.MatchPreferredMidiDevice(settings, MidiDevices);
+        if (match is not null)
+        {
+            SelectedMidiDevice = match;
+        }
+        else
+        {
+            _midiDeviceService.StopInput();
+            SetNativeInputActive(false);
+            _selectedMidiDevice = null;
+            OnPropertyChanged(nameof(SelectedMidiDevice));
+            MidiLiveIndicator = "MIDI disconnected";
+            LastMidiKeyLabel = "No live MIDI input";
+        }
+
+        MidiStatusLabel = snapshot.IsDiscoverySupported
+            ? snapshot.Devices.Count == 0 ? "No MIDI devices available" :
+              match is not null ? $"{match.Name} connected" : $"{snapshot.Devices.Count} MIDI device(s) available"
+            : "Windows MIDI discovery is unavailable";
+        MidiApiDetail = snapshot.ApiMessage ?? $"WinMM midiInGetNumDevs returned {snapshot.ApiDeviceCount ?? 0}; device capabilities loaded.";
+        OnPropertyChanged(nameof(HasMidiHardware));
+        OnPropertyChanged(nameof(HasNoMidiDevices));
+        OnPropertyChanged(nameof(PreferredMidiDeviceLabel));
+        OnPropertyChanged(nameof(InputSourceLabel));
+        OnPropertyChanged(nameof(StartLessonReason));
+        OnPropertyChanged(nameof(CanStartLesson));
+        if (userInitiated)
+        {
+            StatusMessage = snapshot.Devices.Count == 0
+                ? string.IsNullOrWhiteSpace(settings.PreferredMidiDeviceName)
+                    ? "No MIDI devices available. Connect a keyboard, then select Refresh."
+                    : $"{settings.PreferredMidiDeviceName} is saved but not connected. Cadenza will reconnect it when it returns."
+                : match is not null
+                    ? $"{match.Name} was found and reconnected."
+                    : "Choose a MIDI keyboard to begin live monitoring.";
+        }
+    }
+
+    private void MidiRefreshTimer_Tick(object? sender, EventArgs e)
+    {
+        if (IsLessonActive) return;
+
+        if (_midiDeviceService.IsCapturing && SelectedMidiDevice is not null)
+        {
+            var snapshot = _midiDeviceService.DiscoverInputDevices();
+            var activeStillPresent = snapshot.Devices.Any(device =>
+                string.Equals(device.Id, SelectedMidiDevice.Id, StringComparison.Ordinal) ||
+                string.Equals(device.Name, SelectedMidiDevice.Name, StringComparison.OrdinalIgnoreCase));
+            if (activeStillPresent) return;
+        }
+
+        RefreshMidiDevices(userInitiated: false);
+    }
+
+    private void ConnectSelectedMidiDevice()
+    {
+        if (SelectedMidiDevice is null)
+        {
+            _midiDeviceService.StopInput();
+            SetNativeInputActive(false);
+            MidiLiveIndicator = "Not connected";
+            MidiStatusLabel = MidiDevices.Count == 0 ? "No MIDI keyboard found" : "Choose a MIDI keyboard to connect";
+            return;
+        }
+
+        if (_midiDeviceService.IsCapturing &&
+            string.Equals(_midiDeviceService.ActiveDeviceId, SelectedMidiDevice.Id, StringComparison.Ordinal))
+        {
+            SetNativeInputActive(true);
+            MidiStatusLabel = $"{SelectedMidiDevice.Name} connected";
+            MidiLiveIndicator = _lastMidiEventAt is null
+                ? $"{SelectedMidiDevice.Name} connected · waiting for first event"
+                : $"{SelectedMidiDevice.Name} connected · receiving";
+            return;
+        }
+
+        _lastMidiEventAt = null;
+        _lastIndicatorSecond = -1;
+        LastMidiKeyLabel = "No physical MIDI callback received on this selection";
+        MidiDiagnosticTrace.Clear();
+        AddMidiDiagnostic($"Selected {SelectedMidiDevice.Name} (WinMM id {SelectedMidiDevice.Id}).");
+        var result = _midiDeviceService.StartInput(SelectedMidiDevice.Id);
+        if (!result.Success)
+        {
+            SetNativeInputActive(false);
+            MidiStatusLabel = $"{SelectedMidiDevice.Name} could not be opened";
+            MidiApiDetail = result.Error ?? "WinMM returned no error description.";
+            LiveMonitorStatus = $"Input unavailable: {MidiApiDetail}";
+            MidiLiveIndicator = "Connection failed";
+            StatusMessage = LiveMonitorStatus;
+            return;
+        }
+
+        SetNativeInputActive(true);
+        _lastMidiEventAt = null;
+        _lastIndicatorSecond = -1;
+        MidiLiveIndicator = $"{SelectedMidiDevice.Name} connected · waiting for first event";
+        LastMidiKeyLabel = "Press any key on the connected keyboard";
+        MidiStatusLabel = $"{SelectedMidiDevice.Name} connected — waiting for MIDI";
+        MidiApiDetail = $"WinMM input {SelectedMidiDevice.Id} is open and callbacks are active.";
+        var synthResult = _liveSynth.Open();
+        LiveMonitorStatus = synthResult.Success
+            ? "MIDI Monitor / Thru is on. Play a key to hear the piano and see the received event."
+            : $"MIDI input is connected, but audio monitor failed: {synthResult.Message}";
+        StatusMessage = LiveMonitorStatus;
+    }
+
+    public async Task TogglePreviewAsync()
+    {
+        if (IsPreviewBuilding) return;
+        if (SelectedLessonMode != LessonMode.Listen)
+        {
+            StatusMessage = "Choose Listen for automatic score playback. Practice waits for input; Performance runs a scored timeline.";
+            return;
+        }
+        if (IsPreviewPlaying)
+        {
+            PausePreview();
+            return;
+        }
+
+        if (_score is null)
+        {
+            StatusMessage = "Import a MusicXML score before starting a preview.";
+            return;
+        }
+
+        var startBeat = IsPreviewPaused ? CursorBeat : SelectedPreviewStartBeat;
+        await StartScorePreviewAsync(startBeat);
+    }
+
+    public async Task RestartPreviewAsync()
+    {
+        if (_score is null || IsLessonActive) return;
+        CancelPreviewPlayback();
+        IsPreviewPaused = false;
+        CursorBeat = SelectedPreviewStartBeat;
+        await StartScorePreviewAsync(CursorBeat);
+    }
+
+    public async Task SeekPreviewMeasureAsync(int delta)
+    {
+        if (_score is null || IsLessonActive || delta == 0) return;
+        var occurrences = SelectedPerformanceOccurrences;
+        if (occurrences.Count == 0) return;
+        var currentIndex = occurrences
+            .Select((occurrence, index) => (occurrence, index))
+            .Where(item => item.occurrence.PerformanceStartBeat <= CursorBeat + 0.001)
+            .Select(item => item.index)
+            .DefaultIfEmpty(0)
+            .Max();
+        var targetIndex = Math.Clamp(currentIndex + Math.Sign(delta), 0, occurrences.Count - 1);
+        var targetOccurrence = occurrences[targetIndex];
+        var targetBeat = targetOccurrence.PerformanceStartBeat;
+        var wasPlaying = IsScorePreviewPlaying;
+        CancelPreviewPlayback();
+        CursorBeat = targetBeat;
+        IsPreviewPaused = true;
+        _previewUsesScore = true;
+        RaisePreviewStateProperties();
+        PreviewStatusLabel = $"Cued bar {targetOccurrence.MeasureNumber} · occurrence {targetOccurrence.RepeatPass}.";
+        if (wasPlaying) await StartScorePreviewAsync(targetBeat);
+    }
+
+    public async Task SeekDisplayMeasureAsync(int delta)
+    {
+        if (_score is null || delta == 0) return;
+        if (IsLessonActive) EndLesson(false);
+
+        if (SelectedLessonMode == LessonMode.Listen)
+        {
+            await SeekPreviewMeasureAsync(delta);
+            return;
+        }
+
+        var occurrences = SelectedPerformanceOccurrences;
+        if (occurrences.Count == 0) return;
+        var currentIndex = occurrences
+            .Select((occurrence, index) => (occurrence, index))
+            .Where(item => item.occurrence.PerformanceStartBeat <= CursorBeat + 0.001)
+            .Select(item => item.index)
+            .DefaultIfEmpty(0)
+            .Max();
+        var target = occurrences[Math.Clamp(currentIndex + Math.Sign(delta), 0, occurrences.Count - 1)];
+        CursorBeat = target.PerformanceStartBeat;
+        UpdateExpectedGuideForCursor();
+        LessonStatusLabel = $"Cued bar {target.MeasureNumber} · occurrence {target.RepeatPass}.";
+        StatusMessage = "Score position changed. Start the selected lesson mode when ready.";
+    }
+
+    public void StopTransport()
+    {
+        if (IsLessonActive) StopLesson();
+        else StopPreview();
+    }
+
+    private async Task StartScorePreviewAsync(double startBeat)
+    {
+        if (_score is null) return;
+        CancelPreviewPlayback();
+        var endBeat = SelectedPreviewEndBeat;
+        startBeat = Math.Clamp(startBeat, SelectedPreviewStartBeat, Math.Max(SelectedPreviewStartBeat, endBeat - 0.01));
+        _previewCancellation = new CancellationTokenSource();
+        IsPreviewBuilding = true;
+        RaisePreviewStateProperties();
+        PreviewStatusLabel = "Rendering the local preview...";
+        try
+        {
+            var waveData = await _audioService.BuildPreviewAsync(
+                _score,
+                IsMetronomeAudible,
+                startBeat,
+                endBeat,
+                EffectiveLessonTempoBpm,
+                InstrumentalMuted ? 0 : EffectiveMixerVolume(InstrumentalVolume),
+                EffectiveMixerVolume(MetronomeVolume),
+                null,
+                _previewCancellation.Token);
+            _audioService.PlayPreview(waveData);
+            _previewUsesScore = true;
+            _previewStartBeat = startBeat;
+            _previewEndBeat = endBeat;
+            CursorBeat = startBeat;
+            _previewClock.Restart();
+            _lessonTimer.Start();
+            IsPreviewBuilding = false;
+            IsPreviewPaused = false;
+            IsPreviewPlaying = true;
+            RaisePreviewStateProperties();
+            PreviewStatusLabel = $"Playing from bar {MeasureAtBeat(startBeat)}.";
+            var token = _previewCancellation.Token;
+            _ = FinishPreviewWhenDoneAsync(token, TimeSpan.FromSeconds((endBeat - startBeat + 1.5) * 60d / EffectiveLessonTempoBpm));
+        }
+        catch (OperationCanceledException)
+        {
+            IsPreviewBuilding = false;
+            RaisePreviewStateProperties();
+        }
+        catch (Exception exception)
+        {
+            IsPreviewBuilding = false;
+            PreviewStatusLabel = $"Preview unavailable: {exception.Message}";
+            StatusMessage = PreviewStatusLabel;
+            RaisePreviewStateProperties();
+        }
+    }
+
+    public void LoadMidiReference(string path)
+    {
+        try
+        {
+            _midiReference = _midiFileImporter.Import(path);
+            MidiListenTracks.Clear();
+            foreach (var track in _midiReference.Tracks.Where(track => track.NoteCount > 0))
+            {
+                MidiListenTracks.Add(new MidiListenTrackOption(
+                    track.Index,
+                    $"{track.Name} · {track.NoteCount:N0} notes{(track.IsPercussion ? " · percussion" : string.Empty)}",
+                    !track.IsPercussion));
+                MidiListenTracks[^1].PropertyChanged += (_, args) =>
+                {
+                    if (args.PropertyName == nameof(MidiListenTrackOption.IsSelected))
+                        OnPropertyChanged(nameof(CanPlayMidiReference));
+                };
+            }
+            var melodicTracks = _midiReference.Tracks.Count(track => !track.IsPercussion && track.NoteCount > 0);
+            MidiReferenceLabel = $"{Path.GetFileName(path)} · {_midiReference.Notes.Count:N0} notes · {melodicTracks} melodic track(s) · {_midiReference.TempoBpm:0} BPM";
+            var scoreComparison = _score is null
+                ? "Load MusicXML separately for authoritative notation and assessment."
+                : Math.Abs(_midiReference.TotalBeats - _score.TotalBeats) > Math.Max(4, _score.TotalBeats * 0.08)
+                    ? "This MIDI duration does not closely match the loaded MusicXML; it is kept as a reference/listen source and is not used for scoring."
+                    : "MIDI duration is close to the loaded score, but MusicXML remains authoritative for notation and scoring.";
+            StatusMessage = $"MIDI imported. {scoreComparison}";
+            OnPropertyChanged(nameof(HasMidiReference));
+            OnPropertyChanged(nameof(CanPlayMidiReference));
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException)
+        {
+            StatusMessage = $"MIDI import failed: {exception.Message}";
+            throw;
+        }
+    }
+
+    public async Task PlayMidiReferenceAsync()
+    {
+        if (_midiReference is null)
+        {
+            StatusMessage = "Import a MIDI file before playing the MIDI reference.";
+            return;
+        }
+
+        StopPreview();
+        _previewCancellation = new CancellationTokenSource();
+        IsPreviewBuilding = true;
+        OnPropertyChanged(nameof(CanPlayMidiReference));
+        try
+        {
+            var selectedTracks = MidiListenTracks.Where(track => track.IsSelected).Select(track => track.TrackIndex).ToHashSet();
+            if (selectedTracks.Count == 0)
+            {
+                IsPreviewBuilding = false;
+                StatusMessage = "Select at least one imported MIDI track to hear.";
+                OnPropertyChanged(nameof(CanPlayMidiReference));
+                return;
+            }
+            var wave = await _audioService.BuildMidiPreviewAsync(
+                _midiReference,
+                selectedTracks,
+                IsMetronomeAudible,
+                InstrumentalMuted ? 0 : EffectiveMixerVolume(InstrumentalVolume),
+                EffectiveMixerVolume(MetronomeVolume),
+                _previewCancellation.Token);
+            _audioService.PlayPreview(wave);
+            _previewUsesScore = false;
+            _previewClock.Restart();
+            IsPreviewBuilding = false;
+            IsPreviewPlaying = true;
+            PreviewStatusLabel = "Imported MIDI reference is playing through the local piano renderer.";
+            OnPropertyChanged(nameof(PreviewButtonLabel));
+            OnPropertyChanged(nameof(CanPlayMidiReference));
+            _ = FinishPreviewWhenDoneAsync(_previewCancellation.Token,
+                TimeSpan.FromSeconds((_midiReference.TotalBeats + 1.5) * 60d / _midiReference.TempoBpm));
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            IsPreviewBuilding = false;
+            StatusMessage = $"MIDI reference playback failed: {exception.Message}";
+            PreviewStatusLabel = StatusMessage;
+            OnPropertyChanged(nameof(CanPlayMidiReference));
+        }
+    }
+
+    public void LoadPdfReference(string path)
+    {
+        if (!File.Exists(path)) throw new FileNotFoundException("The PDF reference could not be found.", path);
+        if (!string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Choose a PDF file.");
+        _pdfReferencePath = path;
+        PdfReferenceLabel = $"{Path.GetFileName(path)} · review reference";
+        OnPropertyChanged(nameof(HasPdfReference));
+        StatusMessage = "PDF attached for visual review. It is not treated as notation data; import reviewed MusicXML after OMR/manual correction.";
+    }
+
+    public void OpenPdfReference()
+    {
+        if (string.IsNullOrWhiteSpace(_pdfReferencePath) || !File.Exists(_pdfReferencePath))
+        {
+            StatusMessage = "Attach a PDF reference before opening it.";
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(_pdfReferencePath) { UseShellExecute = true });
+            StatusMessage = "Opened the PDF in the Windows default viewer for side-by-side score review.";
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"Windows could not open the PDF viewer: {exception.Message}";
+            throw;
+        }
+    }
+
+    public void StopPreview()
+    {
+        CancelPreviewPlayback();
+        _previewUsesScore = false;
+        IsPreviewBuilding = false;
+        IsPreviewPaused = false;
+        IsPreviewPlaying = false;
+        if (_score is not null) CursorBeat = SelectedPreviewStartBeat;
+        if (!IsLessonActive) _lessonTimer.Stop();
+        RaisePreviewStateProperties();
+        if (_score is not null) PreviewStatusLabel = "Preview stopped.";
+    }
+
+    private void PausePreview()
+    {
+        if (!IsScorePreviewPlaying) return;
+        CursorBeat = Math.Min(_previewEndBeat, _previewStartBeat + _previewClock.Elapsed.TotalSeconds * EffectiveLessonTempoBpm / 60d);
+        CancelPreviewPlayback();
+        IsPreviewPlaying = false;
+        IsPreviewPaused = true;
+        _previewUsesScore = true;
+        if (!IsLessonActive) _lessonTimer.Stop();
+        RaisePreviewStateProperties();
+        PreviewStatusLabel = $"Paused at bar {MeasureAtBeat(CursorBeat)}.";
+    }
+
+    private void CancelPreviewPlayback()
+    {
+        _previewCancellation?.Cancel();
+        _previewCancellation?.Dispose();
+        _previewCancellation = null;
+        _audioService.StopPreview();
+        _previewClock.Reset();
+        IsPreviewPlaying = false;
+    }
+
+    public void SetPracticeMode(PracticeMode mode)
+    {
+        if (IsLessonActive) return;
+        _preparedPerformanceWave = null;
+        _performanceAudioOwnsMetronome = false;
+        SelectedMode = mode;
+        StatusMessage = $"{SelectedModeLabel} selected. {StartLessonReason}";
+    }
+
+    public void SetLessonMode(LessonMode mode)
+    {
+        if (IsLessonActive) return;
+        if (IsPreviewPlaying || IsPreviewBuilding || IsPreviewPaused) StopPreview();
+        ApplyLessonModeSelection(mode);
+    }
+
+    private void ApplyLessonModeSelection(LessonMode mode)
+    {
+        _preparedPerformanceWave = null;
+        _performanceAudioOwnsMetronome = false;
+        SelectedLessonMode = mode;
+        StatusMessage = $"{SelectedLessonModeLabel} selected. {StartLessonReason}";
+        LessonStatusLabel = StartLessonReason;
+        ExpectedLabel = mode == LessonMode.Listen
+            ? "Automatic score playback"
+            : FormatExpectedGroup();
+        RaiseLessonStateProperties();
+        RaisePreviewStateProperties();
+    }
+
+    public async Task<bool> SwitchLessonModeAsync(LessonMode mode)
+    {
+        if (mode == SelectedLessonMode &&
+            (IsLessonActive || IsPreviewPlaying || IsPreviewBuilding || IsPreviewPaused))
+        {
+            return true;
+        }
+
+        var generation = Interlocked.Increment(ref _modeSwitchGeneration);
+        _modeStartCancellation?.Cancel();
+        _previewCancellation?.Cancel();
+
+        await _modeTransitionGate.WaitAsync();
+        try
+        {
+            if (generation != _modeSwitchGeneration) return false;
+
+            StopActiveModeForSwitch();
+            ApplyLessonModeSelection(mode);
+            PrepareDefaultAssessableRange();
+            CursorBeat = SelectedPreviewStartBeat;
+            UpdateExpectedGuideForCursor();
+
+            using var cancellation = new CancellationTokenSource();
+            _modeStartCancellation = cancellation;
+            return await StartSelectedModeCoreAsync(cancellation.Token, generation);
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        finally
+        {
+            if (generation == _modeSwitchGeneration)
+                _modeStartCancellation = null;
+            _modeTransitionGate.Release();
+        }
+    }
+
+    private void StopActiveModeForSwitch()
+    {
+        if (IsLessonActive) EndLesson(false);
+        if (IsPreviewPlaying || IsPreviewBuilding || IsPreviewPaused || _previewCancellation is not null)
+            StopPreview();
+
+        _lessonTimer.Stop();
+        _lessonClock.Reset();
+        _practiceSessionClock.Reset();
+        _preparedPerformanceWave = null;
+        _performanceAudioOwnsMetronome = false;
+        _audioService.StopPreview();
+        _accompanimentSynth.AllNotesOff();
+        _liveSynth.AllNotesOff();
+        _matchedNotes.Clear();
+        _activeHolds.Clear();
+        HeldNoteNumbers = new HashSet<int>();
+        ResultsVisible = false;
+        _lessonGroupIndex = 0;
+        _correctCount = 0;
+        _missedCount = 0;
+        _extraCount = 0;
+        CorrectLabel = "0";
+        MissedLabel = "0";
+        ExtraLabel = "0";
+        AccuracyLabel = "-";
+        ProgressLabel = $"0 / {_lessonGroups.Count} expected groups";
+    }
+
+    private void StopActiveSessionForSelectionChange()
+    {
+        _modeStartCancellation?.Cancel();
+        Interlocked.Increment(ref _modeSwitchGeneration);
+        if (IsLessonActive) EndLesson(false);
+        if (IsPreviewPlaying || IsPreviewBuilding || IsPreviewPaused || _previewCancellation is not null)
+            StopPreview();
+    }
+
+    public bool PrepareDefaultAssessableRange()
+    {
+        if (_score is null || SelectedLessonMode == LessonMode.Listen) return true;
+        if (SelectedLessonMode == LessonMode.WaitForYou &&
+            !_score.CutsRepeatRegion(FocusStartMeasure, FocusEndMeasure))
+        {
+            return true;
+        }
+        if (!_score.HasBlockingAssessmentWarning(FocusStartMeasure, FocusEndMeasure) &&
+            !_score.CutsRepeatRegion(FocusStartMeasure, FocusEndMeasure)) return true;
+
+        // Preserve an intentional focused selection. Only repair the default
+        // whole-score range that would otherwise make Practice/Performance
+        // look inert on an imported score with a bounded warning.
+        if (FocusStartMeasure != 1 || FocusEndMeasure != _score.MeasureCount) return false;
+
+        (int Start, int End, int Groups)? best = null;
+        for (var start = 1; start <= _score.MeasureCount; start++)
+        {
+            for (var end = start; end <= _score.MeasureCount; end++)
+            {
+                if (_score.HasBlockingAssessmentWarning(start, end) || _score.CutsRepeatRegion(start, end)) continue;
+                var groups = _score.GetPracticeGroups(SelectedMode).Count(group =>
+                    int.TryParse(group.MeasureNumber, out var measure) && measure >= start && measure <= end);
+                if (groups == 0) continue;
+                if (best is null || groups > best.Value.Groups) best = (start, end, groups);
+            }
+        }
+
+        if (best is null) return false;
+        FocusStartMeasure = best.Value.Start;
+        FocusEndMeasure = best.Value.End;
+        LessonStatusLabel =
+            $"Ready on bars {best.Value.Start}–{best.Value.End}. Other bars remain available in Listen; warning details are in the badge.";
+        return true;
+    }
+
+    public void SetReadingMode(ScoreReadingMode mode)
+    {
+        ReadingMode = mode;
+        UpdateExpectedGuideForCursor();
+        StatusMessage = mode == ScoreReadingMode.Page
+            ? "Page reading: the playhead advances across each system, then follows the next system."
+            : "Continuous reading: the grand staff advances horizontally and keeps the next phrase visible.";
+    }
+
+    public void OpenCurrentLesson()
+    {
+        if (_score is null)
+        {
+            StatusMessage = "Import a MusicXML song before opening the lesson player.";
+            return;
+        }
+        IsPlayerVisible = true;
+        StatusMessage = $"Ready to practice {ScoreTitle}.";
+    }
+
+    public void ShowDashboard()
+    {
+        if (IsLessonActive) StopLesson();
+        StopPreview();
+        IsPlayerVisible = false;
+        StatusMessage = "Dashboard ready.";
+    }
+
+    public void SetPedalEnabled(bool enabled) => PedalEnabled = enabled;
+
+    public bool StartLesson()
+    {
+        if (SelectedLessonMode == LessonMode.Listen)
+        {
+            StatusMessage = "Use Start listening or the Listen transport to begin automatic playback.";
+            return false;
+        }
+        if (!CanStartLesson)
+        {
+            StatusMessage = StartLessonReason;
+            LessonStatusLabel = StartLessonReason;
+            return false;
+        }
+        if (IsPreviewPlaying || IsPreviewBuilding) StopPreview();
+
+        if (SelectedMidiDevice is not null &&
+            (!_midiDeviceService.IsCapturing || _midiDeviceService.ActiveDeviceId != SelectedMidiDevice.Id))
+        {
+            var startResult = _midiDeviceService.StartInput(SelectedMidiDevice.Id);
+            if (!startResult.Success)
+            {
+                MidiApiDetail = startResult.Error ?? "WinMM did not provide an error description.";
+                StatusMessage = $"MIDI capture could not start: {MidiApiDetail}";
+                return false;
+            }
+
+            SetNativeInputActive(true);
+        }
+
+        _lessonGroups = _score!.GetPracticeGroups(SelectedMode);
+        _lessonGroups = _lessonGroups
+            .Where(IsGroupInFocus)
+            .ToArray();
+        ResetLessonStats();
+        _lessonGroupIndex = 0;
+        _lessonStartBeat = _lessonGroups[0].OnsetBeats;
+        _nextMetronomeBeat = _lessonStartBeat;
+        CursorBeat = _lessonStartBeat;
+        if (SelectedLessonMode == LessonMode.TimedPlay)
+        {
+            if (_preparedPerformanceWave is not null)
+                _audioService.PlayPreview(_preparedPerformanceWave);
+            _lessonClock.Restart();
+            _preparedPerformanceWave = null;
+        }
+        else _lessonClock.Reset();
+        _practiceSessionClock.Restart();
+        IsLessonActive = true;
+        _lessonRunGeneration++;
+        _feedbackEventSequence = 0;
+        LessonRunStateChanged?.Invoke(this, new LessonRunStateEvent("started", SelectedLessonMode, _lessonStartBeat, _lessonRunGeneration));
+        _lessonTimer.Start();
+        LessonStatusLabel = $"{SelectedLessonModeLabel} · {FocusRangeLabel} · {EffectiveLessonTempoBpm:0} BPM.";
+        ExpectedLabel = FormatExpectedGroup();
+        StatusMessage = (_nativeInputActive, UseKeyboardSimulation) switch
+        {
+            (true, true) => $"Lesson started. {SelectedMidiDevice!.Name} and computer piano keys are both active.",
+            (true, false) => $"Lesson started from {SelectedMidiDevice!.Name}. MIDI note-on capture is active.",
+            _ => "Lesson started with computer piano keys."
+        };
+        RaiseLessonStateProperties();
+        return true;
+    }
+
+    public async Task<bool> StartSelectedModeAsync()
+    {
+        return await StartSelectedModeCoreAsync(CancellationToken.None, null);
+    }
+
+    private async Task<bool> StartSelectedModeCoreAsync(CancellationToken cancellationToken, int? requiredGeneration)
+    {
+        if (_isStartingLesson) return false;
+        if (!CanStartLesson)
+        {
+            StatusMessage = StartLessonReason;
+            LessonStatusLabel = StartLessonReason;
+            return false;
+        }
+
+        _isStartingLesson = true;
+        RaiseLessonStateProperties();
+        try
+        {
+            if (SelectedLessonMode == LessonMode.TimedPlay)
+            {
+                await PreparePerformanceAudioAsync(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (requiredGeneration is { } generation && generation != _modeSwitchGeneration) return false;
+                _isStartingLesson = false;
+                RaiseLessonStateProperties();
+                return StartLesson();
+            }
+            if (SelectedLessonMode != LessonMode.Listen)
+            {
+                _isStartingLesson = false;
+                RaiseLessonStateProperties();
+                return StartLesson();
+            }
+
+            _isStartingLesson = false;
+            RaiseLessonStateProperties();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (requiredGeneration is { } listenGeneration && listenGeneration != _modeSwitchGeneration) return false;
+            await TogglePreviewAsync();
+            cancellationToken.ThrowIfCancellationRequested();
+            return IsPreviewPlaying || IsPreviewPaused;
+        }
+        finally
+        {
+            _isStartingLesson = false;
+            RaiseLessonStateProperties();
+        }
+    }
+
+    private async Task PreparePerformanceAudioAsync(CancellationToken cancellationToken)
+    {
+        _preparedPerformanceWave = null;
+        _performanceAudioOwnsMetronome = false;
+        if (_score is null) return;
+
+        int pianoVolume;
+        int? includedStaff;
+        if (PerformanceFullAccompanimentEnabled && !InstrumentalMuted)
+        {
+            pianoVolume = EffectiveMixerVolume(InstrumentalVolume);
+            includedStaff = null;
+        }
+        else if (OtherHandAccompanimentEnabled && SelectedMode != PracticeMode.BothHands)
+        {
+            pianoVolume = EffectiveMixerVolume(OtherHandAccompanimentVolume);
+            includedStaff = SelectedMode == PracticeMode.LeftHand ? 1 : 2;
+        }
+        else
+        {
+            pianoVolume = 0;
+            includedStaff = null;
+        }
+
+        if (pianoVolume <= 0 && !IsMetronomeAudible) return;
+        StatusMessage = "Preparing synchronized lesson audio...";
+        var startBeat = _lessonGroups.Count > 0 ? _lessonGroups[0].OnsetBeats : SelectedPreviewStartBeat;
+        _preparedPerformanceWave = await _audioService.BuildPreviewAsync(
+            _score,
+            IsMetronomeAudible,
+            startBeat,
+            SelectedPreviewEndBeat,
+            EffectiveLessonTempoBpm,
+            pianoVolume,
+            EffectiveMixerVolume(MetronomeVolume),
+            includedStaff,
+            cancellationToken);
+        _performanceAudioOwnsMetronome = IsMetronomeAudible;
+    }
+
+    public void ArmLesson() => StartLesson();
+
+    public void StopLesson()
+    {
+        if (!IsLessonActive)
+        {
+            StatusMessage = "No lesson is currently running.";
+            return;
+        }
+
+        EndLesson(false);
+        StatusMessage = "Lesson stopped. The score and selected input remain loaded.";
+    }
+
+    public void SimulateNoteOn(int midiNoteNumber)
+    {
+        if (!UseKeyboardSimulation)
+        {
+            return;
+        }
+
+        HandleNoteOn(midiNoteNumber, 100, true);
+    }
+
+    public void SimulateNoteOff(int midiNoteNumber)
+    {
+        if (!UseKeyboardSimulation) return;
+        CompleteHold(midiNoteNumber);
+        if (MidiMonitorEnabled) _liveSynth.NoteOff(midiNoteNumber);
+        InputActivityLabel = $"Simulation note-off: {MidiNoteFormatter.Format(midiNoteNumber)}";
+    }
+
+    public void SetStatusMessage(string message) => StatusMessage = message;
+
+    public void UpdateVisualClock()
+    {
+        if (_score is not null && IsPreviewPlaying && _previewUsesScore && !IsLessonActive)
+        {
+            CursorBeat = Math.Min(_previewEndBeat, _previewStartBeat + _previewClock.Elapsed.TotalSeconds * EffectiveLessonTempoBpm / 60d);
+        }
+        else if (_score is not null && IsLessonActive && SelectedLessonMode == LessonMode.TimedPlay)
+        {
+            CursorBeat = Math.Min(SelectedPreviewEndBeat, _lessonStartBeat + _lessonClock.Elapsed.TotalSeconds * EffectiveLessonTempoBpm / 60d);
+        }
+
+        if (_lastMidiEventAt is not { } last) return;
+        var seconds = Math.Max(0, (int)(DateTimeOffset.UtcNow - last).TotalSeconds);
+        if (seconds == _lastIndicatorSecond) return;
+        _lastIndicatorSecond = seconds;
+        MidiLiveIndicator = $"{SelectedMidiDevice?.Name ?? "MIDI input"} connected · last event {seconds}s ago";
+    }
+
+    public async Task TestMonitorToneAsync()
+    {
+        var on = _liveSynth.NoteOn(60, 92);
+        LiveMonitorStatus = on.Success ? "Output test: acoustic piano C4 sounded." : $"Output test failed: {on.Message}";
+        if (!on.Success)
+        {
+            StatusMessage = LiveMonitorStatus;
+            return;
+        }
+        await Task.Delay(420);
+        var off = _liveSynth.NoteOff(60);
+        if (!off.Success)
+        {
+            LiveMonitorStatus = $"Output release failed: {off.Message}";
+            StatusMessage = LiveMonitorStatus;
+        }
+    }
+
+    public void Dispose()
+    {
+        StopPreview();
+        if (IsLessonActive) EndLesson(false);
+        _lessonTimer.Stop();
+        _midiRefreshTimer.Stop();
+        _midiRefreshTimer.Tick -= MidiRefreshTimer_Tick;
+        _midiDeviceService.NoteOn -= MidiDeviceService_NoteOn;
+        _midiDeviceService.NoteOff -= MidiDeviceService_NoteOff;
+        _midiDeviceService.ControlChange -= MidiDeviceService_ControlChange;
+        _midiDeviceService.RawMessage -= MidiDeviceService_RawMessage;
+        _midiDeviceService.InputError -= MidiDeviceService_InputError;
+        _midiDeviceService.InputDisconnected -= MidiDeviceService_InputDisconnected;
+        _midiDeviceService.Diagnostic -= MidiDeviceService_Diagnostic;
+        _midiDeviceService.Dispose();
+        _liveSynth.Dispose();
+        _accompanimentSynth.Dispose();
+        _audioService.Dispose();
+    }
+
+    private async Task FinishPreviewWhenDoneAsync(CancellationToken token, TimeSpan duration)
+    {
+        try
+        {
+            await Task.Delay(duration + TimeSpan.FromMilliseconds(250), token);
+            if (Application.Current is not null)
+            {
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    if (!token.IsCancellationRequested) StopPreview();
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private void RefreshLessonGroups()
+    {
+        _lessonGroups = (_score?.GetPracticeGroups(SelectedMode) ?? [])
+            .Where(IsGroupInFocus)
+            .ToArray();
+        _lessonGroupIndex = 0;
+        OnPropertyChanged(nameof(CanStartLesson));
+        OnPropertyChanged(nameof(StartLessonReason));
+        ProgressLabel = $"0 / {_lessonGroups.Count} expected groups";
+        UpdateExpectedGuideForCursor();
+    }
+
+    private bool IsGroupInFocus(ScoreNoteGroup group) =>
+        int.TryParse(group.MeasureNumber, out var measure) &&
+        measure >= FocusStartMeasure &&
+        measure <= FocusEndMeasure;
+
+    private IReadOnlyList<ScoreMeasureOccurrence> SelectedPerformanceOccurrences => _score?.PerformanceMeasures
+        .Where(occurrence =>
+            int.TryParse(occurrence.MeasureNumber, out var measure) &&
+            measure >= FocusStartMeasure &&
+            measure <= FocusEndMeasure)
+        .OrderBy(occurrence => occurrence.PerformanceStartBeat)
+        .ToArray() ?? [];
+
+    private double SelectedPreviewStartBeat => SelectedPerformanceOccurrences
+        .Select(occurrence => occurrence.PerformanceStartBeat)
+        .DefaultIfEmpty(0)
+        .Min();
+
+    private double SelectedPreviewEndBeat => SelectedPerformanceOccurrences
+        .Select(occurrence => occurrence.PerformanceStartBeat + occurrence.DurationBeats)
+        .DefaultIfEmpty(_score?.TotalBeats ?? 1)
+        .Max();
+
+    private int MeasureAtBeat(double beat) =>
+        int.TryParse(_score?.OccurrenceAtBeat(beat)?.MeasureNumber, out var measure)
+            ? measure
+            : FocusStartMeasure;
+
+    private static int MeasureNumberOf(ScoreNote note) =>
+        int.TryParse(note.MeasureNumber, out var measure) ? measure : 0;
+
+    private void ResetPreviewPositionToRangeStart()
+    {
+        if (_score is null || IsLessonActive) return;
+        if (IsPreviewPlaying || IsPreviewBuilding) CancelPreviewPlayback();
+        IsPreviewPaused = false;
+        _previewUsesScore = false;
+        CursorBeat = SelectedPreviewStartBeat;
+        RaisePreviewStateProperties();
+    }
+
+    private void ResetLessonStats()
+    {
+        _correctCount = 0;
+        _missedCount = 0;
+        _extraCount = 0;
+        _timingQualityTotal = 0;
+        _holdQualityTotal = 0;
+        _holdQualityCount = 0;
+        _pedalCorrect = 0;
+        _pedalAttempts = 0;
+        _matchedNotes.Clear();
+        _activeHolds.Clear();
+        HeldNoteNumbers = new HashSet<int>();
+        CurrentStreak = 0;
+        BestStreak = 0;
+        ResultsVisible = false;
+        CursorBeat = _lessonGroups.Count > 0 ? _lessonGroups[0].OnsetBeats : 0;
+        CorrectLabel = "0";
+        MissedLabel = "0";
+        ExtraLabel = "0";
+        AccuracyLabel = "-";
+        TimingLabel = SelectedLessonMode == LessonMode.WaitForYou ? "Timing: n/a in Wait-for-you" : "Timing: 0%";
+        OnPropertyChanged(nameof(PitchCategoryLabel));
+        OnPropertyChanged(nameof(TimingCategoryLabel));
+        OnPropertyChanged(nameof(HoldCategoryLabel));
+        OnPropertyChanged(nameof(PedalCategoryLabel));
+        OnPropertyChanged(nameof(CanStartLesson));
+        OnPropertyChanged(nameof(StartLessonReason));
+    }
+
+    private void MidiDeviceService_NoteOn(object? sender, MidiNoteOnEvent note)
+    {
+        if (Application.Current is null) return;
+        _ = Application.Current.Dispatcher.InvokeAsync(() => HandleNoteOn(note.NoteNumber, note.Velocity, false));
+    }
+
+    private void MidiDeviceService_RawMessage(object? sender, MidiRawEvent message)
+    {
+        if (Application.Current is null) return;
+        _ = Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            _lastMidiEventAt = message.Timestamp;
+            _lastIndicatorSecond = -1;
+            var command = message.Status & 0xF0;
+            var channel = (message.Status & 0x0F) + 1;
+            var description = command switch
+            {
+                0x90 when message.Data2 > 0 => $"Key {MidiNoteFormatter.Format(message.Data1)} · velocity {message.Data2}",
+                0x80 or 0x90 => $"Released {MidiNoteFormatter.Format(message.Data1)}",
+                0xB0 => $"Controller CC{message.Data1} · value {message.Data2}",
+                _ => $"MIDI 0x{message.Status:X2} · {message.Data1} · {message.Data2}"
+            };
+            LastMidiKeyLabel = $"{description} · channel {channel}";
+            MidiLiveIndicator = $"{SelectedMidiDevice?.Name ?? "MIDI input"} connected · receiving now";
+        });
+    }
+
+    private void MidiDeviceService_InputError(object? sender, string error)
+    {
+        if (Application.Current is null) return;
+        _ = Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            HandleMidiDeviceLoss(error);
+        });
+    }
+
+    private void MidiDeviceService_InputDisconnected(object? sender, EventArgs e)
+    {
+        if (Application.Current is null) return;
+        _ = Application.Current.Dispatcher.InvokeAsync(() =>
+            HandleMidiDeviceLoss("The selected MIDI device disconnected."));
+    }
+
+    private void HandleMidiDeviceLoss(string reason)
+    {
+        _midiDeviceService.StopInput();
+        SetNativeInputActive(false);
+        _selectedMidiDevice = null;
+        _liveSynth.AllNotesOff();
+        OnPropertyChanged(nameof(SelectedMidiDevice));
+        OnPropertyChanged(nameof(InputSourceLabel));
+        OnPropertyChanged(nameof(CanStartLesson));
+        MidiLiveIndicator = "MIDI disconnected";
+        MidiStatusLabel = "Preferred MIDI device is offline";
+        LastMidiKeyLabel = "No live MIDI input";
+        StatusMessage = $"{reason} Reconnect it, then select Refresh; Cadenza will restore the saved preference.";
+        if (IsLessonActive) EndLesson(false);
+    }
+
+    private void MidiDeviceService_Diagnostic(object? sender, string message)
+    {
+        if (Application.Current is null) return;
+        _ = Application.Current.Dispatcher.InvokeAsync(() => AddMidiDiagnostic(message));
+    }
+
+    private void AddMidiDiagnostic(string message)
+    {
+        MidiDiagnosticTrace.Insert(0, $"{DateTime.Now:HH:mm:ss.fff}  {message}");
+        while (MidiDiagnosticTrace.Count > 24)
+        {
+            MidiDiagnosticTrace.RemoveAt(MidiDiagnosticTrace.Count - 1);
+        }
+    }
+
+    private void MidiDeviceService_NoteOff(object? sender, MidiNoteOffEvent note)
+    {
+        if (Application.Current is null) return;
+        _ = Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            CompleteHold(note.NoteNumber);
+            InputActivityLabel = $"MIDI note-off from {SelectedMidiDevice?.Name ?? "selected input"}: {MidiNoteFormatter.Format(note.NoteNumber)}";
+            if (!MidiMonitorEnabled) return;
+            var result = _liveSynth.NoteOff(note.NoteNumber, note.Velocity, note.Channel);
+            if (!result.Success) LiveMonitorStatus = $"Audio monitor error: {result.Message}";
+        });
+    }
+
+    private void MidiDeviceService_ControlChange(object? sender, MidiControlChangeEvent message)
+    {
+        if (Application.Current is null) return;
+        _ = Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            if (message.Controller == 64)
+            {
+                _pedalDown = message.Value >= 64;
+                ScorePedalEvent(_pedalDown);
+                OnPropertyChanged(nameof(PedalStatusLabel));
+                OnPropertyChanged(nameof(PedalCategoryLabel));
+                InputActivityLabel = $"MIDI CC64 from {SelectedMidiDevice?.Name ?? "selected input"}: sustain {(_pedalDown ? "down" : "up")} ({message.Value})";
+            }
+            else
+            {
+                InputActivityLabel = $"MIDI CC{message.Controller} from {SelectedMidiDevice?.Name ?? "selected input"}: {message.Value}";
+            }
+
+            if (MidiMonitorEnabled)
+            {
+                var result = _liveSynth.ControlChange(message.Controller, message.Value, message.Channel);
+                if (!result.Success) LiveMonitorStatus = $"Audio monitor error: {result.Message}";
+            }
+        });
+    }
+
+    private void HandleNoteOn(int midiNoteNumber, int velocity, bool simulation)
+    {
+        var source = simulation ? "Simulation" : SelectedMidiDevice?.Name ?? "MIDI";
+        InputActivityLabel = $"{source} note-on: {MidiNoteFormatter.Format(midiNoteNumber)} · velocity {velocity} · {DateTime.Now:HH:mm:ss.fff}";
+        if (MidiMonitorEnabled)
+        {
+            var monitorResult = _liveSynth.NoteOn(midiNoteNumber, velocity);
+            LiveMonitorStatus = monitorResult.Success
+                ? $"Monitor sounded {MidiNoteFormatter.Format(midiNoteNumber)} from {source}."
+                : $"Audio monitor error: {monitorResult.Message}";
+        }
+        if (IsCalibrationActive && _calibrationClickIndex >= 0 && _calibrationCapturedForClick != _calibrationClickIndex)
+        {
+            var milliseconds = Stopwatch.GetElapsedTime(_lastCalibrationClickTimestamp).TotalMilliseconds;
+            if (milliseconds <= 700)
+            {
+                _calibrationOffsets.Add(milliseconds);
+                _calibrationCapturedForClick = _calibrationClickIndex;
+                StatusMessage = $"Calibration captured {milliseconds:0} ms after click {_calibrationClickIndex + 1}.";
+            }
+        }
+        if (!IsLessonActive || _lessonGroups.Count == 0) return;
+
+        if (SelectedLessonMode == LessonMode.WaitForYou)
+        {
+            HandleWaitForYouNote(midiNoteNumber);
+        }
+        else
+        {
+            var beat = Math.Max(_lessonStartBeat, _lessonStartBeat +
+                (_lessonClock.Elapsed.TotalMilliseconds - LatencyMilliseconds) / 1000d * EffectiveLessonTempoBpm / 60d);
+            AdvanceTimedMisses(beat);
+            if (IsLessonActive) HandleTimedNote(midiNoteNumber, beat);
+        }
+
+        UpdateLessonMetrics();
+    }
+
+    private void HandleWaitForYouNote(int midiNoteNumber)
+    {
+        if (_lessonGroupIndex >= _lessonGroups.Count)
+        {
+            EndLesson(true);
+            return;
+        }
+
+        var expected = _lessonGroups[_lessonGroupIndex];
+        if (expected.MidiNotes.Contains(midiNoteNumber) && _matchedNotes.Add(midiNoteNumber))
+        {
+            RegisterCorrect(expected.OnsetBeats, midiNoteNumber);
+            BeginHold(midiNoteNumber, expected);
+            if (_matchedNotes.Count >= expected.NoteCount)
+            {
+                PlayPracticeGuidance(expected);
+                _lessonGroupIndex++;
+                _matchedNotes.Clear();
+                if (_lessonGroupIndex >= _lessonGroups.Count) EndLesson(true);
+                else
+                {
+                    CursorBeat = _lessonGroups[_lessonGroupIndex].OnsetBeats;
+                    LessonStatusLabel = $"Correct. Now bar {_lessonGroups[_lessonGroupIndex].MeasureNumber}.";
+                }
+            }
+            else
+            {
+                LessonStatusLabel = $"Chord tone accepted. {_matchedNotes.Count}/{expected.NoteCount} tones played.";
+            }
+        }
+        else
+        {
+            _extraCount++;
+            EmitNoteFeedback("extra", CursorBeat, midiNoteNumber);
+            LessonStatusLabel = $"Extra note. Waiting for {FormatExpectedGroup()}.";
+        }
+    }
+
+    private void PlayPracticeGuidance(ScoreNoteGroup acceptedGroup)
+    {
+        if (_score is null) return;
+        if (IsMetronomeAudible)
+        {
+            _audioService.PlayMetronomeClick(
+                Math.Abs(acceptedGroup.OnsetBeats % 4) < 0.01,
+                EffectiveMixerVolume(MetronomeVolume));
+        }
+
+        int volume;
+        IEnumerable<ScoreNote> notes;
+        if (PracticeFullAccompanimentEnabled && !InstrumentalMuted)
+        {
+            volume = EffectiveMixerVolume(InstrumentalVolume);
+            notes = _score.Notes.Where(note => Math.Abs(note.OnsetBeats - acceptedGroup.OnsetBeats) < 0.001);
+        }
+        else if (OtherHandAccompanimentEnabled && SelectedMode != PracticeMode.BothHands)
+        {
+            volume = EffectiveMixerVolume(OtherHandAccompanimentVolume);
+            var oppositeStaff = SelectedMode == PracticeMode.LeftHand ? 1 : 2;
+            notes = _score.Notes.Where(note =>
+                note.StaffNumber == oppositeStaff &&
+                Math.Abs(note.OnsetBeats - acceptedGroup.OnsetBeats) < 0.001);
+        }
+        else
+        {
+            return;
+        }
+
+        var sounding = notes.ToArray();
+        if (volume <= 0 || sounding.Length == 0) return;
+        _accompanimentSynth.VolumePercent = volume;
+        foreach (var note in sounding) _accompanimentSynth.NoteOn(note.MidiNoteNumber, 92);
+        _ = ReleasePracticeGuidanceAsync(sounding);
+    }
+
+    private async Task ReleasePracticeGuidanceAsync(IReadOnlyList<ScoreNote> notes)
+    {
+        var durationBeats = notes.Select(note => note.DurationBeats).DefaultIfEmpty(.5).Max();
+        var milliseconds = Math.Clamp((int)Math.Round(durationBeats * 60_000d / EffectiveLessonTempoBpm), 90, 2500);
+        await Task.Delay(milliseconds);
+        foreach (var note in notes) _accompanimentSynth.NoteOff(note.MidiNoteNumber);
+    }
+
+    private void HandleTimedNote(int midiNoteNumber, double beat)
+    {
+        if (_lessonGroupIndex >= _lessonGroups.Count)
+        {
+            _extraCount++;
+            EmitNoteFeedback("extra", beat, midiNoteNumber);
+            return;
+        }
+
+        var expected = _lessonGroups[_lessonGroupIndex];
+        var timingWindow = 0.55d;
+        var error = beat - expected.OnsetBeats;
+        if (error >= -timingWindow && error <= timingWindow && expected.MidiNotes.Contains(midiNoteNumber) && _matchedNotes.Add(midiNoteNumber))
+        {
+            RegisterCorrect(expected.OnsetBeats, midiNoteNumber);
+            BeginHold(midiNoteNumber, expected);
+            _timingQualityTotal += Math.Max(0, 1d - Math.Abs(error) / timingWindow);
+            if (_matchedNotes.Count >= expected.NoteCount)
+            {
+                _lessonGroupIndex++;
+                _matchedNotes.Clear();
+                UpdateExpectedGuideForCursor();
+            }
+        }
+        else
+        {
+            _extraCount++;
+        EmitNoteFeedback("extra", beat, midiNoteNumber);
+        }
+    }
+
+    private void LessonTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_score is null) return;
+        if (!IsLessonActive) return;
+        var beat = _lessonStartBeat + _lessonClock.Elapsed.TotalSeconds * EffectiveLessonTempoBpm / 60d;
+        while (_nextMetronomeBeat <= beat)
+        {
+            if (SelectedLessonMode == LessonMode.TimedPlay && IsMetronomeAudible && !_performanceAudioOwnsMetronome)
+                _audioService.PlayMetronomeClick(
+                    Math.Abs(_nextMetronomeBeat % 4) < 0.01,
+                    EffectiveMixerVolume(MetronomeVolume));
+            _nextMetronomeBeat += 1;
+        }
+
+        if (SelectedLessonMode == LessonMode.TimedPlay)
+        {
+            AdvanceTimedMisses(beat);
+            if (_lessonGroupIndex >= _lessonGroups.Count && beat >= SelectedPreviewEndBeat)
+            {
+                EndLesson(true);
+            }
+        }
+
+        if ((DateTime.UtcNow - _lastLiveUpdate).TotalMilliseconds >= 80)
+        {
+            _lastLiveUpdate = DateTime.UtcNow;
+            UpdateLessonMetrics();
+        }
+    }
+
+    private void AdvanceTimedMisses(double beat)
+    {
+        const double lateWindow = 0.55d;
+        var advanced = false;
+        while (_lessonGroupIndex < _lessonGroups.Count && beat > _lessonGroups[_lessonGroupIndex].OnsetBeats + lateWindow)
+        {
+            var missed = Math.Max(0, _lessonGroups[_lessonGroupIndex].NoteCount - _matchedNotes.Count);
+            _missedCount += missed;
+            if (missed > 0)
+            {
+                CurrentStreak = 0;
+                foreach (var missedNote in _lessonGroups[_lessonGroupIndex].MidiNotes.Except(_matchedNotes))
+                EmitNoteFeedback("missed", _lessonGroups[_lessonGroupIndex].OnsetBeats, missedNote);
+            }
+            _lessonGroupIndex++;
+            _matchedNotes.Clear();
+            advanced = true;
+        }
+        if (advanced) UpdateExpectedGuideForCursor();
+    }
+
+    private void EndLesson(bool completed)
+    {
+        if (!IsLessonActive) return;
+        foreach (var note in _activeHolds.Keys.ToArray()) CompleteHold(note);
+        if (completed && SelectedLessonMode == LessonMode.TimedPlay)
+        {
+            while (_lessonGroupIndex < _lessonGroups.Count)
+            {
+                var missed = Math.Max(0, _lessonGroups[_lessonGroupIndex].NoteCount - _matchedNotes.Count);
+                _missedCount += missed;
+                if (missed > 0)
+                    foreach (var missedNote in _lessonGroups[_lessonGroupIndex].MidiNotes.Except(_matchedNotes))
+                        EmitNoteFeedback("missed", _lessonGroups[_lessonGroupIndex].OnsetBeats, missedNote);
+                _lessonGroupIndex++;
+                _matchedNotes.Clear();
+            }
+        }
+
+        _lessonTimer.Stop();
+        _lessonClock.Stop();
+        _practiceSessionClock.Stop();
+        if (SelectedLessonMode == LessonMode.TimedPlay)
+            _audioService.StopPreview();
+        _preparedPerformanceWave = null;
+        _performanceAudioOwnsMetronome = false;
+        _accompanimentSynth.AllNotesOff();
+        SetNativeInputActive(_midiDeviceService.IsCapturing);
+        IsLessonActive = false;
+        LessonRunStateChanged?.Invoke(this, new LessonRunStateEvent(completed ? "completed" : "stopped", SelectedLessonMode, _lessonStartBeat, _lessonRunGeneration));
+        _liveSynth.AllNotesOff();
+        LessonStatusLabel = completed ? "Selected performance sequence complete." : "Lesson stopped.";
+        ExpectedLabel = completed ? "Selected range complete." : FormatExpectedGroup();
+        StatusMessage = completed
+            ? $"Lesson complete. Correct {_correctCount}, missed {_missedCount}, extra {_extraCount}."
+            : "Lesson stopped. The selected score and input remain ready.";
+        RaiseLessonStateProperties();
+        UpdateLessonMetrics();
+        var assessmentBlocked = _score?.HasBlockingAssessmentWarning(FocusStartMeasure, FocusEndMeasure) == true;
+        if (completed && _correctCount > 0 && !assessmentBlocked)
+            PersistCompletedAttempt(_practiceSessionClock.Elapsed);
+        if (completed)
+        {
+            var denominator = _correctCount + _missedCount + _extraCount;
+            var accuracy = denominator == 0 ? 0 : _correctCount * 100d / denominator;
+            ResultHeadline = accuracy >= 90 ? "Brilliant run" :
+                accuracy >= 75 ? "Strong progress" :
+                SelectedLessonMode == LessonMode.TimedPlay ? "Run complete" : "Practice complete";
+            var timingResult = SelectedLessonMode == LessonMode.WaitForYou
+                ? "timing not graded"
+                : $"timing {(_correctCount == 0 ? 0 : _timingQualityTotal / _correctCount * 100):0}%";
+            var holdResult = _holdQualityCount == 0 ? "hold not observed" : $"hold {_holdQualityTotal / _holdQualityCount * 100:0}%";
+            ResultSummary = assessmentBlocked
+                ? "Guided repeat practice complete · ambiguous volta range was not graded or saved"
+                : $"Pitch {accuracy:0}% · {timingResult} · {holdResult} · {PedalCategoryLabel}";
+            RewardLabel = BestStreak >= 20 ? $"Gold cadence · best streak {BestStreak}" :
+                BestStreak >= 8 ? $"Silver cadence · best streak {BestStreak}" :
+                $"First phrase · best streak {BestStreak}";
+            ResultsVisible = true;
+            ResultsPresented?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void RegisterCorrect(double beat, int midiNoteNumber)
+    {
+        _correctCount++;
+        CurrentStreak++;
+        BestStreak = Math.Max(BestStreak, CurrentStreak);
+        OnPropertyChanged(nameof(StreakProgress));
+        FeedbackBeat = beat;
+        FeedbackPulse++;
+        CorrectFeedback?.Invoke(this, EventArgs.Empty);
+        EmitNoteFeedback("correct", beat, midiNoteNumber);
+    }
+
+    private void BeginHold(int midiNoteNumber, ScoreNoteGroup group)
+    {
+        var expectedNote = group.Notes
+            .Where(note => note.MidiNoteNumber == midiNoteNumber)
+            .OrderByDescending(note => note.DurationBeats)
+            .FirstOrDefault();
+        if (expectedNote is null) return;
+
+        if (_activeHolds.ContainsKey(midiNoteNumber))
+        {
+            CompleteHold(midiNoteNumber);
+        }
+        _activeHolds[midiNoteNumber] = new ActiveHold(
+            Stopwatch.GetTimestamp(),
+            Math.Max(0.05, expectedNote.DurationBeats),
+            expectedNote.OnsetBeats);
+        HeldNoteNumbers = _activeHolds.Keys.ToHashSet();
+        EmitNoteFeedback("hold", expectedNote.OnsetBeats, midiNoteNumber);
+    }
+
+    private void CompleteHold(int midiNoteNumber)
+    {
+        if (!_activeHolds.Remove(midiNoteNumber, out var hold)) return;
+        var actualSeconds = Stopwatch.GetElapsedTime(hold.StartTimestamp).TotalSeconds;
+        var expectedSeconds = hold.ExpectedBeats * 60d / Math.Max(1d, EffectiveLessonTempoBpm);
+        var tolerantTarget = Math.Max(0.08, expectedSeconds * 0.78);
+        var quality = expectedSeconds <= 0.12 ? 1d : Math.Clamp(actualSeconds / tolerantTarget, 0d, 1d);
+        _holdQualityTotal += quality;
+        _holdQualityCount++;
+        HeldNoteNumbers = _activeHolds.Keys.ToHashSet();
+        OnPropertyChanged(nameof(HoldCategoryLabel));
+        EmitNoteFeedback(quality < .72 ? "early" : "release", hold.OnsetBeat, midiNoteNumber);
+    }
+
+    private void ScorePedalEvent(bool isDown)
+    {
+        if (!PedalEnabled || !IsLessonActive || _score is null) return;
+        var pedalMarks = _score.Marks.Where(mark => mark.Kind == ScoreMarkKind.Pedal).ToArray();
+        if (pedalMarks.Length == 0) return;
+        var expectedText = isDown ? "start" : "stop";
+        var currentBeat = SelectedLessonMode == LessonMode.TimedPlay
+            ? _lessonStartBeat + _lessonClock.Elapsed.TotalSeconds * EffectiveLessonTempoBpm / 60d
+            : CursorBeat;
+        var nearest = pedalMarks
+            .Where(mark => mark.Text.Equals(expectedText, StringComparison.OrdinalIgnoreCase) ||
+                           (!isDown && mark.Text.Equals("change", StringComparison.OrdinalIgnoreCase)))
+            .Select(mark => Math.Abs(mark.OnsetBeats - currentBeat))
+            .DefaultIfEmpty(double.MaxValue)
+            .Min();
+        _pedalAttempts++;
+        if (nearest <= 0.8) _pedalCorrect++;
+    }
+
+    public void DismissResults() => ResultsVisible = false;
+
+    private string FormatExpectedGroup()
+    {
+        if (_lessonGroups.Count == 0) return "No playable notes for this hand choice.";
+        if (_lessonGroupIndex >= _lessonGroups.Count) return "No expected notes remain.";
+        return FormatExpectedGroup(_lessonGroups[_lessonGroupIndex]);
+    }
+
+    private string FormatExpectedGroup(ScoreNoteGroup group)
+    {
+        var preferFlats = _score?.KeySignature.Contains("b", StringComparison.OrdinalIgnoreCase) == true;
+        var names = string.Join(" + ", group.MidiNotes.Select(note => MidiNoteFormatter.Format(note, preferFlats)));
+        return $"Bar {group.MeasureNumber} | {names}";
+    }
+
+    private void UpdateExpectedGuideForCursor()
+    {
+        if (_score is null)
+        {
+            ExpectedLabel = "Import a score and start a lesson.";
+            return;
+        }
+        if (_lessonGroups.Count == 0)
+        {
+            ExpectedLabel = "No playable notes for this hand choice.";
+            return;
+        }
+
+        if (IsLessonActive && SelectedLessonMode is LessonMode.WaitForYou or LessonMode.TimedPlay)
+        {
+            ExpectedLabel = _lessonGroupIndex < _lessonGroups.Count
+                ? FormatExpectedGroup(_lessonGroups[_lessonGroupIndex])
+                : "No expected notes remain.";
+            return;
+        }
+
+        var low = 0;
+        var high = _lessonGroups.Count;
+        var targetBeat = CursorBeat - 0.001;
+        while (low < high)
+        {
+            var middle = low + (high - low) / 2;
+            if (_lessonGroups[middle].OnsetBeats < targetBeat) low = middle + 1;
+            else high = middle;
+        }
+        ExpectedLabel = low < _lessonGroups.Count
+            ? FormatExpectedGroup(_lessonGroups[low])
+            : "No expected notes remain.";
+    }
+
+    private void UpdateLessonMetrics()
+    {
+        var denominator = _correctCount + _missedCount + _extraCount;
+        var accuracy = denominator == 0 ? 0 : _correctCount * 100d / denominator;
+        CorrectLabel = _correctCount.ToString();
+        MissedLabel = _missedCount.ToString();
+        ExtraLabel = _extraCount.ToString();
+        AccuracyLabel = denominator == 0 ? "-" : $"{accuracy:0}%";
+        TimingLabel = SelectedLessonMode == LessonMode.WaitForYou
+            ? "Timing: n/a in Wait-for-you"
+            : _correctCount == 0 ? "Timing: 0%" : $"Timing: {_timingQualityTotal / _correctCount * 100:0}%";
+        ProgressLabel = $"{Math.Min(_lessonGroupIndex, _lessonGroups.Count)} / {_lessonGroups.Count} expected groups";
+        ExpectedLabel = FormatExpectedGroup();
+        OnPropertyChanged(nameof(PitchCategoryLabel));
+        OnPropertyChanged(nameof(TimingCategoryLabel));
+        OnPropertyChanged(nameof(HoldCategoryLabel));
+        OnPropertyChanged(nameof(PedalCategoryLabel));
+        OnPropertyChanged(nameof(StartLessonReason));
+        OnPropertyChanged(nameof(CanStartLesson));
+    }
+
+    private void RaiseLessonStateProperties()
+    {
+        OnPropertyChanged(nameof(CanChooseInput));
+        OnPropertyChanged(nameof(CanStartLesson));
+        OnPropertyChanged(nameof(CanUseTransport));
+        OnPropertyChanged(nameof(LessonButtonLabel));
+        OnPropertyChanged(nameof(InputSourceLabel));
+        OnPropertyChanged(nameof(StartLessonReason));
+    }
+
+    private void RaisePreviewStateProperties()
+    {
+        OnPropertyChanged(nameof(PreviewButtonLabel));
+        OnPropertyChanged(nameof(LessonButtonLabel));
+        OnPropertyChanged(nameof(IsScorePreviewPlaying));
+        OnPropertyChanged(nameof(CanUseTransport));
+        OnPropertyChanged(nameof(CanPlayMidiReference));
+    }
+
+    private void SaveProfileSettings()
+    {
+        var settings = _profile.Settings ??= new CadenzaUserSettings();
+        settings.MidiMonitorEnabled = MidiMonitorEnabled;
+        settings.MonitorVolume = MonitorVolume;
+        settings.OverallVolume = OverallVolume;
+        settings.InstrumentalMuted = InstrumentalMuted;
+        settings.InstrumentalVolume = InstrumentalVolume;
+        settings.MetronomeMuted = MetronomeMuted;
+        settings.MetronomeVolume = MetronomeVolume;
+        settings.PracticeFullAccompanimentEnabled = PracticeFullAccompanimentEnabled;
+        settings.PerformanceFullAccompanimentEnabled = PerformanceFullAccompanimentEnabled;
+        settings.OtherHandAccompanimentEnabled = OtherHandAccompanimentEnabled;
+        settings.OtherHandAccompanimentVolume = OtherHandAccompanimentVolume;
+        settings.LessonTempoPercent = LessonTempoPercent;
+        settings.HandMode = SelectedMode;
+        settings.LessonMode = SelectedLessonMode;
+        settings.ScoreReadingMode = ReadingMode;
+        settings.HintModeEnabled = HintModeEnabled;
+        settings.NotationZoomPercent = NotationZoomPercent;
+        settings.FocusStartMeasure = FocusStartMeasure;
+        settings.FocusEndMeasure = FocusEndMeasure;
+        settings.PedalEnabled = PedalEnabled;
+        settings.LatencyMilliseconds = LatencyMilliseconds;
+        settings.MetronomeEnabled = MetronomeEnabled;
+        settings.ComputerKeyboardEnabled = UseKeyboardSimulation;
+        TrySaveProfile();
+    }
+
+    private int EffectiveMixerVolume(int channelVolume) =>
+        Math.Clamp((int)Math.Round(Math.Clamp(channelVolume, 0, 100) * OverallVolume / 100d), 0, 100);
+
+    private void ApplyMixerVolumes()
+    {
+        _liveSynth.VolumePercent = EffectiveMixerVolume(MonitorVolume);
+        _accompanimentSynth.VolumePercent = EffectiveMixerVolume(OtherHandAccompanimentVolume);
+    }
+
+    private void PersistCompletedAttempt(TimeSpan elapsed)
+    {
+        if (_score is null) return;
+        var songs = _profile.Songs ??= new Dictionary<string, SongProgressRecord>(StringComparer.OrdinalIgnoreCase);
+        var key = GetSongProgressKey(_score);
+        if (!songs.TryGetValue(key, out var progress))
+        {
+            progress = new SongProgressRecord
+            {
+                SongTitle = ScoreTitle,
+                SourcePath = _score.SourcePath
+            };
+            songs[key] = progress;
+        }
+
+        var denominator = _correctCount + _missedCount + _extraCount;
+        var accuracy = denominator == 0 ? 0 : _correctCount * 100d / denominator;
+        var timing = SelectedLessonMode == LessonMode.WaitForYou || _correctCount == 0
+            ? 0
+            : _timingQualityTotal / _correctCount * 100d;
+        var hold = _holdQualityCount == 0 ? 0 : _holdQualityTotal / _holdQualityCount * 100d;
+        var practiceSeconds = Math.Max(0, elapsed.TotalSeconds);
+        progress.SongTitle = ScoreTitle;
+        progress.SourcePath = _score.SourcePath;
+        progress.LastPracticedUtc = DateTimeOffset.UtcNow;
+        progress.LastPositionBeat = Math.Clamp(CursorBeat, SelectedPreviewStartBeat, SelectedPreviewEndBeat);
+        progress.CumulativePracticeSeconds += practiceSeconds;
+        progress.BestStreak = Math.Max(progress.BestStreak, BestStreak);
+        progress.Attempts.Add(new CompletedAttemptSummary
+        {
+            CompletedUtc = DateTimeOffset.UtcNow,
+            Mode = SelectedLessonMode,
+            HandMode = SelectedMode,
+            StartMeasure = FocusStartMeasure,
+            EndMeasure = FocusEndMeasure,
+            AccuracyPercent = accuracy,
+            TimingPercent = timing,
+            HoldPercent = hold,
+            Correct = _correctCount,
+            Missed = _missedCount,
+            Extra = _extraCount,
+            PracticeSeconds = practiceSeconds,
+            BestStreak = BestStreak
+        });
+        if (progress.Attempts.Count > 200)
+            progress.Attempts.RemoveRange(0, progress.Attempts.Count - 200);
+
+        _currentSongProgress = progress;
+        TrySaveProfile();
+        OnPropertyChanged(nameof(DashboardProgressSummary));
+        OnPropertyChanged(nameof(RecentAttemptLabel));
+        OnPropertyChanged(nameof(CumulativePracticeLabel));
+        OnPropertyChanged(nameof(CompletedAttemptCount));
+        OnPropertyChanged(nameof(DashboardScoreSummary));
+    }
+
+    private void TrySaveProfile()
+    {
+        try
+        {
+            _profileStore.Save(_profile);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            StatusMessage = $"Settings could not be saved: {exception.Message}";
+        }
+    }
+
+    private static string GetSongProgressKey(ScoreDocument score) =>
+        Path.GetFullPath(score.SourcePath).Trim().ToUpperInvariant();
+
+    private void EmitNoteFeedback(string kind, double beat, int? midiNoteNumber)
+    {
+        var expectedGroup = _lessonGroups
+            .OrderBy(group => Math.Abs(group.OnsetBeats - beat))
+            .FirstOrDefault();
+        var occurrenceIndex = expectedGroup?.PerformanceOccurrence ??
+            SelectedPerformanceOccurrences
+                .Where(occurrence => occurrence.PerformanceStartBeat <= beat + 0.001)
+                .Select(occurrence => occurrence.OccurrenceIndex)
+                .DefaultIfEmpty(0)
+                .Max();
+        var staffNumber = SelectedMode switch
+        {
+            PracticeMode.RightHand => 1,
+            PracticeMode.LeftHand => 2,
+            _ when midiNoteNumber is not null && expectedGroup is not null => expectedGroup.Notes
+                .OrderBy(note => Math.Abs(note.MidiNoteNumber - midiNoteNumber.Value))
+                .ThenBy(note => note.StaffNumber)
+                .Select(note => note.StaffNumber)
+                .FirstOrDefault(),
+            _ => 0
+        };
+        NoteFeedback?.Invoke(this, new LessonNoteFeedbackEvent(
+            kind,
+            beat,
+            midiNoteNumber,
+            _lessonRunGeneration,
+            ++_feedbackEventSequence,
+            occurrenceIndex,
+            staffNumber));
+    }
+
+    private void SetNativeInputActive(bool active)
+    {
+        if (_nativeInputActive == active) return;
+        _nativeInputActive = active;
+        OnPropertyChanged(nameof(HasAcceptedInput));
+        OnPropertyChanged(nameof(InputSourceLabel));
+        OnPropertyChanged(nameof(StartLessonReason));
+        OnPropertyChanged(nameof(CanStartLesson));
+    }
+
+    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+        field = value;
+        OnPropertyChanged(propertyName);
+        return true;
+    }
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+
+    private sealed record ActiveHold(long StartTimestamp, double ExpectedBeats, double OnsetBeat);
+}
+
+public sealed record LessonNoteFeedbackEvent(
+    string Kind,
+    double Beat,
+    int? MidiNoteNumber = null,
+    long RunGeneration = 0,
+    long EventId = 0,
+    int OccurrenceIndex = 0,
+    int StaffNumber = 0);
+public sealed record LessonRunStateEvent(string State, LessonMode Mode, double StartBeat, long RunGeneration = 0);
