@@ -28,4 +28,6 @@ public sealed record AudioSoundPreset(string Id, string Name, int PatchNumber, b
         if (string.IsNullOrWhiteSpace(id)) return fallback;
         return AllPresets.FirstOrDefault(preset => string.Equals(preset.Id, id, StringComparison.OrdinalIgnoreCase)) ?? fallback;
     }
+
+    public override string ToString() => Name;
 }

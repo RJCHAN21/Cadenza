@@ -21,7 +21,15 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly MidiOutSynthService _accompanimentSynth = new();
     private readonly MidiFileImporter _midiFileImporter = new();
     private readonly UserProfileStore _profileStore;
+    private readonly LibraryStore _libraryStore = new();
     private readonly CadenzaUserProfile _profile;
+    private string _librarySearchQuery = string.Empty;
+    private int _libraryCurrentPage = 1;
+    private int _libraryPageSize = 6;
+    private bool _isSelectAllLibraryItemsChecked;
+    private bool _isRenameOverlayVisible;
+    private string _renameItemTitleInput = string.Empty;
+    private LibraryItemViewModel? _itemBeingRenamed;
     private readonly DispatcherTimer _lessonTimer;
     private readonly DispatcherTimer _midiRefreshTimer;
     private readonly Stopwatch _lessonClock = new();
@@ -164,7 +172,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _hintModeEnabled = settings.HintModeEnabled;
         _notationZoomPercent = Math.Clamp(settings.NotationZoomPercent, 80, 165);
         _focusStartMeasure = Math.Max(1, settings.FocusStartMeasure);
-        _focusEndMeasure = Math.Max(_focusStartMeasure, settings.FocusEndMeasure);
+        _focusEndMeasure = settings.FocusEndMeasure;
         _pedalEnabled = settings.PedalEnabled;
         _latencyMilliseconds = Math.Clamp(settings.LatencyMilliseconds, -250, 500);
         _metronomeEnabled = settings.MetronomeEnabled;
@@ -194,6 +202,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _midiDeviceService.InputError += MidiDeviceService_InputError;
         _midiDeviceService.InputDisconnected += MidiDeviceService_InputDisconnected;
         _midiDeviceService.Diagnostic += MidiDeviceService_Diagnostic;
+        RefreshLibrary();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -207,6 +216,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<MidiListenTrackOption> MidiListenTracks { get; } = [];
     public ObservableCollection<string> MidiDiagnosticTrace { get; } = [];
     public ObservableCollection<int> MeasureNumbers { get; } = [];
+    public ObservableCollection<LibraryItemViewModel> LibraryItems { get; } = [];
+    public ObservableCollection<LibraryItemViewModel> PagedLibraryItems { get; } = [];
 
     public string ScoreTitle { get => _scoreTitle; set => SetField(ref _scoreTitle, value); }
     public string ScoreByline { get => _scoreByline; private set => SetField(ref _scoreByline, value); }
@@ -373,11 +384,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     }
     public int FocusEndMeasure
     {
-        get => _focusEndMeasure;
+        get => _focusEndMeasure <= 0 || (_score is not null && _focusEndMeasure > _score.MeasureCount)
+            ? (_score?.MeasureCount ?? 1)
+            : _focusEndMeasure;
         set
         {
-            var next = Math.Clamp(value, FocusStartMeasure, Math.Max(FocusStartMeasure, _score?.MeasureCount ?? 1));
-            if (!SetField(ref _focusEndMeasure, next)) return;
+            var maxBar = Math.Max(FocusStartMeasure, _score?.MeasureCount ?? 1);
+            var next = Math.Clamp(value, FocusStartMeasure, maxBar);
+            var stored = (_score is not null && next == _score.MeasureCount) ? 0 : next;
+            if (_focusEndMeasure == stored) return;
+            _focusEndMeasure = stored;
+            OnPropertyChanged(nameof(FocusEndMeasure));
             StopActiveSessionForSelectionChange();
             RefreshLessonGroups();
             ResetPreviewPositionToRangeStart();
@@ -800,6 +817,259 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public string LatencyLabel => LatencyMilliseconds == 0 ? "0 ms correction" : $"{LatencyMilliseconds:+0;-0} ms correction";
 
+    #region Music Library Management
+
+    public string LibrarySearchQuery
+    {
+        get => _librarySearchQuery;
+        set
+        {
+            if (SetField(ref _librarySearchQuery, value))
+            {
+                _libraryCurrentPage = 1;
+                OnPropertyChanged(nameof(IsLibrarySearchQueryEmpty));
+                ApplyLibraryFilterAndPagination();
+            }
+        }
+    }
+
+    public bool IsLibrarySearchQueryEmpty => string.IsNullOrEmpty(LibrarySearchQuery);
+
+    public int LibraryCurrentPage
+    {
+        get => _libraryCurrentPage;
+        set
+        {
+            if (SetField(ref _libraryCurrentPage, Math.Clamp(value, 1, LibraryTotalPages)))
+            {
+                ApplyLibraryFilterAndPagination();
+            }
+        }
+    }
+
+    public int LibraryPageSize
+    {
+        get => _libraryPageSize;
+        set
+        {
+            if (SetField(ref _libraryPageSize, Math.Max(1, value)))
+            {
+                _libraryCurrentPage = 1;
+                ApplyLibraryFilterAndPagination();
+            }
+        }
+    }
+
+    public int LibraryTotalPages
+    {
+        get
+        {
+            var totalFiltered = FilteredLibraryItems.Count;
+            return Math.Max(1, (int)Math.Ceiling(totalFiltered / (double)_libraryPageSize));
+        }
+    }
+
+    public string LibraryPaginationLabel => $"Page {LibraryCurrentPage} of {LibraryTotalPages} · {FilteredLibraryItems.Count} songs";
+    public bool CanGoToPreviousLibraryPage => LibraryCurrentPage > 1;
+    public bool CanGoToNextLibraryPage => LibraryCurrentPage < LibraryTotalPages;
+
+    public bool IsSelectAllLibraryItemsChecked
+    {
+        get => _isSelectAllLibraryItemsChecked;
+        set
+        {
+            if (SetField(ref _isSelectAllLibraryItemsChecked, value))
+            {
+                foreach (var item in PagedLibraryItems)
+                {
+                    item.IsSelected = value;
+                }
+                OnPropertyChanged(nameof(SelectedLibraryItemCount));
+                OnPropertyChanged(nameof(HasSelectedLibraryItems));
+                OnPropertyChanged(nameof(SelectedLibraryCountLabel));
+            }
+        }
+    }
+
+    public int SelectedLibraryItemCount => LibraryItems.Count(item => item.IsSelected);
+    public bool HasSelectedLibraryItems => SelectedLibraryItemCount > 0;
+    public string SelectedLibraryCountLabel => $"{SelectedLibraryItemCount} selected";
+
+    public bool IsRenameOverlayVisible
+    {
+        get => _isRenameOverlayVisible;
+        set => SetField(ref _isRenameOverlayVisible, value);
+    }
+
+    public string RenameItemTitleInput
+    {
+        get => _renameItemTitleInput;
+        set => SetField(ref _renameItemTitleInput, value);
+    }
+
+    public LibraryItemViewModel? ItemBeingRenamed
+    {
+        get => _itemBeingRenamed;
+        set => SetField(ref _itemBeingRenamed, value);
+    }
+
+    private List<LibraryItemViewModel> FilteredLibraryItems
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(LibrarySearchQuery))
+                return LibraryItems.ToList();
+
+            var query = LibrarySearchQuery.Trim();
+            return LibraryItems.Where(item =>
+                item.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                item.OriginalFileName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                item.Composer.Contains(query, StringComparison.OrdinalIgnoreCase)
+            ).ToList();
+        }
+    }
+
+    public void RefreshLibrary()
+    {
+        var rawItems = _libraryStore.LoadLibrary();
+
+        foreach (var existing in LibraryItems)
+        {
+            existing.PropertyChanged -= LibraryItem_PropertyChanged;
+        }
+
+        LibraryItems.Clear();
+        var currentPath = _score?.SourcePath;
+
+        foreach (var item in rawItems)
+        {
+            var vm = new LibraryItemViewModel(item)
+            {
+                IsActiveScore = !string.IsNullOrWhiteSpace(currentPath) &&
+                                string.Equals(item.StoredFilePath, currentPath, StringComparison.OrdinalIgnoreCase)
+            };
+            vm.PropertyChanged += LibraryItem_PropertyChanged;
+            LibraryItems.Add(vm);
+        }
+
+        ApplyLibraryFilterAndPagination();
+    }
+
+    private void LibraryItem_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(LibraryItemViewModel.IsSelected))
+        {
+            OnPropertyChanged(nameof(SelectedLibraryItemCount));
+            OnPropertyChanged(nameof(HasSelectedLibraryItems));
+            OnPropertyChanged(nameof(SelectedLibraryCountLabel));
+        }
+    }
+
+    public void ApplyLibraryFilterAndPagination()
+    {
+        var filtered = FilteredLibraryItems;
+        var totalPages = Math.Max(1, (int)Math.Ceiling(filtered.Count / (double)_libraryPageSize));
+        _libraryCurrentPage = Math.Clamp(_libraryCurrentPage, 1, totalPages);
+
+        PagedLibraryItems.Clear();
+        var pageItems = filtered
+            .Skip((_libraryCurrentPage - 1) * _libraryPageSize)
+            .Take(_libraryPageSize);
+
+        foreach (var item in pageItems)
+        {
+            PagedLibraryItems.Add(item);
+        }
+
+        OnPropertyChanged(nameof(LibraryTotalPages));
+        OnPropertyChanged(nameof(LibraryPaginationLabel));
+        OnPropertyChanged(nameof(CanGoToPreviousLibraryPage));
+        OnPropertyChanged(nameof(CanGoToNextLibraryPage));
+        OnPropertyChanged(nameof(SelectedLibraryItemCount));
+        OnPropertyChanged(nameof(HasSelectedLibraryItems));
+        OnPropertyChanged(nameof(SelectedLibraryCountLabel));
+    }
+
+    public void LibraryNextPage()
+    {
+        if (CanGoToNextLibraryPage)
+        {
+            LibraryCurrentPage++;
+        }
+    }
+
+    public void LibraryPreviousPage()
+    {
+        if (CanGoToPreviousLibraryPage)
+        {
+            LibraryCurrentPage--;
+        }
+    }
+
+    public void ClearLibrarySelection()
+    {
+        foreach (var item in LibraryItems)
+        {
+            item.IsSelected = false;
+        }
+        _isSelectAllLibraryItemsChecked = false;
+        OnPropertyChanged(nameof(IsSelectAllLibraryItemsChecked));
+        OnPropertyChanged(nameof(SelectedLibraryItemCount));
+        OnPropertyChanged(nameof(HasSelectedLibraryItems));
+        OnPropertyChanged(nameof(SelectedLibraryCountLabel));
+    }
+
+    public void DeleteSelectedLibraryItems()
+    {
+        var selectedIds = LibraryItems.Where(i => i.IsSelected).Select(i => i.Id).ToList();
+        if (selectedIds.Count == 0) return;
+
+        _libraryStore.DeleteItems(selectedIds);
+        ClearLibrarySelection();
+        RefreshLibrary();
+    }
+
+    public void DeleteLibraryItem(LibraryItemViewModel? item)
+    {
+        if (item is null) return;
+        _libraryStore.DeleteItem(item.Id);
+        RefreshLibrary();
+    }
+
+    public void OpenRenameOverlay(LibraryItemViewModel? item)
+    {
+        if (item is null) return;
+        ItemBeingRenamed = item;
+        RenameItemTitleInput = item.DisplayName;
+        IsRenameOverlayVisible = true;
+    }
+
+    public void SaveRenameItem()
+    {
+        if (ItemBeingRenamed is null || string.IsNullOrWhiteSpace(RenameItemTitleInput)) return;
+        _libraryStore.RenameItem(ItemBeingRenamed.Id, RenameItemTitleInput);
+        ItemBeingRenamed.DisplayName = RenameItemTitleInput.Trim();
+        IsRenameOverlayVisible = false;
+        RefreshLibrary();
+    }
+
+    public void CloseRenameOverlay()
+    {
+        IsRenameOverlayVisible = false;
+        ItemBeingRenamed = null;
+    }
+
+    public void LoadLibraryItem(LibraryItemViewModel? item)
+    {
+        if (item is null || !File.Exists(item.StoredFilePath)) return;
+        LoadScore(item.StoredFilePath);
+        _libraryStore.RecordPlayed(item.Id);
+        RefreshLibrary();
+        IsPlayerVisible = true;
+    }
+
+    #endregion
+
     public async Task CalibrateLatencyAsync()
     {
         if (IsCalibrationActive) return;
@@ -923,6 +1193,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             ScoreTitle = NormalizeSampleTitle(_score.Title, path);
             ScoreByline = _score.ComposerOrCreator;
             SourceFileLabel = Path.GetFileName(_score.SourcePath);
+            var libItem = _libraryStore.AddOrUpdateFile(path, ScoreTitle, ScoreByline, _score.MeasureCount);
+            _libraryStore.RecordPlayed(libItem.Id);
+            RefreshLibrary();
             ScoreStatusLabel = $"{_score.FormatVersion} | {_score.SourceContainer} | authoritative notation source";
             FormatLabel = _score.FormatVersion;
             KeyLabel = _score.KeySignature;
@@ -938,8 +1211,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             for (var measure = 1; measure <= _score.MeasureCount; measure++) MeasureNumbers.Add(measure);
             var savedSettings = _profile.Settings ??= new CadenzaUserSettings();
             _focusStartMeasure = Math.Clamp(savedSettings.FocusStartMeasure, 1, _score.MeasureCount);
-            _focusEndMeasure = savedSettings.FocusEndMeasure <= 0 || savedSettings.FocusEndMeasure > _score.MeasureCount
-                ? _score.MeasureCount
+            _focusEndMeasure = (savedSettings.FocusEndMeasure <= 0 || savedSettings.FocusEndMeasure >= _score.MeasureCount)
+                ? 0
                 : Math.Clamp(savedSettings.FocusEndMeasure, _focusStartMeasure, _score.MeasureCount);
             var songKey = GetSongProgressKey(_score);
             (_profile.Songs ??= new Dictionary<string, SongProgressRecord>(StringComparer.OrdinalIgnoreCase))
@@ -2551,7 +2824,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         settings.HintModeEnabled = HintModeEnabled;
         settings.NotationZoomPercent = NotationZoomPercent;
         settings.FocusStartMeasure = FocusStartMeasure;
-        settings.FocusEndMeasure = _score is not null && FocusEndMeasure == _score.MeasureCount ? 0 : FocusEndMeasure;
+        settings.FocusEndMeasure = (_score is null || _focusEndMeasure <= 0 || FocusEndMeasure == _score.MeasureCount) ? 0 : _focusEndMeasure;
         settings.PedalEnabled = PedalEnabled;
         settings.LatencyMilliseconds = LatencyMilliseconds;
         settings.MetronomeEnabled = MetronomeEnabled;

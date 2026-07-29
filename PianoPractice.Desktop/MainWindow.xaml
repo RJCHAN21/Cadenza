@@ -50,8 +50,18 @@
       </Setter>
     </Style>
 
+    <Style TargetType="TextBox">
+      <Setter Property="Foreground" Value="#FFFFFF" />
+      <Setter Property="Background" Value="#171C23" />
+      <Setter Property="BorderBrush" Value="#3B4756" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CaretBrush" Value="#FFFFFF" />
+      <Setter Property="Padding" Value="6,4" />
+      <Setter Property="SelectionBrush" Value="{StaticResource Gold}" />
+    </Style>
+
     <Style x:Key="GoldButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-      <Setter Property="Foreground" Value="#15120D" />
+      <Setter Property="Foreground" Value="#FFFFFF" />
       <Setter Property="Background" Value="{StaticResource Gold}" />
       <Setter Property="BorderBrush" Value="#F0C97E" />
       <Setter Property="FontWeight" Value="SemiBold" />
@@ -256,6 +266,38 @@
       </Setter>
     </Style>
 
+    <Style TargetType="ScrollBar" BasedOn="{StaticResource RangeScrollBar}" />
+
+    <Style x:Key="ModalCloseButton" TargetType="Button">
+      <Setter Property="Width" Value="32" />
+      <Setter Property="Height" Value="32" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="ToolTip" Value="Close window" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="CloseBody" Background="#222A34" BorderBrush="#3D4754" BorderThickness="1" CornerRadius="8">
+              <Path Data="M 0 0 L 10 10 M 10 0 L 0 10" Width="10" Height="10" Stretch="Uniform"
+                    Stroke="#C4F6FC" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                    HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="CloseBody" Property="Background" Value="#34404D" />
+                <Setter TargetName="CloseBody" Property="BorderBrush" Value="#78C8D3" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="CloseBody" Property="Background" Value="#544126" />
+                <Setter TargetName="CloseBody" Property="BorderBrush" Value="#D9AA5B" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
     <Style x:Key="RangeComboBox" TargetType="ComboBox">
       <Setter Property="Foreground" Value="#F3F0E8" />
       <Setter Property="Background" Value="#252D37" />
@@ -270,8 +312,8 @@
             <Grid>
               <Border x:Name="ClosedBody" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
                       BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" />
-              <ContentPresenter Content="{TemplateBinding SelectionBoxItem}" Margin="10,0,25,0"
-                                VerticalAlignment="Center" HorizontalAlignment="Left" />
+              <TextBlock Text="{Binding RelativeSource={RelativeSource TemplatedParent}, Path=SelectionBoxItem}" Margin="10,0,25,0"
+                         VerticalAlignment="Center" HorizontalAlignment="Left" Foreground="{StaticResource Ink}" TextTrimming="CharacterEllipsis" />
               <Path Data="M 0 0 L 4 4 L 8 0" Stroke="#C4F6FC" StrokeThickness="1.5"
                     HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,9,0" />
               <ToggleButton Background="Transparent" BorderThickness="0" Focusable="False" ClickMode="Press"
@@ -332,6 +374,51 @@
                     <RepeatButton.Template>
                       <ControlTemplate TargetType="RepeatButton">
                         <Border Height="4" Background="#56616E" CornerRadius="2" VerticalAlignment="Center" />
+                      </ControlTemplate>
+                    </RepeatButton.Template>
+                  </RepeatButton>
+                </Track.IncreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb Width="16" Height="16">
+                    <Thumb.Template>
+                      <ControlTemplate TargetType="Thumb">
+                        <Ellipse Fill="#F6F2E9" Stroke="#8BEAFF" StrokeThickness="1.5" />
+                      </ControlTemplate>
+                    </Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+              </Track>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="DarkMixerSlider" TargetType="Slider">
+      <Setter Property="Height" Value="28" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Slider">
+            <Grid Height="{TemplateBinding Height}" VerticalAlignment="Center">
+              <Track x:Name="PART_Track" Height="16" VerticalAlignment="Center"
+                     Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}"
+                     Value="{TemplateBinding Value}" Orientation="{TemplateBinding Orientation}"
+                     IsDirectionReversed="{TemplateBinding IsDirectionReversed}">
+                <Track.DecreaseRepeatButton>
+                  <RepeatButton Command="{x:Static Slider.DecreaseLarge}">
+                    <RepeatButton.Template>
+                      <ControlTemplate TargetType="RepeatButton">
+                        <Border Height="5" Background="{StaticResource Gold}" CornerRadius="2.5" VerticalAlignment="Center" />
+                      </ControlTemplate>
+                    </RepeatButton.Template>
+                  </RepeatButton>
+                </Track.DecreaseRepeatButton>
+                <Track.IncreaseRepeatButton>
+                  <RepeatButton Command="{x:Static Slider.IncreaseLarge}">
+                    <RepeatButton.Template>
+                      <ControlTemplate TargetType="RepeatButton">
+                        <Border Height="5" Background="#353E4A" CornerRadius="2.5" VerticalAlignment="Center" />
                       </ControlTemplate>
                     </RepeatButton.Template>
                   </RepeatButton>
@@ -455,35 +542,109 @@
               </Border>
             </Grid>
 
-            <Grid Margin="0,0,0,10">
+            <!-- MUSIC LIBRARY MANAGEMENT PANEL -->
+            <Grid Margin="0,4,0,12">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
               </Grid.ColumnDefinitions>
-              <TextBlock Text="Library" FontSize="19" FontWeight="SemiBold" />
-              <TextBlock Grid.Column="1" Text="MusicXML is the authoritative score source" Foreground="{StaticResource Muted}"
-                         FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="16,0,0,0" />
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Music Library" FontSize="20" FontWeight="SemiBold" />
+                <Border Background="#282218" BorderBrush="#5E4B2B" BorderThickness="1" CornerRadius="10" Padding="9,3" Margin="12,0,0,0" VerticalAlignment="Center">
+                  <TextBlock Text="{Binding LibraryPaginationLabel}" Foreground="{StaticResource Gold}" FontSize="10" FontWeight="SemiBold" />
+                </Border>
+              </StackPanel>
+
+              <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Background="#171C23" BorderBrush="#3B4756" BorderThickness="1" CornerRadius="8" Width="200" Height="32" Margin="0,0,8,0">
+                  <Grid>
+                    <TextBlock Text="🔍 Search music..." Foreground="{StaticResource Muted}" FontSize="11" Margin="9,0" VerticalAlignment="Center"
+                               Visibility="{Binding IsLibrarySearchQueryEmpty, Converter={StaticResource BoolToVisibility}}" IsHitTestVisible="False" />
+                    <TextBox Text="{Binding LibrarySearchQuery, UpdateSourceTrigger=PropertyChanged}" Foreground="{StaticResource Ink}" Background="Transparent"
+                             BorderThickness="0" FontSize="11" VerticalAlignment="Center" Padding="8,0" />
+                  </Grid>
+                </Border>
+                <Button Content="+ Import Music" Style="{StaticResource GoldButton}" Click="ImportScore_Click" Height="32" Padding="12,0" />
+              </StackPanel>
             </Grid>
 
-            <Border Background="{StaticResource Panel2}" BorderBrush="#4A3A24" BorderThickness="1" CornerRadius="16" Padding="18">
-              <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="74" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <Border Width="62" Height="78" CornerRadius="10" Background="#342A1D">
-                  <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="♩" Foreground="{StaticResource Gold}" FontSize="25" HorizontalAlignment="Center" />
-                    <TextBlock Text="SCORE" Foreground="#B89153" FontSize="8" HorizontalAlignment="Center" />
-                  </StackPanel>
-                </Border>
-                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,0">
-                  <TextBlock Text="{Binding ScoreTitle}" FontSize="20" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding ScoreByline}" Foreground="{StaticResource Muted}" Margin="0,2,0,0" />
-                  <TextBlock Text="{Binding DashboardScoreSummary}" Foreground="{StaticResource Gold}" FontSize="10" Margin="0,8,0,0" />
-                  <TextBlock Text="{Binding DashboardProgressSummary}" Foreground="#C7B88E" FontSize="9.5" Margin="0,3,0,0" />
-                  <TextBlock Text="{Binding SourceFileLabel}" Foreground="{StaticResource Muted}" FontSize="9" Margin="0,3,0,0" />
+            <!-- Bulk Multi-Select Actions Bar -->
+            <Border Background="#251E16" BorderBrush="#7C5D2C" BorderThickness="1" CornerRadius="10" Padding="14,9" Margin="0,0,0,12"
+                    Visibility="{Binding HasSelectedLibraryItems, Converter={StaticResource BoolToVisibility}}">
+              <DockPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="✦ " Foreground="{StaticResource Gold}" FontSize="13" />
+                  <TextBlock Text="{Binding SelectedLibraryCountLabel}" Foreground="{StaticResource Gold}" FontWeight="SemiBold" FontSize="11" />
                 </StackPanel>
-                <Button Grid.Column="2" Content="Open lesson" Style="{StaticResource GoldButton}" Click="OpenLesson_Click" IsEnabled="{Binding HasScore}" VerticalAlignment="Center" />
-              </Grid>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                  <Button Content="Clear selection" Click="ClearLibrarySelection_Click" Height="28" Padding="10,0" Margin="0,0,8,0" />
+                  <Button Content="Delete Selected" Click="DeleteSelectedLibrary_Click" Background="#4A1E1E" Foreground="#FF9C8E" BorderBrush="#8E3636" Height="28" Padding="10,0" />
+                </StackPanel>
+              </DockPanel>
             </Border>
+
+            <!-- Library Song Items List -->
+            <ItemsControl ItemsSource="{Binding PagedLibraryItems}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Background="{StaticResource Panel2}" BorderBrush="#353E49" BorderThickness="1" CornerRadius="12" Padding="14,12" Margin="0,0,0,10">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="54" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+
+                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,12,0" />
+
+                      <Border Grid.Column="1" Width="44" Height="52" CornerRadius="8" Background="#262016" BorderBrush="#5E4B2B" BorderThickness="1">
+                        <StackPanel VerticalAlignment="Center">
+                          <TextBlock Text="♩" Foreground="{StaticResource Gold}" FontSize="18" HorizontalAlignment="Center" />
+                          <TextBlock Text="SCORE" Foreground="#B89153" FontSize="7.5" HorizontalAlignment="Center" />
+                        </StackPanel>
+                      </Border>
+
+                      <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="12,0">
+                        <StackPanel Orientation="Horizontal">
+                          <TextBlock Text="{Binding DisplayName}" Foreground="#FFFFFF" FontSize="15.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                          <Border Background="#3D301D" CornerRadius="5" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center"
+                                  Visibility="{Binding IsActiveScore, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Text="ACTIVE" Foreground="{StaticResource Gold}" FontSize="8.5" FontWeight="Bold" />
+                          </Border>
+                        </StackPanel>
+                        <TextBlock Text="{Binding SubtitleLabel}" Foreground="{StaticResource Muted}" FontSize="10.5" Margin="0,2,0,0" />
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                          <TextBlock Text="{Binding ImportedDateLabel}" Foreground="#727A86" FontSize="9" Margin="0,0,12,0" />
+                          <TextBlock Text="{Binding LastPlayedLabel}" Foreground="{StaticResource Gold}" FontSize="9" />
+                        </StackPanel>
+                      </StackPanel>
+
+                      <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Content="Play" Style="{StaticResource GoldButton}" Click="PlayLibraryItem_Click" Tag="{Binding}" Height="30" Padding="14,0" Margin="0,0,6,0" ToolTip="Load and play this song" />
+                        <Button Content="Rename" Click="RenameLibraryItem_Click" Tag="{Binding}" Height="30" Padding="10,0" Margin="0,0,6,0" ToolTip="Rename song title" />
+                        <Button Content="Delete" Click="DeleteLibraryItem_Click" Tag="{Binding}" Background="#2B1D1D" Foreground="#FF9C8E" BorderBrush="#5A2F2F" Height="30" Padding="10,0" ToolTip="Delete song from library" />
+                      </StackPanel>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Pagination Footer Bar -->
+            <DockPanel Margin="0,4,0,18">
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <CheckBox Content="Select All on page" IsChecked="{Binding IsSelectAllLibraryItemsChecked, Mode=TwoWay}" VerticalAlignment="Center" />
+              </StackPanel>
+              <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="◀ Prev" Click="LibraryPrevPage_Click" IsEnabled="{Binding CanGoToPreviousLibraryPage}" Height="30" Padding="10,0" Margin="0,0,6,0" />
+                <Border Background="#171C23" BorderBrush="#3B4756" BorderThickness="1" CornerRadius="6" Padding="10,4" Margin="0,0,6,0">
+                  <TextBlock Text="{Binding LibraryPaginationLabel}" Foreground="{StaticResource Ink}" FontSize="10.5" VerticalAlignment="Center" />
+                </Border>
+                <Button Content="Next ▶" Click="LibraryNextPage_Click" IsEnabled="{Binding CanGoToNextLibraryPage}" Height="30" Padding="10,0" />
+              </StackPanel>
+            </DockPanel>
 
             <Border Background="#141920" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="17" Margin="0,18,0,0">
               <StackPanel>
@@ -524,8 +685,8 @@
               <StackPanel>
                 <TextBlock Text="MIDI KEYBOARD" Style="{StaticResource Eyebrow}" />
                 <Grid Margin="3">
-                  <ComboBox x:Name="MidiDeviceComboBox" ItemsSource="{Binding MidiDevices}" SelectedItem="{Binding SelectedMidiDevice, Mode=TwoWay}"
-                            DisplayMemberPath="Name" IsEnabled="{Binding CanChooseInput}" Foreground="#11161C" Background="#F4F1E8"
+                  <ComboBox x:Name="MidiDeviceComboBox" Style="{StaticResource RangeComboBox}" ItemsSource="{Binding MidiDevices}" SelectedItem="{Binding SelectedMidiDevice, Mode=TwoWay}"
+                            DisplayMemberPath="Name" IsEnabled="{Binding CanChooseInput}" Height="34"
                             ToolTip="Selecting connects the keyboard immediately."
                             Visibility="{Binding HasMidiHardware, Converter={StaticResource BoolToVisibility}}" />
                   <Border Background="#11161C" BorderBrush="#4A5361" BorderThickness="1" CornerRadius="7" Padding="11,8"
@@ -558,7 +719,7 @@
                   <TextBlock Text="Monitor volume" Foreground="{StaticResource Muted}" />
                   <TextBlock Grid.Column="1" Text="{Binding MonitorVolumeLabel}" Foreground="{StaticResource Gold}" Margin="12,0,0,0" />
                 </Grid>
-                <Slider Minimum="0" Maximum="100" Value="{Binding MonitorVolume, Mode=TwoWay}" Margin="5,3,5,11" />
+                <Slider Style="{StaticResource DarkMixerSlider}" Minimum="0" Maximum="100" Value="{Binding MonitorVolume, Mode=TwoWay}" Margin="5,3,5,11" />
 
                 <TextBlock Text="Do you have a sustain pedal?" Style="{StaticResource Eyebrow}" Margin="0,5,0,0" />
                 <UniformGrid Columns="2" Margin="0,5,0,2">
@@ -572,7 +733,7 @@
                   <TextBlock Text="Latency correction" Style="{StaticResource Eyebrow}" VerticalAlignment="Center" />
                   <TextBlock Grid.Column="1" Text="{Binding LatencyLabel}" Foreground="{StaticResource Gold}" FontSize="10" Margin="12,0,0,0" />
                 </Grid>
-                <Slider Minimum="-250" Maximum="500" TickFrequency="10" IsSnapToTickEnabled="True" Value="{Binding LatencyMilliseconds, Mode=TwoWay}" Margin="5,5" />
+                <Slider Style="{StaticResource DarkMixerSlider}" Minimum="-250" Maximum="500" TickFrequency="10" IsSnapToTickEnabled="True" Value="{Binding LatencyMilliseconds, Mode=TwoWay}" Margin="5,5" />
                 <Button Content="Run 4-click calibration" Click="CalibrateLatency_Click" HorizontalAlignment="Left" />
 
                 <Expander Header="Advanced device details" Foreground="{StaticResource Muted}" Margin="3,12,3,0">
@@ -662,7 +823,7 @@
           </Grid.ColumnDefinitions>
           <wv2:WebView2 Grid.Row="1" Grid.ColumnSpan="3" x:Name="NotationWebView" DefaultBackgroundColor="#101318" />
 
-          <Border Grid.Row="0" Grid.Column="0" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="18,6,6,6" Background="#181D23" CornerRadius="10" Padding="12,7">
+          <Border Grid.Row="0" Grid.Column="0" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="18,6,6,6" Background="#1B222B" BorderBrush="#465363" BorderThickness="1" CornerRadius="12" Padding="13,7">
             <StackPanel>
               <TextBlock Text="{Binding SelectedLessonModeLabel}" Foreground="#8BEAFF" FontWeight="SemiBold" FontSize="10"
                          Margin="0,0,0,3" TextTrimming="CharacterEllipsis" />
@@ -778,8 +939,8 @@
     </Grid>
 
     <Grid x:Name="ImportWarningsOverlay" Visibility="Collapsed" Background="#D9000000">
-      <Border Width="620" MaxHeight="680" Background="#1A2028" BorderBrush="#675333" BorderThickness="1"
-              CornerRadius="18" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <Border Width="620" MaxHeight="680" Background="#171C23" BorderBrush="#4D4534" BorderThickness="1"
+              CornerRadius="18" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -787,17 +948,17 @@
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
           </Grid.RowDefinitions>
-          <DockPanel>
-            <StackPanel>
+          <Grid Grid.Row="0" Margin="24,20,18,6">
+            <StackPanel VerticalAlignment="Center">
               <TextBlock Text="IMPORT REVIEW" Style="{StaticResource Eyebrow}" Foreground="#FFD08A" />
               <TextBlock Text="Score navigation needs review" FontSize="23" FontWeight="SemiBold" Margin="0,3,0,0" />
             </StackPanel>
-            <Button DockPanel.Dock="Right" Content="Close" Click="CloseImportWarnings_Click"
-                    VerticalAlignment="Top" AutomationProperties.Name="Close import warning details" />
-          </DockPanel>
-          <TextBlock Grid.Row="1" Margin="0,14,0,12" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+            <Button Style="{StaticResource ModalCloseButton}" HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Click="CloseImportWarnings_Click" AutomationProperties.Name="Close import warning details" />
+          </Grid>
+          <TextBlock Grid.Row="1" Margin="24,8,24,12" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
                      Text="These warnings surface pre-existing ambiguous volta endings under stricter import validation; they are not newly introduced score defects. Assessment is blocked only for affected ranges that cannot be interpreted safely. Listen follows the score's explicit repeat barlines." />
-          <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+          <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="24,0,16,12">
             <ItemsControl ItemsSource="{Binding ImportValidationWarnings}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
@@ -830,30 +991,38 @@
             </ItemsControl>
           </ScrollViewer>
           <Button Grid.Row="3" Content="Done" Click="CloseImportWarnings_Click"
-                  HorizontalAlignment="Right" MinWidth="92" Margin="0,12,0,0" />
+                  HorizontalAlignment="Right" MinWidth="92" Margin="0,8,24,20" />
         </Grid>
       </Border>
     </Grid>
 
     <Grid x:Name="AudioMixerOverlay" Visibility="Collapsed" Background="#D9000000">
-      <Border Width="520" MaxHeight="780" Background="#1A2028" BorderBrush="#4A5665" BorderThickness="1"
-              CornerRadius="18" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center">
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <StackPanel>
-            <DockPanel Margin="0,0,0,16">
-              <StackPanel>
-                <TextBlock Text="AUDIO MIXER" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" />
-                <TextBlock Text="Choose what you hear" FontSize="24" FontWeight="SemiBold" Margin="0,3,0,0" />
-              </StackPanel>
-              <Button DockPanel.Dock="Right" Content="Close" Click="CloseAudioMixer_Click" VerticalAlignment="Top" />
-            </DockPanel>
+      <Border Width="540" MaxHeight="780" Background="#171C23" BorderBrush="#3B4756" BorderThickness="1"
+              CornerRadius="18" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+
+          <Grid Grid.Row="0" Margin="24,20,18,12">
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock Text="AUDIO MIXER" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" />
+              <TextBlock Text="Choose what you hear" FontSize="23" FontWeight="SemiBold" Margin="0,2,0,0" />
+            </StackPanel>
+            <Button Style="{StaticResource ModalCloseButton}" HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Click="CloseAudioMixer_Click" AutomationProperties.Name="Close Audio Mixer" />
+          </Grid>
+
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="24,0,16,24">
+            <StackPanel Margin="0,0,8,0">
 
             <Grid Margin="0,4,0,0">
               <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
               <TextBlock Text="Overall Volume" Foreground="{StaticResource Ink}" FontWeight="SemiBold" />
               <TextBlock Grid.Column="1" Text="{Binding OverallVolumeLabel}" Foreground="{StaticResource Gold}" />
             </Grid>
-            <Slider Minimum="0" Maximum="100" Value="{Binding OverallVolume, Mode=TwoWay}" Margin="0,4,0,14" />
+            <Slider Style="{StaticResource DarkMixerSlider}" Minimum="0" Maximum="100" Value="{Binding OverallVolume, Mode=TwoWay}" Margin="0,4,0,14" />
 
             <Separator Background="{StaticResource Line}" Margin="0,2,0,13" />
             <Grid>
@@ -862,7 +1031,7 @@
                         ToolTip="The automatic full-score piano used by Listen and by lesson modes you explicitly enable." />
               <TextBlock Grid.Column="1" Text="{Binding InstrumentalVolumeLabel}" Foreground="{StaticResource Gold}" />
             </Grid>
-            <Slider Minimum="0" Maximum="100" Value="{Binding InstrumentalVolume, Mode=TwoWay}" Margin="0,4,0,8" />
+            <Slider Style="{StaticResource DarkMixerSlider}" Minimum="0" Maximum="100" Value="{Binding InstrumentalVolume, Mode=TwoWay}" Margin="0,4,0,8" />
             <CheckBox Content="Play song accompaniment during Practice"
                       IsChecked="{Binding PracticeFullAccompanimentEnabled, Mode=TwoWay}"
                       ToolTip="Wait mode remains input-driven; the score sound follows each accepted step instead of running ahead." />
@@ -880,7 +1049,7 @@
                         ToolTip="In Left or Right mode, Cadenza plays the opposite staff as context." />
               <TextBlock Grid.Column="1" Text="{Binding OtherHandAccompanimentVolumeLabel}" Foreground="{StaticResource Gold}" />
             </Grid>
-            <Slider Minimum="0" Maximum="100" Value="{Binding OtherHandAccompanimentVolume, Mode=TwoWay}" Margin="0,4,0,4" />
+            <Slider Style="{StaticResource DarkMixerSlider}" Minimum="0" Maximum="100" Value="{Binding OtherHandAccompanimentVolume, Mode=TwoWay}" Margin="0,4,0,4" />
             <TextBlock Text="Left mode plays treble. Right mode plays bass. Both mode leaves the full piece to the learner."
                        Foreground="{StaticResource Muted}" FontSize="9.5" TextWrapping="Wrap" Margin="0,0,0,12" />
 
@@ -890,7 +1059,7 @@
                         ToolTip="Keeps the lesson click independent from every other sound." />
               <TextBlock Grid.Column="1" Text="{Binding MetronomeVolumeLabel}" Foreground="{StaticResource Gold}" />
             </Grid>
-            <Slider Minimum="0" Maximum="100" Value="{Binding MetronomeVolume, Mode=TwoWay}" Margin="0,4,0,12" />
+            <Slider Style="{StaticResource DarkMixerSlider}" Minimum="0" Maximum="100" Value="{Binding MetronomeVolume, Mode=TwoWay}" Margin="0,4,0,12" />
 
             <Grid>
               <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -898,7 +1067,7 @@
                         ToolTip="Hear your MIDI or computer-keyboard notes. Input and scoring continue when this is off." />
               <TextBlock Grid.Column="1" Text="{Binding MonitorVolumeLabel}" Foreground="{StaticResource Gold}" />
             </Grid>
-            <Slider Minimum="0" Maximum="100" Value="{Binding MonitorVolume, Mode=TwoWay}" Margin="0,4,0,3" />
+            <Slider Style="{StaticResource DarkMixerSlider}" Minimum="0" Maximum="100" Value="{Binding MonitorVolume, Mode=TwoWay}" Margin="0,4,0,3" />
             <TextBlock Text="This controls only the notes you play; it is separate from song accompaniment."
                        Foreground="{StaticResource Muted}" FontSize="9.5" TextWrapping="Wrap" Margin="0,0,0,12" />
 
@@ -914,8 +1083,8 @@
                 <TextBlock Text="Listen Mode Sound" Foreground="{StaticResource Ink}" FontWeight="SemiBold" />
                 <TextBlock Text="Instrument used for Listen Mode &amp; score playback" Foreground="{StaticResource Muted}" FontSize="9.5" TextWrapping="Wrap" />
               </StackPanel>
-              <ComboBox Grid.Column="1" ItemsSource="{Binding SoundPresets}" SelectedItem="{Binding PlaybackSoundPreset, Mode=TwoWay}"
-                        DisplayMemberPath="Name" Foreground="#11161C" Background="#F4F1E8" Height="30" VerticalContentAlignment="Center" />
+              <ComboBox Grid.Column="1" Style="{StaticResource RangeComboBox}" ItemsSource="{Binding SoundPresets}" SelectedItem="{Binding PlaybackSoundPreset, Mode=TwoWay}"
+                        DisplayMemberPath="Name" Height="32" VerticalContentAlignment="Center" />
             </Grid>
 
             <Grid Margin="0,0,0,10">
@@ -927,8 +1096,8 @@
                 <TextBlock Text="Live Playback Sound" Foreground="{StaticResource Ink}" FontWeight="SemiBold" />
                 <TextBlock Text="Instrument used when playing your keyboard live" Foreground="{StaticResource Muted}" FontSize="9.5" TextWrapping="Wrap" />
               </StackPanel>
-              <ComboBox Grid.Column="1" ItemsSource="{Binding SoundPresets}" SelectedItem="{Binding LiveSoundPreset, Mode=TwoWay}"
-                        DisplayMemberPath="Name" Foreground="#11161C" Background="#F4F1E8" Height="30" VerticalContentAlignment="Center" />
+              <ComboBox Grid.Column="1" Style="{StaticResource RangeComboBox}" ItemsSource="{Binding SoundPresets}" SelectedItem="{Binding LiveSoundPreset, Mode=TwoWay}"
+                        DisplayMemberPath="Name" Height="32" VerticalContentAlignment="Center" />
             </Grid>
 
             <CheckBox Content="Match Listen Mode Sound Engine" IsChecked="{Binding MatchPlaybackSynthEnabled, Mode=TwoWay}" Margin="0,4,0,2" />
@@ -941,82 +1110,112 @@
             <TextBlock Text="{Binding VocalAvailabilityLabel}" Foreground="{StaticResource Muted}" FontSize="9.5" />
           </StackPanel>
         </ScrollViewer>
+        </Grid>
       </Border>
     </Grid>
 
     <!-- Product device setup. It is reachable from the player and dashboard while
          keeping driver diagnostics out of the reading surface. -->
     <Grid x:Name="DeviceSettingsOverlay" Visibility="Collapsed" Background="#D9000000">
-      <Border Width="500" MaxHeight="760" Background="#1A2028" BorderBrush="#4A5665" BorderThickness="1"
-              CornerRadius="18" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center">
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <StackPanel>
-            <DockPanel Margin="0,0,0,14">
-              <StackPanel>
-                <TextBlock Text="PIANO &amp; AUDIO" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" />
-                <TextBlock Text="Connect your keyboard" FontSize="24" FontWeight="SemiBold" Margin="0,3,0,0" />
-              </StackPanel>
-              <Button DockPanel.Dock="Right" Content="Close" Click="CloseDeviceSettings_Click" VerticalAlignment="Top" />
-            </DockPanel>
-            <TextBlock Text="Choose any standard Windows MIDI input. Selection connects immediately." Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
-            <ComboBox ItemsSource="{Binding MidiDevices}" SelectedItem="{Binding SelectedMidiDevice, Mode=TwoWay}"
-                      DisplayMemberPath="Name" IsEnabled="{Binding CanChooseInput}" Margin="0,14,0,4"
-                      Foreground="#11161C" Background="#F4F1E8" />
-            <Button Content="Refresh device list" Click="RefreshMidi_Click" HorizontalAlignment="Left" />
-            <Border Background="#11161C" BorderBrush="#32727C" BorderThickness="1" CornerRadius="10" Padding="13" Margin="0,12,0,8">
-              <StackPanel>
-                <TextBlock Text="{Binding MidiLiveIndicator}" Foreground="#8BEAFF" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding LastMidiKeyLabel}" Foreground="{StaticResource Ink}" FontSize="12" Margin="0,5,0,0" />
-                <TextBlock Text="{Binding MidiStatusLabel}" Foreground="{StaticResource Muted}" FontSize="10" Margin="0,5,0,0" TextWrapping="Wrap" />
-              </StackPanel>
-            </Border>
-            <CheckBox Content="Hear keys while you play" IsChecked="{Binding MidiMonitorEnabled, Mode=TwoWay}" />
-            <Grid Margin="3,6,3,0">
-              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-              <TextBlock Text="Monitor volume" Foreground="{StaticResource Muted}" />
-              <TextBlock Grid.Column="1" Text="{Binding MonitorVolumeLabel}" Foreground="{StaticResource Gold}" Margin="12,0,0,0" />
-            </Grid>
-            <Slider Minimum="0" Maximum="100" Value="{Binding MonitorVolume, Mode=TwoWay}" Margin="3,4,3,8" />
-            <Button Content="Test piano sound" Click="TestMonitorTone_Click" HorizontalAlignment="Left" />
-            <Separator Background="{StaticResource Line}" Margin="0,15" />
-            <TextBlock Text="SUSTAIN PEDAL" Style="{StaticResource Eyebrow}" />
-            <UniformGrid Columns="2" Margin="0,5,0,2">
-              <RadioButton Content="No pedal" Tag="False" GroupName="SettingsPedal" IsChecked="True" Style="{StaticResource SegmentRadio}" Click="PedalSetup_Click" />
-              <RadioButton Content="Use CC64 pedal" Tag="True" GroupName="SettingsPedal" Style="{StaticResource SegmentRadio}" Click="PedalSetup_Click" />
-            </UniformGrid>
-            <TextBlock Text="{Binding PedalGradingLabel}" Foreground="{StaticResource Muted}" FontSize="10" TextWrapping="Wrap" />
-            <TextBlock Text="LATENCY CORRECTION" Style="{StaticResource Eyebrow}" Margin="0,14,0,0" />
-            <Slider Minimum="-250" Maximum="500" TickFrequency="10" IsSnapToTickEnabled="True"
-                    Value="{Binding LatencyMilliseconds, Mode=TwoWay}" Margin="3,5" />
-            <DockPanel>
-              <Button Content="Run 4-click calibration" Click="CalibrateLatency_Click" HorizontalAlignment="Left" />
-              <TextBlock DockPanel.Dock="Right" Text="{Binding LatencyLabel}" Foreground="{StaticResource Gold}" VerticalAlignment="Center" />
-            </DockPanel>
-            <Expander Header="Input activity details" Foreground="{StaticResource Muted}" Margin="0,14,0,0">
-              <StackPanel>
-                <CheckBox Content="Use computer piano keys"
-                          IsChecked="{Binding UseKeyboardSimulation, Mode=TwoWay}"
-                          Margin="0,7,0,2" />
-                <TextBlock Text="A S D F G H J K L ; are white keys. W E T Y U O P are black keys."
-                           Foreground="#C9B06B" FontFamily="Consolas" FontSize="9.5"
-                           TextWrapping="Wrap" Margin="0,0,0,6" />
-                <TextBlock Text="Computer input uses the same lesson and scoring pipeline and is not shown as MIDI hardware."
-                           Foreground="{StaticResource Muted}" FontSize="9.5"
-                           TextWrapping="Wrap" Margin="0,0,0,6" />
-                <TextBlock Text="This bounded trace distinguishes device open/start from real WinMM MIDI callbacks."
-                           Foreground="{StaticResource Muted}" FontSize="9.5" TextWrapping="Wrap" Margin="0,6" />
-                <ItemsControl ItemsSource="{Binding MidiDiagnosticTrace}">
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                      <TextBlock Text="{Binding}" Foreground="#B9C4D0" FontFamily="Consolas" FontSize="9"
-                                 TextWrapping="Wrap" Margin="0,1" />
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-              </StackPanel>
-            </Expander>
-          </StackPanel>
-        </ScrollViewer>
+      <Border Width="530" MaxHeight="760" Background="#171C23" BorderBrush="#3B4756" BorderThickness="1"
+              CornerRadius="18" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+
+          <Grid Grid.Row="0" Margin="24,20,18,10">
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock Text="PIANO &amp; AUDIO" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" />
+              <TextBlock Text="Connect your keyboard" FontSize="23" FontWeight="SemiBold" Margin="0,2,0,0" />
+            </StackPanel>
+            <Button Style="{StaticResource ModalCloseButton}" HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Click="CloseDeviceSettings_Click" AutomationProperties.Name="Close Device Settings" />
+          </Grid>
+
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="24,0,16,24">
+            <StackPanel Margin="0,0,8,0">
+              <TextBlock Text="Choose any standard Windows MIDI input. Selection connects immediately." Foreground="{StaticResource Muted}" TextWrapping="Wrap" />
+              <ComboBox Style="{StaticResource RangeComboBox}" ItemsSource="{Binding MidiDevices}" SelectedItem="{Binding SelectedMidiDevice, Mode=TwoWay}"
+                        DisplayMemberPath="Name" IsEnabled="{Binding CanChooseInput}" Height="34" Margin="0,14,0,4" />
+              <Button Content="Refresh device list" Click="RefreshMidi_Click" HorizontalAlignment="Left" />
+              <Border Background="#11161C" BorderBrush="#32727C" BorderThickness="1" CornerRadius="10" Padding="13" Margin="0,12,0,8">
+                <StackPanel>
+                  <TextBlock Text="{Binding MidiLiveIndicator}" Foreground="#8BEAFF" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding LastMidiKeyLabel}" Foreground="{StaticResource Ink}" FontSize="12" Margin="0,5,0,0" />
+                  <TextBlock Text="{Binding MidiStatusLabel}" Foreground="{StaticResource Muted}" FontSize="10" Margin="0,5,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
+              <CheckBox Content="Hear keys while you play" IsChecked="{Binding MidiMonitorEnabled, Mode=TwoWay}" />
+              <Grid Margin="3,6,3,0">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <TextBlock Text="Monitor volume" Foreground="{StaticResource Muted}" />
+                <TextBlock Grid.Column="1" Text="{Binding MonitorVolumeLabel}" Foreground="{StaticResource Gold}" Margin="12,0,0,0" />
+              </Grid>
+              <Slider Style="{StaticResource DarkMixerSlider}" Minimum="0" Maximum="100" Value="{Binding MonitorVolume, Mode=TwoWay}" Margin="3,4,3,8" />
+              <Button Content="Test piano sound" Click="TestMonitorTone_Click" HorizontalAlignment="Left" />
+              <Separator Background="{StaticResource Line}" Margin="0,15" />
+              <TextBlock Text="SUSTAIN PEDAL" Style="{StaticResource Eyebrow}" />
+              <UniformGrid Columns="2" Margin="0,5,0,2">
+                <RadioButton Content="No pedal" Tag="False" GroupName="SettingsPedal" IsChecked="True" Style="{StaticResource SegmentRadio}" Click="PedalSetup_Click" />
+                <RadioButton Content="Use CC64 pedal" Tag="True" GroupName="SettingsPedal" Style="{StaticResource SegmentRadio}" Click="PedalSetup_Click" />
+              </UniformGrid>
+              <TextBlock Text="{Binding PedalGradingLabel}" Foreground="{StaticResource Muted}" FontSize="10" TextWrapping="Wrap" />
+              <TextBlock Text="LATENCY CORRECTION" Style="{StaticResource Eyebrow}" Margin="0,14,0,0" />
+              <Slider Style="{StaticResource DarkMixerSlider}" Minimum="-250" Maximum="500" TickFrequency="10" IsSnapToTickEnabled="True"
+                      Value="{Binding LatencyMilliseconds, Mode=TwoWay}" Margin="3,5" />
+              <DockPanel>
+                <Button Content="Run 4-click calibration" Click="CalibrateLatency_Click" HorizontalAlignment="Left" />
+                <TextBlock DockPanel.Dock="Right" Text="{Binding LatencyLabel}" Foreground="{StaticResource Gold}" VerticalAlignment="Center" />
+              </DockPanel>
+              <Expander Header="Input activity details" Foreground="{StaticResource Muted}" Margin="0,14,0,0">
+                <StackPanel>
+                  <CheckBox Content="Use computer piano keys"
+                            IsChecked="{Binding UseKeyboardSimulation, Mode=TwoWay}"
+                            Margin="0,7,0,2" />
+                  <TextBlock Text="A S D F G H J K L ; are white keys. W E T Y U O P are black keys."
+                             Foreground="#C9B06B" FontFamily="Consolas" FontSize="9.5"
+                             TextWrapping="Wrap" Margin="0,0,0,6" />
+                  <TextBlock Text="Computer input uses the same lesson and scoring pipeline and is not shown as MIDI hardware."
+                             Foreground="{StaticResource Muted}" FontSize="9.5"
+                             TextWrapping="Wrap" Margin="0,0,0,6" />
+                  <TextBlock Text="This bounded trace distinguishes device open/start from real WinMM MIDI callbacks."
+                             Foreground="{StaticResource Muted}" FontSize="9.5" TextWrapping="Wrap" Margin="0,6" />
+                  <ItemsControl ItemsSource="{Binding MidiDiagnosticTrace}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding}" Foreground="#B9C4D0" FontFamily="Consolas" FontSize="9"
+                                   TextWrapping="Wrap" Margin="0,1" />
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Expander>
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <!-- Rename Library Item Overlay Modal -->
+    <Grid x:Name="RenameLibraryItemOverlay" Visibility="{Binding IsRenameOverlayVisible, Converter={StaticResource BoolToVisibility}}" Background="#D9000000">
+      <Border Width="440" Background="#171C23" BorderBrush="#3B4756" BorderThickness="1" CornerRadius="18" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel>
+          <DockPanel Margin="0,0,0,16">
+            <StackPanel>
+              <TextBlock Text="RENAME SONG" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" />
+              <TextBlock Text="Edit Display Title" FontSize="21" FontWeight="SemiBold" Margin="0,2,0,0" />
+            </StackPanel>
+            <Button Style="{StaticResource ModalCloseButton}" DockPanel.Dock="Right" Click="CloseRenameOverlay_Click" VerticalAlignment="Top" />
+          </DockPanel>
+          <TextBlock Text="Enter a custom display title for this score in your library:" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,0,10" />
+          <TextBox Text="{Binding RenameItemTitleInput, UpdateSourceTrigger=PropertyChanged}" Foreground="#FFFFFF" CaretBrush="#FFFFFF" Height="34" FontSize="13" VerticalContentAlignment="Center" Padding="8,0" Margin="0,0,0,18" />
+          <DockPanel>
+            <Button Content="Cancel" Click="CloseRenameOverlay_Click" Height="34" Padding="16,0" HorizontalAlignment="Left" />
+            <Button Content="Save Title" Style="{StaticResource GoldButton}" Click="SaveRenameItem_Click" DockPanel.Dock="Right" Height="34" Padding="18,0" HorizontalAlignment="Right" />
+          </DockPanel>
+        </StackPanel>
       </Border>
     </Grid>
 

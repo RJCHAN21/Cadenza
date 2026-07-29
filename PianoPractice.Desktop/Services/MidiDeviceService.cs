@@ -240,7 +240,10 @@ public sealed class MidiDeviceService : IDisposable
     }
 }
 
-public sealed record MidiDeviceInfo(string Id, string Name);
+public sealed record MidiDeviceInfo(string Id, string Name)
+{
+    public override string ToString() => Name;
+}
 
 public sealed record MidiDeviceSnapshot(
     bool IsDiscoverySupported,

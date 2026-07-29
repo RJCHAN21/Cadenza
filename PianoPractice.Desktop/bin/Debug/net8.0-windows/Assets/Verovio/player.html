@@ -37,11 +37,38 @@
       content: ""; position: absolute; top: -3px; left: -3px; width: 8px; height: 8px;
       border-radius: 50%; background: #8beaff;
     }
-    #notation g.note.playing {
-      filter: drop-shadow(0 0 5px rgba(66,217,245,.95));
+    #notation g.note.playing,
+    #notation g.syl.playing,
+    #notation .syl.playing {
+      filter: drop-shadow(0 0 6px rgba(139,234,255,.95));
     }
-    #notation g.note.expected {
-      filter: drop-shadow(0 0 6px rgba(66,217,245,.95));
+    #notation g.note.playing .syl,
+    #notation g.note.playing .syl text,
+    #notation g.note.playing .syl tspan,
+    #notation g.syl.playing text,
+    #notation g.syl.playing tspan,
+    #notation .syl.playing text,
+    #notation .syl.playing tspan {
+      color: #8beaff !important;
+      fill: #8beaff !important;
+      stroke: #8beaff !important;
+    }
+
+    #notation g.note.expected,
+    #notation g.syl.expected,
+    #notation .syl.expected {
+      filter: drop-shadow(0 0 6px rgba(139,234,255,.95));
+    }
+    #notation g.note.expected .syl,
+    #notation g.note.expected .syl text,
+    #notation g.note.expected .syl tspan,
+    #notation g.syl.expected text,
+    #notation g.syl.expected tspan,
+    #notation .syl.expected text,
+    #notation .syl.expected tspan {
+      color: #8beaff !important;
+      fill: #8beaff !important;
+      stroke: #8beaff !important;
     }
     #notation g.note.feedback-correct .notehead {
       filter:
@@ -1281,9 +1308,21 @@
       }
       if (pendingPage) return;
       updateCursor(ms, true);
-      document.querySelectorAll("g.note.expected").forEach(node => node.classList.remove("expected"));
+      document.querySelectorAll(".expected").forEach(node => node.classList.remove("expected"));
       const atTime = toolkit?.getElementsAtTime(Math.max(0, Math.round(ms)));
-      for (const id of atTime?.notes || []) elementForVerovioId(id)?.classList.add("expected");
+      for (const id of atTime?.notes || []) {
+        const el = elementForVerovioId(id);
+        if (el) {
+          el.classList.add("expected");
+          el.querySelectorAll(".syl, text, tspan").forEach(c => c.classList.add("expected"));
+        }
+      }
+      for (const id of atTime?.elements || []) {
+        const el = elementForVerovioId(id);
+        if (el && (el.matches(".syl") || el.closest(".syl"))) {
+          el.classList.add("expected");
+        }
+      }
       updateHintLane(atTime, beat);
     }
 
@@ -1658,8 +1697,20 @@
         }
       }
 
-      document.querySelectorAll("g.note.playing").forEach(node => node.classList.remove("playing"));
-      for (const id of atTime?.notes || []) elementForVerovioId(id)?.classList.add("playing");
+      document.querySelectorAll(".playing").forEach(node => node.classList.remove("playing"));
+      for (const id of atTime?.notes || []) {
+        const el = elementForVerovioId(id);
+        if (el) {
+          el.classList.add("playing");
+          el.querySelectorAll(".syl, text, tspan").forEach(c => c.classList.add("playing"));
+        }
+      }
+      for (const id of atTime?.elements || []) {
+        const el = elementForVerovioId(id);
+        if (el && (el.matches(".syl") || el.closest(".syl"))) {
+          el.classList.add("playing");
+        }
+      }
     }
 
     new ResizeObserver(() => {

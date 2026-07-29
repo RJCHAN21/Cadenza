@@ -196,16 +196,19 @@ public partial class MainWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Title = "Import a MusicXML score",
+            Title = "Import MusicXML scores into library",
             Filter = "MusicXML scores|*.mxl;*.musicxml;*.xml|All files|*.*",
             CheckFileExists = true,
-            Multiselect = false
+            Multiselect = true
         };
 
         if (dialog.ShowDialog(this) != true) return;
         try
         {
-            _viewModel.LoadScore(dialog.FileName);
+            foreach (var fileName in dialog.FileNames)
+            {
+                _viewModel.LoadScore(fileName);
+            }
             _ = LoadNotationAsync();
         }
         catch (Exception exception)
@@ -213,6 +216,43 @@ public partial class MainWindow : Window
             MessageBox.Show(this, exception.Message, "Score import failed", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
+
+    private void PlayLibraryItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: LibraryItemViewModel item })
+        {
+            _viewModel.LoadLibraryItem(item);
+            _ = LoadNotationAsync();
+        }
+    }
+
+    private void RenameLibraryItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: LibraryItemViewModel item })
+        {
+            _viewModel.OpenRenameOverlay(item);
+        }
+    }
+
+    private void DeleteLibraryItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: LibraryItemViewModel item })
+        {
+            _viewModel.DeleteLibraryItem(item);
+        }
+    }
+
+    private void DeleteSelectedLibrary_Click(object sender, RoutedEventArgs e) => _viewModel.DeleteSelectedLibraryItems();
+
+    private void ClearLibrarySelection_Click(object sender, RoutedEventArgs e) => _viewModel.ClearLibrarySelection();
+
+    private void LibraryPrevPage_Click(object sender, RoutedEventArgs e) => _viewModel.LibraryPreviousPage();
+
+    private void LibraryNextPage_Click(object sender, RoutedEventArgs e) => _viewModel.LibraryNextPage();
+
+    private void SaveRenameItem_Click(object sender, RoutedEventArgs e) => _viewModel.SaveRenameItem();
+
+    private void CloseRenameOverlay_Click(object sender, RoutedEventArgs e) => _viewModel.CloseRenameOverlay();
 
     private void ImportMidi_Click(object sender, RoutedEventArgs e)
     {
