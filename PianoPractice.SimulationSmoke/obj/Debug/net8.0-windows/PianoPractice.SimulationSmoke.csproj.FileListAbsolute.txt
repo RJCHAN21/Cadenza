@@ -35,3 +35,4 @@ D:\Apps\Cadenza-development\PianoPractice.SimulationSmoke\obj\Debug\net8.0-windo
 D:\Apps\Cadenza-development\PianoPractice.SimulationSmoke\obj\Debug\net8.0-windows\PianoPractice.SimulationSmoke.pdb
 D:\Apps\Cadenza-development\PianoPractice.SimulationSmoke\obj\Debug\net8.0-windows\PianoPractice.SimulationSmoke.genruntimeconfig.cache
 D:\Apps\Cadenza-development\PianoPractice.SimulationSmoke\obj\Debug\net8.0-windows\ref\PianoPractice.SimulationSmoke.dll
+D:\Apps\Cadenza-development\PianoPractice.SimulationSmoke\obj\Debug\net8.0-windows\PianoPractice.SimulationSmoke.sourcelink.json

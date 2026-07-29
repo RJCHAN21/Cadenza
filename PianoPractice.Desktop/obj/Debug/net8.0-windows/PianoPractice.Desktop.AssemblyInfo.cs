@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PianoPractice.Desktop")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a42027f424cc2262473449eeb4f121a775a6b040")]
 [assembly: System.Reflection.AssemblyProductAttribute("PianoPractice.Desktop")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PianoPractice.Desktop")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -38,3 +38,4 @@ D:\Apps\Cadenza-development\PianoPractice.Desktop\obj\Debug\net8.0-windows\refin
 D:\Apps\Cadenza-development\PianoPractice.Desktop\obj\Debug\net8.0-windows\PianoPractice.Desktop.pdb
 D:\Apps\Cadenza-development\PianoPractice.Desktop\obj\Debug\net8.0-windows\PianoPractice.Desktop.genruntimeconfig.cache
 D:\Apps\Cadenza-development\PianoPractice.Desktop\obj\Debug\net8.0-windows\ref\PianoPractice.Desktop.dll
+D:\Apps\Cadenza-development\PianoPractice.Desktop\obj\Debug\net8.0-windows\PianoPractice.Desktop.sourcelink.json

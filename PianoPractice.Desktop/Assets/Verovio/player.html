@@ -20,6 +20,11 @@
       justify-self: start; align-self: start;
       transform-origin: 0 0; transition: none; will-change: transform;
     }
+    #stage.continuous-mode #practiceWrongNote {
+      position: absolute; left: 0; top: 0; width: max-content !important; max-height: none;
+      justify-self: start; align-self: start;
+      transform-origin: 0 0; transition: none; will-change: transform;
+    }
     #stage.continuous-mode #notation svg {
       max-height: none;
     }
@@ -441,8 +446,14 @@
     }
 
     function applyContinuousTransform() {
-      notation.style.transform =
+      const transform =
         `translate3d(${continuousOffsetX}px, ${continuousOffsetY}px, 0) scale(${userZoom})`;
+      notation.style.transform = transform;
+      if (readingMode === "Continuous") {
+        practiceWrongNote.style.transform = transform;
+      } else {
+        practiceWrongNote.style.transform = "";
+      }
     }
 
     function invalidateContinuousCoordinates() {
@@ -846,9 +857,25 @@
       if (clearState) activeWrongFeedback = null;
     }
 
+    function overlayPointToScoreCoordinates(point) {
+      if (!point) return null;
+      if (readingMode === "Continuous") {
+        const zoom = Math.max(.01, userZoom);
+        return {
+          ...point,
+          x: (point.x - continuousOffsetX) / zoom,
+          y: (point.y - continuousOffsetY) / zoom,
+          step: point.step != null ? point.step / zoom : point.step,
+          top: point.top != null ? (point.top - continuousOffsetY) / zoom : point.top,
+          bottom: point.bottom != null ? (point.bottom - continuousOffsetY) / zoom : point.bottom
+        };
+      }
+      return point;
+    }
+
     function showPracticeWrongNote(event, midiNote, dispatchId = 0, preserveExpiry = false, staffNumber = 0) {
       clearPracticeWrongNote(false);
-      const point = pitchPoint(event, midiNote, staffNumber);
+      const point = overlayPointToScoreCoordinates(pitchPoint(event, midiNote, staffNumber));
       if (!point) {
         feedbackTelemetry.failedWrong++;
         post("feedbackAck", {
@@ -928,16 +955,19 @@
       const head = target?.matches?.(".notehead") ? target : target?.querySelector(".notehead");
       const headRect = head?.getBoundingClientRect();
       const stageRect = stage.getBoundingClientRect();
+      let point = null;
       if (headRect && headRect.width > 0 && headRect.height > 0) {
-        return {
+        point = {
           x: headRect.left + headRect.width / 2 - stageRect.left,
           y: headRect.top + headRect.height / 2 - stageRect.top,
           staffKind: item.staffNumber === 2 ? "bass" : "treble",
           targetFound: true
         };
+      } else {
+        const fallback = pitchPoint(event, item.midiNote, item.staffNumber);
+        if (fallback) point = { ...fallback, targetFound: false };
       }
-      const fallback = pitchPoint(event, item.midiNote, item.staffNumber);
-      return fallback ? { ...fallback, targetFound: false } : null;
+      return overlayPointToScoreCoordinates(point);
     }
 
     function renderPracticeCorrectNote(key, item) {
@@ -1642,6 +1672,53 @@
       }
     }).observe(stage);
 
+    function findTiedContinuationElements(node) {
+      if (!node || !notation) return [];
+      const note = node.closest?.("g.note") || node;
+      const noteId = note.id || note.getAttribute("data-id");
+      if (!noteId) return [];
+
+      const result = [];
+      const visited = new Set([noteId]);
+      const queue = [noteId];
+
+      while (queue.length > 0) {
+        const currentId = queue.shift();
+        const ties = notation.querySelectorAll("g.tie");
+        for (const tie of ties) {
+          const tieId = tie.id || tie.getAttribute("data-id");
+          let startId = tie.getAttribute("data-startid") || "";
+          let endId = tie.getAttribute("data-endid") || "";
+
+          if ((!startId || !endId) && toolkit?.getElementAttr && tieId) {
+            try {
+              const attrs = toolkit.getElementAttr(tieId);
+              if (attrs) {
+                startId = startId || attrs.startid || "";
+                endId = endId || attrs.endid || "";
+              }
+            } catch {
+              // ignore
+            }
+          }
+
+          startId = startId.replace(/^#/, "");
+          endId = endId.replace(/^#/, "");
+
+          if (startId === currentId && endId && !visited.has(endId)) {
+            visited.add(endId);
+            queue.push(endId);
+            const targetNode = elementForVerovioId(endId);
+            if (targetNode) {
+              const targetNote = targetNode.closest?.("g.note") || targetNode;
+              result.push(targetNote);
+            }
+          }
+        }
+      }
+      return result;
+    }
+
     function showFeedback(kind, beat, midiNote = null, dispatchId = 0, runGeneration = 0, eventId = 0, occurrenceIndex = 0, staffNumber = 0) {
       const numericRunGeneration = Number(runGeneration || 0);
       if (!lessonRunning || (numericRunGeneration > 0 && numericRunGeneration !== lessonGeneration)) return false;
@@ -1676,8 +1753,18 @@
       if (lessonMode === "WaitForYou" && kind === "correct") {
         clearPracticeWrongNote();
         const acceptedTargets = targetElements.length ? targetElements : [null];
+        const expandedTargets = [];
+        for (const node of acceptedTargets) {
+          if (node) {
+            expandedTargets.push(node);
+            for (const continuation of findTiedContinuationElements(node)) {
+              if (!expandedTargets.includes(continuation)) expandedTargets.push(continuation);
+            }
+          }
+        }
+        const targetsToPaint = expandedTargets.length ? expandedTargets : acceptedTargets;
         const renderedKeys = [];
-        const paintedTargets = acceptedTargets.map((node, targetIndex) => {
+        const paintedTargets = targetsToPaint.map((node, targetIndex) => {
           const noteIdentity = node?.id || node?.getAttribute("data-id") ||
             `${Number(beat || 0).toFixed(6)}:${Number(midiNote)}:${Number(staffNumber || 0)}:${targetIndex}`;
           const persistentKey = `${lessonGeneration}:${Number(occurrenceIndex || 0)}:${noteIdentity}`;
