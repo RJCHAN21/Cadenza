@@ -160,17 +160,64 @@
        Hiding the legacy renderer lane keeps Hint mode from shifting the score. */
     #hintLane { display: none !important; }
     #stage.hints #notation { width: 100%; }
+    /* Single hand practice dimming for unfocused hand staff */
     #stage.hand-right #notation g.staff.cadenza-bass,
     #stage.hand-left #notation g.staff.cadenza-treble {
-      opacity: .30;
-    }
-    #notation g.staff {
+      opacity: .35;
       transition: opacity 150ms ease;
+    }
+    /* Active feedback notes stay 100% bright */
+    #notation g.note.feedback-correct,
+    #notation g.note.feedback-wrong,
+    #notation g.note.feedback-early,
+    #notation g.note.feedback-missed,
+    #notation g.note.feedback-hold,
+    #notation g.note.audit-correct,
+    #notation g.note.audit-missed,
+    #notation g.note.audit-early {
+      opacity: 1 !important;
+    }
+    /* Lock system barlines to full opacity */
+    #notation g.barLine,
+    #notation .barLine,
+    #notation path[class*="barLine"] {
+      opacity: 1 !important;
     }
     #hintTitle { color: #8beaff; font-size: 10px; font-weight: 700; letter-spacing: .08em; }
     #hintNotes { font: 700 18px "Segoe UI", sans-serif; color: #f6f2e9; }
     #hintKeys { display: flex; gap: 6px; margin-left: auto; }
     .hint-key { min-width: 34px; padding: 7px 8px; border-radius: 6px; background: #f6f2e9; color: #11161c; text-align: center; font-weight: 700; }
+    #countdownOverlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 14, 20, 0.82);
+      backdrop-filter: blur(5px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease;
+    }
+    #countdownOverlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    #countdownNumber {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      font-size: 130px;
+      font-weight: 900;
+      color: #F8E6C4;
+      text-shadow: 0 0 35px rgba(217, 170, 91, 0.9), 0 4px 20px rgba(0, 0, 0, 0.8);
+      transform: scale(0.5);
+      opacity: 0;
+      transition: transform 160ms cubic-bezier(0.175, 0.885, 0.32, 1.3), opacity 140ms ease;
+    }
+    #countdownNumber.pulse {
+      transform: scale(1.3);
+      opacity: 1;
+    }
     @media (prefers-reduced-motion: reduce) {
       #notation { transition: none; }
       #playhead { box-shadow: none; }
@@ -187,6 +234,7 @@
     <svg id="practiceWrongNote" aria-hidden="true"></svg>
     <div id="feedback" aria-live="polite"></div>
     <div id="hintLane"><div><div id="hintTitle">NEXT NOTES</div><div id="hintNotes">—</div></div><div id="hintKeys"></div></div>
+    <div id="countdownOverlay"><div id="countdownNumber">4</div></div>
   </div>
   <script>
     let toolkit = null;
@@ -359,19 +407,24 @@
     }
 
     function applyHandFocus() {
-      for (const system of notation.querySelectorAll("g.system")) {
-        const staves = [...system.querySelectorAll("g.staff")];
-        const centers = staves.map(staff => {
-          const bounds = staff.getBBox();
-          return bounds.y + bounds.height / 2;
-        });
-        if (!centers.length) continue;
-        const split = (Math.min(...centers) + Math.max(...centers)) / 2;
-        staves.forEach((staff, index) => {
-          const isTreble = centers[index] < split;
-          staff.classList.toggle("cadenza-treble", isTreble);
-          staff.classList.toggle("cadenza-bass", !isTreble);
-        });
+      for (const staff of notation.querySelectorAll("g.staff")) {
+        const n = staff.getAttribute("data-n") || staff.getAttribute("n") ||
+          (staff.classList.contains("n1") ? "1" : staff.classList.contains("n2") ? "2" : "");
+        if (n === "1") {
+          staff.classList.add("cadenza-treble");
+          staff.classList.remove("cadenza-bass");
+        } else if (n === "2") {
+          staff.classList.add("cadenza-bass");
+          staff.classList.remove("cadenza-treble");
+        } else {
+          const parentMeasure = staff.closest("g.measure");
+          if (parentMeasure) {
+            const stavesInMeasure = [...parentMeasure.querySelectorAll("g.staff")];
+            const isTreble = stavesInMeasure.indexOf(staff) === 0;
+            staff.classList.toggle("cadenza-treble", isTreble);
+            staff.classList.toggle("cadenza-bass", !isTreble);
+          }
+        }
       }
     }
 
@@ -974,12 +1027,16 @@
     }
 
     function expectedOverlayPoint(item) {
-      const event = eventAtBeat(item.beat);
-      const targets = elementsForEvent(event, item.midiNote, item.staffNumber);
-      const target = item.noteIdentity
-        ? targets.find(node => (node.id || node.getAttribute("data-id")) === item.noteIdentity)
-        : targets[0];
-      const head = target?.matches?.(".notehead") ? target : target?.querySelector(".notehead");
+      let target = null;
+      if (item.noteIdentity) {
+        target = elementForVerovioId(item.noteIdentity);
+      }
+      if (!target) {
+        const event = eventAtBeat(item.beat);
+        const targets = elementsForEvent(event, item.midiNote, item.staffNumber);
+        target = targets[0];
+      }
+      const head = target?.matches?.(".notehead") ? target : (target?.querySelector(".notehead") || target);
       const headRect = head?.getBoundingClientRect();
       const stageRect = stage.getBoundingClientRect();
       let point = null;
@@ -991,6 +1048,7 @@
           targetFound: true
         };
       } else {
+        const event = eventAtBeat(item.beat);
         const fallback = pitchPoint(event, item.midiNote, item.staffNumber);
         if (fallback) point = { ...fallback, targetFound: false };
       }
@@ -1031,8 +1089,15 @@
       if (!lessonRunning) return;
       let renderedCorrectCount = 0;
       clearPracticeCorrectNotes();
-      for (const [key, item] of persistentCorrectFeedback)
+      for (const [key, item] of persistentCorrectFeedback) {
         if (renderPracticeCorrectNote(key, item)) renderedCorrectCount++;
+        const targetNode = item.noteIdentity ? elementForVerovioId(item.noteIdentity) : null;
+        if (targetNode) {
+          const targetNote = targetNode.closest?.("g.note") || targetNode;
+          targetNote.classList.add("feedback-correct");
+          paintNotehead(targetNote, "#19f47b");
+        }
+      }
       if (activeWrongFeedback) {
         if (performance.now() >= activeWrongFeedback.expiresAt) {
           clearPracticeWrongNote(true);
@@ -1124,7 +1189,7 @@
     function finishLesson(completed, runGeneration = 0) {
       if (Number(runGeneration || lessonGeneration) !== lessonGeneration) return;
       endTimeline();
-      if (Boolean(completed)) playhead.style.opacity = "0";
+      if (Boolean(completed)) playhead.style.opacity = "1";
       lessonRunning = false;
       feedback.className = "";
       feedback.style.opacity = "0";
@@ -1402,7 +1467,7 @@
       const positioned = timemap.find(event => event.tstamp > ms && positionIds(event).length);
       if (positioned) return positioned;
       const finalEvent = timemap.at(-1);
-      return finalEvent && finalEvent.tstamp > ms ? { ...finalEvent, cadenzaEnd: true } : null;
+      return finalEvent ? { ...finalEvent, cadenzaEnd: true } : null;
     }
 
     function eventViewportCenter(event) {
@@ -1624,6 +1689,20 @@
         notation.querySelector(`[data-id="${CSS.escape(String(id))}"]`);
     }
 
+    function systemEndBarLineX(system) {
+      if (!system) return null;
+      const barlines = [...system.querySelectorAll("g.barLine, .barLine, path[class*='barLine']")];
+      if (barlines.length > 0) {
+        const lastBar = barlines[barlines.length - 1];
+        const rect = lastBar.getBoundingClientRect();
+        const stageRect = stage.getBoundingClientRect();
+        return rect.left + rect.width / 2 - stageRect.left;
+      }
+      const systemRect = system.getBoundingClientRect();
+      const stageRect = stage.getBoundingClientRect();
+      return systemRect.right - 12 - stageRect.left;
+    }
+
     function updateCursor(ms, immediate) {
       if (!toolkit || !timemap.length) return;
       const atTime = toolkit.getElementsAtTime(Math.max(0, Math.round(ms)));
@@ -1635,25 +1714,21 @@
       }
 
       const continuous = readingMode === "Continuous";
-      // Both modes derive onset geometry from the actual rendered notehead/rest
-      // rectangles. Continuous then adjusts the score transform by the exact
-      // screen-space delta needed to keep that same coordinate at its anchor.
-      // Mixing SVG score coordinates with viewport rectangles caused the cyan
-      // line to drift behind correctly highlighted lyrics and notes.
+      const previousSystem = systemForEvent(previous);
+      const nextSystem = systemForEvent(next);
+      const nextCenter = eventViewportCenter(next);
+
+      // If next is in a different system, on a different page, or has no rendered DOM element on this page:
+      const crossesBoundary = Boolean(!nextSystem || nextCenter == null || (previousSystem && previousSystem !== nextSystem));
+
       let x1 = eventViewportCenter(previous);
-      let x2 = eventViewportCenter(next);
+      let x2 = (crossesBoundary && previousSystem) ? systemEndBarLineX(previousSystem) : nextCenter;
       if (x1 == null && x2 == null) return;
       if (x1 == null) x1 = x2;
       if (x2 == null) x2 = x1;
       const span = Math.max(1, (next?.tstamp ?? ms) - (previous?.tstamp ?? ms));
       const progress = Math.max(0, Math.min(1, (ms - (previous?.tstamp ?? ms)) / span));
-      const previousSystem = systemForEvent(previous);
-      const nextSystem = systemForEvent(next);
-      const crossesSystem = Boolean(previousSystem && nextSystem && previousSystem !== nextSystem);
-      // Never interpolate from the end of one system toward the smaller X of
-      // the next system. Hold at the current onset, then the normal event
-      // selection atomically moves to the next system when its timestamp is due.
-      const x = crossesSystem ? x1 : x1 + (x2 - x1) * progress;
+      const x = x1 + (x2 - x1) * progress;
       let visibleX = x;
       if (continuous) {
         const stageRect = stage.getBoundingClientRect();
@@ -1735,28 +1810,33 @@
 
       while (queue.length > 0) {
         const currentId = queue.shift();
-        const ties = notation.querySelectorAll("g.tie");
-        for (const tie of ties) {
-          const tieId = tie.id || tie.getAttribute("data-id");
-          let startId = tie.getAttribute("data-startid") || "";
-          let endId = tie.getAttribute("data-endid") || "";
+        const tiesAndSlurs = notation.querySelectorAll("g.tie, g.slur, .tie, .slur");
+        for (const item of tiesAndSlurs) {
+          const itemId = item.id || item.getAttribute("data-id");
+          let startId = item.getAttribute("data-startid") || item.getAttribute("startid") ||
+            item.querySelector("[data-startid]")?.getAttribute("data-startid") ||
+            item.querySelector("[startid]")?.getAttribute("startid") || "";
+          let endId = item.getAttribute("data-endid") || item.getAttribute("endid") ||
+            item.querySelector("[data-endid]")?.getAttribute("data-endid") ||
+            item.querySelector("[endid]")?.getAttribute("endid") || "";
 
-          if ((!startId || !endId) && toolkit?.getElementAttr && tieId) {
+          if ((!startId || !endId) && toolkit?.getElementAttr && itemId) {
             try {
-              const attrs = toolkit.getElementAttr(tieId);
+              const attrs = toolkit.getElementAttr(itemId);
               if (attrs) {
-                startId = startId || attrs.startid || "";
-                endId = endId || attrs.endid || "";
+                startId = startId || attrs.startid || attrs["data-startid"] || attrs["@startid"] || "";
+                endId = endId || attrs.endid || attrs["data-endid"] || attrs["@endid"] || "";
               }
             } catch {
               // ignore
             }
           }
 
-          startId = startId.replace(/^#/, "");
-          endId = endId.replace(/^#/, "");
+          startId = String(startId || "").replace(/^#/, "");
+          endId = String(endId || "").replace(/^#/, "");
 
-          if (startId === currentId && endId && !visited.has(endId)) {
+          const matchStart = startId && (startId === currentId || currentId.endsWith(startId) || startId.endsWith(currentId));
+          if (matchStart && endId && !visited.has(endId)) {
             visited.add(endId);
             queue.push(endId);
             const targetNode = elementForVerovioId(endId);
@@ -1827,6 +1907,10 @@
             staffNumber: Number(staffNumber || 0),
             noteIdentity
           };
+          if (node) {
+            node.classList.add("feedback-correct");
+            paintNotehead(node, "#19f47b");
+          }
           persistentCorrectFeedback.set(persistentKey, item);
           const rendered = renderPracticeCorrectNote(persistentKey, item);
           if (rendered) renderedKeys.push(persistentKey);
@@ -1919,7 +2003,18 @@
         const noteColor = kind === "correct" ? "#19f47b" :
           kind === "wrong" || kind === "extra" || kind === "missed" ? "#ff6577" :
           kind === "early" ? "#ffb54d" : "#f6f2e9";
+        const expandedTargets = [];
         visualTargets.forEach(node => {
+          if (node) {
+            expandedTargets.push(node);
+            if (kind === "correct") {
+              for (const continuation of findTiedContinuationElements(node)) {
+                if (!expandedTargets.includes(continuation)) expandedTargets.push(continuation);
+              }
+            }
+          }
+        });
+        expandedTargets.forEach(node => {
           node.classList.add(noteClass);
           if (kind !== "hold") paintNotehead(node, noteColor);
         });
@@ -1941,16 +2036,55 @@
       feedback.textContent = labels[kind] || "•";
       feedback.className = "";
       feedback.style.opacity = "0";
-      clearTimeout(feedbackTimer);
-      feedbackTimer = setTimeout(() => {
-        document.querySelectorAll(`g.note.${noteClass}`).forEach(node => {
-          node.classList.remove(noteClass);
-          paintNotehead(node);
-        });
-      }, kind === "wrong" || kind === "extra" ? 420 : 700);
+      if (noteClass && noteClass !== "feedback-correct") {
+        clearTimeout(feedbackTimer);
+        feedbackTimer = setTimeout(() => {
+          document.querySelectorAll(`g.note.${noteClass}`).forEach(node => {
+            node.classList.remove(noteClass);
+            paintNotehead(node);
+          });
+          reapplyLessonFeedback();
+        }, kind === "wrong" || kind === "extra" ? 420 : 700);
+      }
     }
 
-    window.CadenzaNotation = { loadScore, setReadingMode, setHintMode, setHandMode, startPlayback, stopPlayback, beginTimeline, endTimeline, setCursorBeat, setZoom, setTempo, changePage, resetAudit, beginLesson, finishLesson, showFeedback, getState, elementsAtBeat, validateRendererLayout, validateFeedbackGeometry };
+    function clearPartialFeedback(occurrenceIndex) {
+      const idx = Number(occurrenceIndex || 0);
+      const keysToDelete = [];
+      for (const [key, item] of persistentCorrectFeedback) {
+        if (Number(item.occurrenceIndex || 0) === idx) {
+          keysToDelete.push(key);
+        }
+      }
+      for (const key of keysToDelete) {
+        persistentCorrectFeedback.delete(key);
+      }
+      document.querySelectorAll("g.note.feedback-correct").forEach(node => {
+        node.classList.remove("feedback-correct");
+        paintNotehead(node);
+      });
+      reapplyLessonFeedback();
+    }
+
+    function showCountdownStep(text) {
+      const overlay = document.getElementById("countdownOverlay");
+      const number = document.getElementById("countdownNumber");
+      if (!overlay || !number) return;
+      overlay.classList.add("active");
+      number.textContent = String(text || "");
+      number.classList.remove("pulse");
+      void number.offsetWidth;
+      number.classList.add("pulse");
+    }
+
+    function hideCountdown() {
+      const overlay = document.getElementById("countdownOverlay");
+      const number = document.getElementById("countdownNumber");
+      if (overlay) overlay.classList.remove("active");
+      if (number) number.classList.remove("pulse");
+    }
+
+    window.CadenzaNotation = { loadScore, setReadingMode, setHintMode, setHandMode, startPlayback, stopPlayback, beginTimeline, endTimeline, setCursorBeat, setZoom, setTempo, changePage, resetAudit, beginLesson, finishLesson, showFeedback, clearPartialFeedback, showCountdownStep, hideCountdown, getState, elementsAtBeat, validateRendererLayout, validateFeedbackGeometry };
 
     document.addEventListener("DOMContentLoaded", () => {
       verovio.module.onRuntimeInitialized = () => {

@@ -42,6 +42,9 @@ public partial class MainWindow : Window
         Loaded += MainWindow_Loaded;
         _viewModel.CorrectFeedback += ViewModel_CorrectFeedback;
         _viewModel.NoteFeedback += ViewModel_NoteFeedback;
+        _viewModel.PartialChordReset += ViewModel_PartialChordReset;
+        _viewModel.CountdownStepRequested += ViewModel_CountdownStepRequested;
+        _viewModel.HideCountdownRequested += ViewModel_HideCountdownRequested;
         _viewModel.LessonRunStateChanged += ViewModel_LessonRunStateChanged;
         _viewModel.ResultsPresented += ViewModel_ResultsPresented;
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
@@ -422,16 +425,16 @@ public partial class MainWindow : Window
 
     private async void PreviousScorePage_Click(object sender, RoutedEventArgs e)
     {
-        if (_viewModel.ReadingMode == ScoreReadingMode.Continuous)
-            await _viewModel.SeekDisplayMeasureAsync(-1);
+        if (_viewModel.IsPreviewPlaying || _viewModel.ReadingMode == ScoreReadingMode.Continuous)
+            await _viewModel.SeekDisplayMeasureAsync(-4);
         else if (_notationReady && NotationWebView.CoreWebView2 is not null)
             await NotationWebView.CoreWebView2.ExecuteScriptAsync("window.CadenzaNotation.changePage(-1);");
     }
 
     private async void NextScorePage_Click(object sender, RoutedEventArgs e)
     {
-        if (_viewModel.ReadingMode == ScoreReadingMode.Continuous)
-            await _viewModel.SeekDisplayMeasureAsync(1);
+        if (_viewModel.IsPreviewPlaying || _viewModel.ReadingMode == ScoreReadingMode.Continuous)
+            await _viewModel.SeekDisplayMeasureAsync(4);
         else if (_notationReady && NotationWebView.CoreWebView2 is not null)
             await NotationWebView.CoreWebView2.ExecuteScriptAsync("window.CadenzaNotation.changePage(1);");
     }
@@ -466,38 +469,46 @@ public partial class MainWindow : Window
         MidiDeviceComboBox.IsDropDownOpen = true;
     }
 
+    private static bool IsTextInputFocused(KeyEventArgs e)
+    {
+        var focused = Keyboard.FocusedElement;
+        return focused is System.Windows.Controls.Primitives.TextBoxBase ||
+               focused is System.Windows.Controls.PasswordBox ||
+               e.OriginalSource is System.Windows.Controls.Primitives.TextBoxBase ||
+               e.OriginalSource is System.Windows.Controls.PasswordBox;
+    }
+
     private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (Keyboard.FocusedElement is not System.Windows.Controls.TextBox)
+        if (IsTextInputFocused(e)) return;
+
+        if (e.Key == Key.F4)
         {
-            if (e.Key == Key.F4)
-            {
-                ListenModeRadio.IsChecked = true;
-                await _viewModel.SwitchLessonModeAsync(LessonMode.Listen);
-                e.Handled = true;
-                return;
-            }
-            if (e.Key == Key.F5)
-            {
-                PracticeModeRadio.IsChecked = true;
-                await _viewModel.SwitchLessonModeAsync(LessonMode.WaitForYou);
-                e.Handled = true;
-                return;
-            }
-            if (e.Key == Key.F6)
-            {
-                PerformanceModeRadio.IsChecked = true;
-                await _viewModel.SwitchLessonModeAsync(LessonMode.TimedPlay);
-                e.Handled = true;
-                return;
-            }
-            if (e.Key == Key.Space && _viewModel.IsPlayerVisible)
-            {
-                if (_viewModel.IsLessonActive) _viewModel.StopLesson();
-                else await _viewModel.StartSelectedModeAsync();
-                e.Handled = true;
-                return;
-            }
+            ListenModeRadio.IsChecked = true;
+            await _viewModel.SwitchLessonModeAsync(LessonMode.Listen);
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.F5)
+        {
+            PracticeModeRadio.IsChecked = true;
+            await _viewModel.SwitchLessonModeAsync(LessonMode.WaitForYou);
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.F6)
+        {
+            PerformanceModeRadio.IsChecked = true;
+            await _viewModel.SwitchLessonModeAsync(LessonMode.TimedPlay);
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.Space && _viewModel.IsPlayerVisible)
+        {
+            if (_viewModel.IsLessonActive) _viewModel.StopLesson();
+            else await _viewModel.StartSelectedModeAsync();
+            e.Handled = true;
+            return;
         }
         if (e.Key == Key.Escape && _viewModel.IsLessonActive)
         {
@@ -523,6 +534,8 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyUp(object sender, KeyEventArgs e)
     {
+        if (IsTextInputFocused(e)) return;
+
         if (_viewModel.UseKeyboardSimulation && ComputerKeyboardPianoMap.MidiNotes.TryGetValue(e.Key, out var midiNote))
         {
             _viewModel.SimulateNoteOff(midiNote);
@@ -569,6 +582,50 @@ public partial class MainWindow : Window
         {
             await NotationWebView.CoreWebView2.ExecuteScriptAsync(
                 $"window.CadenzaNotation.showFeedback({JsonSerializer.Serialize(e.Kind)}, {e.Beat.ToString(System.Globalization.CultureInfo.InvariantCulture)}, {(e.MidiNoteNumber?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null")}, {dispatchId}, {e.RunGeneration}, {e.EventId}, {e.OccurrenceIndex}, {e.StaffNumber});");
+        }
+        finally
+        {
+            _rendererLifecycleGate.Release();
+        }
+    }
+
+    private async void ViewModel_PartialChordReset(object? sender, int occurrenceIndex)
+    {
+        if (!_notationReady || NotationWebView.CoreWebView2 is null) return;
+        await _rendererLifecycleGate.WaitAsync();
+        try
+        {
+            await NotationWebView.CoreWebView2.ExecuteScriptAsync(
+                $"window.CadenzaNotation.clearPartialFeedback({occurrenceIndex});");
+        }
+        finally
+        {
+            _rendererLifecycleGate.Release();
+        }
+    }
+
+    private async void ViewModel_CountdownStepRequested(object? sender, string stepText)
+    {
+        if (!_notationReady || NotationWebView.CoreWebView2 is null) return;
+        await _rendererLifecycleGate.WaitAsync();
+        try
+        {
+            await NotationWebView.CoreWebView2.ExecuteScriptAsync(
+                $"window.CadenzaNotation.showCountdownStep({JsonSerializer.Serialize(stepText)});");
+        }
+        finally
+        {
+            _rendererLifecycleGate.Release();
+        }
+    }
+
+    private async void ViewModel_HideCountdownRequested(object? sender, EventArgs e)
+    {
+        if (!_notationReady || NotationWebView.CoreWebView2 is null) return;
+        await _rendererLifecycleGate.WaitAsync();
+        try
+        {
+            await NotationWebView.CoreWebView2.ExecuteScriptAsync("window.CadenzaNotation.hideCountdown();");
         }
         finally
         {

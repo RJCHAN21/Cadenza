@@ -474,6 +474,41 @@
         </Setter.Value>
       </Setter>
     </Style>
+
+    <Style x:Key="TransportLoopToggleStyle" TargetType="ToggleButton">
+      <Setter Property="Background" Value="#212832" />
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+      <Setter Property="BorderBrush" Value="#353E49" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Height" Value="44" />
+      <Setter Property="Width" Value="44" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToggleButton">
+            <Border x:Name="border" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="7" SnapsToDevicePixels="True">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="border" Property="Background" Value="#2F3947" />
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="border" Property="Background" Value="{StaticResource GoldDim}" />
+                <Setter TargetName="border" Property="BorderBrush" Value="{StaticResource Gold}" />
+                <Setter Property="Foreground" Value="#F8E6C4" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.4" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
 
   <Grid>
@@ -912,20 +947,21 @@
                          Height="44" Padding="13,0" FontSize="12" Click="LessonMode_Click" />
             <CheckBox Content="{Binding MetronomeLabel}" IsChecked="{Binding MetronomeEnabled, Mode=TwoWay}"
                       Style="{StaticResource HeaderCheckBox}" Height="44" Padding="10,0"
-                      IsEnabled="{Binding CanChooseInput}" VerticalAlignment="Center" Margin="9,0" />
-            <Button Content="{Binding LessonButtonLabel}" Style="{StaticResource GoldButton}" Click="StartLesson_Click"
-                    IsEnabled="{Binding CanStartLesson}" ToolTip="{Binding StartLessonReason}" Height="44" Padding="16,0" />
+                      IsEnabled="{Binding HasScore}" VerticalAlignment="Center" Margin="10,0,0,0" />
           </StackPanel>
 
           <Border Background="#0E1218" BorderBrush="#3A424E" BorderThickness="1" CornerRadius="12" Padding="8,6"
-                  Margin="25,0" VerticalAlignment="Center">
+                  Margin="20,0" VerticalAlignment="Center">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
               <Button Content="&#x23EE;" Click="TransportPrevious_Click" IsEnabled="{Binding CanUseTransport}" Width="44" Height="44" Padding="0" FontSize="16" ToolTip="Previous measure" />
-              <Button Content="&#x21B6;" Click="TransportRestart_Click" IsEnabled="{Binding CanUseTransport}" Width="44" Height="44" Padding="0" FontSize="18" ToolTip="Restart from selected start measure" />
+              <Button Content="&#x21B6;" Click="TransportRestart_Click" IsEnabled="{Binding CanUseTransport}" Width="44" Height="44" Padding="0" FontSize="18" ToolTip="Restart from selected start measure" Margin="4,0,0,0" />
               <Button Content="{Binding PreviewButtonLabel}" Style="{StaticResource GoldButton}" Click="TogglePreview_Click"
-                      IsEnabled="{Binding CanUseTransport}" MinWidth="88" Height="44" Padding="14,0" ToolTip="Play, pause, or resume score preview" />
-              <Button Content="&#x23ED;" Click="TransportNext_Click" IsEnabled="{Binding CanUseTransport}" Width="44" Height="44" Padding="0" FontSize="16" ToolTip="Next measure" />
-              <Button Content="&#x25A0;" Click="TransportStop_Click" Width="44" Height="44" Padding="0" FontSize="14" ToolTip="Stop audio or active lesson" />
+                      IsEnabled="{Binding CanUseTransport}" MinWidth="88" Height="44" Padding="14,0" ToolTip="Play, pause, or resume score preview" Margin="4,0,0,0" />
+              <Button Content="&#x23ED;" Click="TransportNext_Click" IsEnabled="{Binding CanUseTransport}" Width="44" Height="44" Padding="0" FontSize="16" ToolTip="Next measure" Margin="4,0,0,0" />
+              <Button Content="&#x25A0;" Click="TransportStop_Click" Width="44" Height="44" Padding="0" FontSize="14" ToolTip="Stop audio or active lesson" Margin="4,0,0,0" />
+              <ToggleButton Content="&#x21BB;" IsChecked="{Binding IsLoopEnabled, Mode=TwoWay}" IsEnabled="{Binding CanUseTransport}"
+                            Width="44" Height="44" Padding="0" FontSize="18" ToolTip="{Binding LoopButtonToolTip}"
+                            Style="{StaticResource TransportLoopToggleStyle}" Margin="4,0,0,0" />
             </StackPanel>
           </Border>
 

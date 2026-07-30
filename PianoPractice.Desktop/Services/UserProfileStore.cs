@@ -106,6 +106,7 @@ public sealed class CadenzaUserSettings
     public bool PedalEnabled { get; set; }
     public int LatencyMilliseconds { get; set; }
     public bool MetronomeEnabled { get; set; } = true;
+    public bool LoopEnabled { get; set; }
     public bool ComputerKeyboardEnabled { get; set; }
     public string PlaybackSoundPresetId { get; set; } = "acoustic_grand";
     public string LiveSoundPresetId { get; set; } = "acoustic_grand";

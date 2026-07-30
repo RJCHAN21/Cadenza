@@ -75,7 +75,10 @@ public sealed class LibraryStore
 
         if (existing is not null)
         {
-            existing.DisplayName = string.IsNullOrWhiteSpace(title) ? existing.DisplayName : title;
+            if (string.IsNullOrWhiteSpace(existing.DisplayName))
+            {
+                existing.DisplayName = string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(originalFileName) : title;
+            }
             existing.Composer = string.IsNullOrWhiteSpace(composer) ? existing.Composer : composer;
             if (measureCount > 0) existing.MeasureCount = measureCount;
             SaveManifest();

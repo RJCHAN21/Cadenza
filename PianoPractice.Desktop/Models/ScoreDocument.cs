@@ -98,12 +98,15 @@ public sealed class ScoreDocument
         return regions;
     }
 
+    public static int ResolveStaffNumber(int staffNumber, int midiNoteNumber) =>
+        staffNumber is 1 or 2 ? staffNumber : (midiNoteNumber >= 60 ? 1 : 2);
+
     public IReadOnlyList<ScoreNoteGroup> GetPracticeGroups(PracticeMode mode)
     {
         var filtered = mode switch
         {
-            PracticeMode.LeftHand => Notes.Where(note => note.StaffNumber == 2),
-            PracticeMode.RightHand => Notes.Where(note => note.StaffNumber == 1),
+            PracticeMode.LeftHand => Notes.Where(note => ResolveStaffNumber(note.StaffNumber, note.MidiNoteNumber) == 2),
+            PracticeMode.RightHand => Notes.Where(note => ResolveStaffNumber(note.StaffNumber, note.MidiNoteNumber) == 1),
             _ => Notes
         };
 
