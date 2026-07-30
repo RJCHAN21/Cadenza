@@ -13,7 +13,7 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3537.50" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="Assets\Verovio\**\*" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Assets\Bravura\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Verovio\**\*" CopyToOutputDirectory="Always" />
+    <Content Include="Assets\Bravura\**\*" CopyToOutputDirectory="Always" />
   </ItemGroup>
 </Project>

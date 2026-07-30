@@ -197,22 +197,61 @@ public sealed class PianoAudioService : IDisposable
 
         var pianoGain = Math.Clamp(pianoVolumePercent, 0, 100) / 100d;
         var metronomeGain = Math.Clamp(metronomeVolumePercent, 0, 100) / 100d;
-        foreach (var note in score.Notes.Where(note =>
-                     note.OnsetBeats >= startBeat &&
-                     note.OnsetBeats < endBeat &&
-                     (!includedStaffNumber.HasValue || note.StaffNumber == includedStaffNumber.Value)))
+
+        var performances = score.PerformanceMeasures;
+        if (performances.Count > 0)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            AddPianoVoice(
-                samples,
-                note.MidiNoteNumber,
-                96,
-                note.OnsetBeats - startBeat,
-                Math.Min(note.DurationBeats, endBeat - note.OnsetBeats),
-                secondsPerBeat,
-                pianoGain,
-                presetId,
-                cancellationToken);
+            foreach (var occurrence in performances)
+            {
+                var occPerfStart = occurrence.PerformanceStartBeat;
+                var occPerfEnd = occPerfStart + occurrence.DurationBeats;
+                if (occPerfEnd <= startBeat || occPerfStart >= endBeat) continue;
+
+                var measureNotes = score.Notes.Where(note =>
+                    note.MeasureNumber == occurrence.MeasureNumber &&
+                    (!includedStaffNumber.HasValue || note.StaffNumber == includedStaffNumber.Value));
+
+                foreach (var note in measureNotes)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var offsetInMeasure = note.OnsetBeats - occurrence.SourceStartBeat;
+                    var notePerfOnset = occPerfStart + offsetInMeasure;
+
+                    if (notePerfOnset >= startBeat && notePerfOnset < endBeat)
+                    {
+                        AddPianoVoice(
+                            samples,
+                            note.MidiNoteNumber,
+                            96,
+                            notePerfOnset - startBeat,
+                            Math.Min(note.DurationBeats, endBeat - notePerfOnset),
+                            secondsPerBeat,
+                            pianoGain,
+                            presetId,
+                            cancellationToken);
+                    }
+                }
+            }
+        }
+        else
+        {
+            foreach (var note in score.Notes.Where(note =>
+                         note.OnsetBeats >= startBeat &&
+                         note.OnsetBeats < endBeat &&
+                         (!includedStaffNumber.HasValue || note.StaffNumber == includedStaffNumber.Value)))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                AddPianoVoice(
+                    samples,
+                    note.MidiNoteNumber,
+                    96,
+                    note.OnsetBeats - startBeat,
+                    Math.Min(note.DurationBeats, endBeat - note.OnsetBeats),
+                    secondsPerBeat,
+                    pianoGain,
+                    presetId,
+                    cancellationToken);
+            }
         }
 
         if (includeMetronome)

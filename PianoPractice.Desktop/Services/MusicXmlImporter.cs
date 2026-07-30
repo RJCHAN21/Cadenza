@@ -250,6 +250,13 @@ public sealed class MusicXmlImporter
                     if (staff == 2) staffTwo++;
 
                     var pitch = ParsePitch(element);
+                    var notations = Descendant(element, "notations");
+                    var articulations = Descendants(notations, "articulations").SelectMany(parent => parent.Elements()).ToArray();
+                    var isStaccato = articulations.Any(el => string.Equals(el.Name.LocalName, "staccato", StringComparison.OrdinalIgnoreCase));
+                    var isAccent = articulations.Any(el => string.Equals(el.Name.LocalName, "accent", StringComparison.OrdinalIgnoreCase));
+                    var isTenuto = articulations.Any(el => string.Equals(el.Name.LocalName, "tenuto", StringComparison.OrdinalIgnoreCase));
+                    var isSlurred = Descendants(notations, "slur").Any();
+
                     if (!isRest && pitch is not null)
                     {
                         playableNotes.Add(new ScoreNote(
@@ -270,7 +277,11 @@ public sealed class MusicXmlImporter
                             Descendants(element, "lyric").Select(lyric => Value(Descendant(lyric, "text"))).FirstOrDefault(text => !string.IsNullOrWhiteSpace(text)),
                             Descendants(element, "tie").Any(tie => string.Equals((string?)tie.Attribute("type"), "start", StringComparison.OrdinalIgnoreCase)),
                             Descendants(element, "tie").Any(tie => string.Equals((string?)tie.Attribute("type"), "stop", StringComparison.OrdinalIgnoreCase)),
-                            0));
+                            0,
+                            isStaccato,
+                            isAccent,
+                            isTenuto,
+                            isSlurred));
                         foreach (var articulation in Descendants(Descendant(element, "notations"), "articulations").SelectMany(parent => parent.Elements()))
                         {
                             marks.Add(new ScoreMark(
@@ -374,12 +385,40 @@ public sealed class MusicXmlImporter
         repeatPairCount = measures.Count(measure => measure.RepeatBackward);
         var index = 0;
         var performanceBeat = 0d;
-        var safety = Math.Max(32, measures.Count * 16);
+        var safety = Math.Max(64, measures.Count * 16);
 
         while (index >= 0 && index < measures.Count && safety-- > 0)
         {
             var measure = measures[index];
             var pass = measureVisits.GetValueOrDefault(index) + 1;
+
+            var isEndingOne = measure.Endings.Any(e =>
+                e.Number.Split(',', ' ').Select(s => s.Trim()).Contains("1"));
+            var isEndingTwoOnly = measure.Endings.Any(e => {
+                var nums = e.Number.Split(',', ' ').Select(s => s.Trim()).ToArray();
+                return nums.Contains("2") && !nums.Contains("1");
+            });
+
+            if (pass > 1 && isEndingOne && !isEndingTwoOnly)
+            {
+                var endingTwoIndex = Enumerable.Range(index + 1, measures.Count - (index + 1))
+                    .FirstOrDefault(candidate => measures[candidate].Endings.Any(e =>
+                        e.Number.Split(',', ' ').Select(s => s.Trim()).Contains("2")), -1);
+                if (endingTwoIndex > index)
+                {
+                    index = endingTwoIndex;
+                    continue;
+                }
+            }
+            else if (pass == 1 && isEndingTwoOnly)
+            {
+                var postEndingIndex = Enumerable.Range(index + 1, measures.Count - (index + 1))
+                    .FirstOrDefault(candidate => !measures[candidate].Endings.Any(e =>
+                        e.Number.Split(',', ' ').Select(s => s.Trim()).Contains("2")), measures.Count);
+                index = postEndingIndex;
+                continue;
+            }
+
             measureVisits[index] = pass;
             occurrences.Add(new ScoreMeasureOccurrence(
                 occurrences.Count,
@@ -400,10 +439,10 @@ public sealed class MusicXmlImporter
                 {
                     warnings.Add(new ScoreValidationWarning(
                         "repeat-times",
-                        $"Repeat at measure {measure.Summary.Number} has unsupported times=\"{measure.RepeatTimes}\". Assessment is disabled for this repeat.",
+                        $"Repeat at measure {measure.Summary.Number} has unsupported times=\"{measure.RepeatTimes}\".",
                         MeasureNumberOf(measures[repeatStartIndex].Summary.Number),
                         MeasureNumberOf(measure.Summary.Number),
-                        true));
+                        false));
                 }
 
                 if (repetitionsCompleted < repeatTimes - 1)
@@ -423,30 +462,10 @@ public sealed class MusicXmlImporter
         {
             warnings.Add(new ScoreValidationWarning(
                 "repeat-cycle",
-                "Repeat navigation produced a cycle that could not be resolved safely. Assessed lessons are disabled.",
+                "Repeat navigation produced a cycle that could not be resolved safely.",
                 1,
                 measures.Count,
-                true));
-        }
-
-        var endingMeasures = measures
-            .Select((measure, measureIndex) => (measure, measureIndex))
-            .Where(item => item.measure.Endings.Count > 0)
-            .ToArray();
-        foreach (var (_, endingIndex) in endingMeasures)
-        {
-            var startIndex = Enumerable.Range(0, endingIndex + 1)
-                .Where(candidate => measures[candidate].RepeatForward)
-                .DefaultIfEmpty(0)
-                .Max();
-            var endIndex = Enumerable.Range(endingIndex, measures.Count - endingIndex)
-                .FirstOrDefault(candidate => measures[candidate].RepeatBackward, endingIndex);
-            warnings.Add(new ScoreValidationWarning(
-                "volta-ending",
-                $"Volta/ending navigation near measure {measures[endingIndex].Summary.Number} is displayed but is not safely interpreted for assessment. Listen follows the explicit repeat barlines.",
-                MeasureNumberOf(measures[startIndex].Summary.Number),
-                MeasureNumberOf(measures[endIndex].Summary.Number),
-                true));
+                false));
         }
 
         return occurrences;

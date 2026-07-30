@@ -122,6 +122,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private bool _performanceFullAccompanimentEnabled;
     private bool _otherHandAccompanimentEnabled = true;
     private byte[]? _preparedPerformanceWave;
+    private bool _onlyShowFeedbackOnPerformanceEnd;
     private bool _performanceAudioOwnsMetronome;
     private int _latencyMilliseconds;
     private int _currentStreak;
@@ -149,6 +150,20 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private AudioSoundPreset _playbackSoundPreset = AudioSoundPreset.AcousticGrand;
     private AudioSoundPreset _liveSoundPreset = AudioSoundPreset.AcousticGrand;
     private bool _matchPlaybackSynthEnabled;
+    private double _autoRepeatProgress = 1.0;
+    private string _autoRepeatStatusText = string.Empty;
+    private DispatcherTimer? _autoRepeatTimer;
+    private DateTime _autoRepeatStartTime;
+    private double _autoRepeatTotalSeconds = 5.0;
+    private double _articulationQualityTotal;
+    private int _articulationQualityCount;
+    private double _voicingQualityTotal;
+    private int _voicingQualityCount;
+    private double _chordSyncTotal;
+    private int _chordSyncCount;
+    private long _chordFirstTimestamp;
+    private long _chordLastTimestamp;
+    private int _chordHitsInGroup;
 
     public MainWindowViewModel(string? profilePath = null)
     {
@@ -182,6 +197,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _playbackSoundPreset = AudioSoundPreset.FromId(settings.PlaybackSoundPresetId, AudioSoundPreset.AcousticGrand);
         _liveSoundPreset = AudioSoundPreset.FromId(settings.LiveSoundPresetId, AudioSoundPreset.AcousticGrand);
         _matchPlaybackSynthEnabled = settings.MatchPlaybackSynthEnabled;
+        _onlyShowFeedbackOnPerformanceEnd = settings.OnlyShowFeedbackOnPerformanceEnd;
         _bestStreak = (_profile.Songs ??= new Dictionary<string, SongProgressRecord>(StringComparer.OrdinalIgnoreCase))
             .Values.Select(progress => progress.BestStreak).DefaultIfEmpty(0).Max();
         ApplyMixerVolumes();
@@ -212,6 +228,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public event EventHandler? ResultsPresented;
     public event EventHandler<LessonNoteFeedbackEvent>? NoteFeedback;
     public event EventHandler<LessonRunStateEvent>? LessonRunStateChanged;
+    public event EventHandler? AutoRepeatUpdated;
+    public event EventHandler? ResultsDismissed;
 
     public ObservableCollection<MeasureSummary> Measures { get; } = [];
     public ObservableCollection<MidiDeviceInfo> MidiDevices { get; } = [];
@@ -274,6 +292,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public string PitchCategoryLabel => $"Pitch {AccuracyLabel}";
     public string TimingCategoryLabel => TimingLabel.Replace("Timing: ", "Timing ");
     public string HoldCategoryLabel => _holdQualityCount == 0 ? "Hold —" : $"Hold {_holdQualityTotal / _holdQualityCount * 100:0}%";
+    public string VoicingStatValue =>
+        _voicingQualityCount == 0 ? "100%" : $"{_voicingQualityTotal / _voicingQualityCount * 100:0}%";
+    public string ArticulationStatValue =>
+        _articulationQualityCount == 0 ? "100%" : $"{_articulationQualityTotal / _articulationQualityCount * 100:0}%";
+    public string ChordSyncStatValue =>
+        _chordSyncCount == 0 ? "100%" : $"{_chordSyncTotal / _chordSyncCount * 100:0}%";
     public string PedalCategoryLabel
     {
         get
@@ -283,6 +307,19 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             return _pedalAttempts == 0 ? "Pedal —" : $"Pedal {_pedalCorrect * 100d / _pedalAttempts:0}%";
         }
     }
+    public string TimingStatValue =>
+        SelectedLessonMode == LessonMode.WaitForYou
+            ? "n/a"
+            : (_correctCount == 0 ? "0%" : $"{_timingQualityTotal / _correctCount * 100:0}%");
+    public string HoldStatValue =>
+        _holdQualityCount == 0 ? "—" : $"{_holdQualityTotal / _holdQualityCount * 100:0}%";
+    public string? PedalStatValue =>
+        (PedalEnabled && _score?.Marks.Any(mark => mark.Kind == ScoreMarkKind.Pedal) == true)
+            ? (_pedalAttempts == 0 ? "—" : $"{_pedalCorrect * 100d / _pedalAttempts:0}%")
+            : null;
+    public int CorrectCount => _correctCount;
+    public int MissedCount => _missedCount;
+    public int ExtraCount => _extraCount;
     public IReadOnlySet<int> HeldNoteNumbers { get => _heldNoteNumbers; private set => SetField(ref _heldNoteNumbers, value); }
     public ScoreDocument? CurrentScore => _score;
     public bool HasMidiReference => _midiReference is not null;
@@ -302,7 +339,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public int BestStreak { get => _bestStreak; private set => SetField(ref _bestStreak, value); }
     public string StreakLabel => CurrentStreak == 0 ? "Build your streak" : $"{CurrentStreak} note streak";
     public double StreakProgress => Math.Min(100, CurrentStreak * 10);
-    public bool ResultsVisible { get => _resultsVisible; private set => SetField(ref _resultsVisible, value); }
+    public bool ResultsVisible
+    {
+        get => _resultsVisible;
+        private set
+        {
+            if (SetField(ref _resultsVisible, value))
+            {
+                OnPropertyChanged(nameof(PreviewButtonLabel));
+            }
+        }
+    }
     public bool IsPlayerVisible
     {
         get => _isPlayerVisible;
@@ -457,10 +504,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public string NoteLyricLabel => $"{NoteLabel} / {LyricLabel}";
     public string PreviewButtonLabel =>
         IsPreviewBuilding ? "Preparing..." :
-        (IsLessonActive && SelectedLessonMode != LessonMode.Listen) ? "Restart" :
+        (ResultsVisible || (IsLessonActive && SelectedLessonMode != LessonMode.Listen)) ? "Restart" :
         IsPreviewPlaying ? "Pause" :
         IsPreviewPaused ? "Resume" : "Play";
-    public bool CanUseTransport => HasScore && !IsPreviewBuilding;
+    public bool CanUseTransport => HasScore;
     public bool HintModeEnabled
     {
         get => _hintModeEnabled;
@@ -490,6 +537,66 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         LessonMode.WaitForYou => "Start practice",
         _ => "Start performance"
     };
+    public double AutoRepeatProgress
+    {
+        get => _autoRepeatProgress;
+        set => SetField(ref _autoRepeatProgress, value);
+    }
+
+    public string AutoRepeatStatusText
+    {
+        get => _autoRepeatStatusText;
+        set => SetField(ref _autoRepeatStatusText, value);
+    }
+
+    public void StartAutoRepeatCountdown()
+    {
+        StopAutoRepeatCountdown();
+        _autoRepeatTotalSeconds = IsLoopEnabled ? 3.0 : 5.0;
+        _autoRepeatStartTime = DateTime.UtcNow;
+        AutoRepeatProgress = 1.0;
+        UpdateAutoRepeatLabel(_autoRepeatTotalSeconds);
+
+        _autoRepeatTimer = new DispatcherTimer(DispatcherPriority.Normal)
+        {
+            Interval = TimeSpan.FromMilliseconds(50)
+        };
+        _autoRepeatTimer.Tick += (s, e) =>
+        {
+            var elapsed = (DateTime.UtcNow - _autoRepeatStartTime).TotalSeconds;
+            var remaining = Math.Max(0, _autoRepeatTotalSeconds - elapsed);
+            AutoRepeatProgress = Math.Clamp(remaining / _autoRepeatTotalSeconds, 0, 1);
+            UpdateAutoRepeatLabel(remaining);
+            AutoRepeatUpdated?.Invoke(this, EventArgs.Empty);
+
+            if (remaining <= 0)
+            {
+                StopAutoRepeatCountdown();
+                _ = TriggerAutoRepeatAsync();
+            }
+        };
+        _autoRepeatTimer.Start();
+    }
+
+    private void UpdateAutoRepeatLabel(double remainingSeconds)
+    {
+        AutoRepeatStatusText = IsLoopEnabled
+            ? $"Loop active · Auto-restarting in {remainingSeconds:0.0}s..."
+            : $"Auto-restarting in {remainingSeconds:0.0}s · Press C4 or Space to restart now";
+    }
+
+    public void StopAutoRepeatCountdown()
+    {
+        _autoRepeatTimer?.Stop();
+        _autoRepeatTimer = null;
+    }
+
+    public async Task TriggerAutoRepeatAsync()
+    {
+        DismissResults();
+        await RestartPreviewAsync();
+    }
+
     public string MetronomeLabel => _metronomeEnabled
         ? $"Metronome on · {EffectiveLessonTempoBpm:0} BPM"
         : "Metronome off";
@@ -1191,6 +1298,18 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    public bool OnlyShowFeedbackOnPerformanceEnd
+    {
+        get => _onlyShowFeedbackOnPerformanceEnd;
+        set
+        {
+            if (SetField(ref _onlyShowFeedbackOnPerformanceEnd, value))
+            {
+                SaveProfileSettings();
+            }
+        }
+    }
+
     public string LoopButtonToolTip => IsLoopEnabled
         ? "Loop playback: ON (Click to disable)"
         : "Loop playback: OFF (Click to enable)";
@@ -1241,11 +1360,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             foreach (var measure in _score.Measures) Measures.Add(measure);
             MeasureNumbers.Clear();
             for (var measure = 1; measure <= _score.MeasureCount; measure++) MeasureNumbers.Add(measure);
-            var savedSettings = _profile.Settings ??= new CadenzaUserSettings();
-            _focusStartMeasure = Math.Clamp(savedSettings.FocusStartMeasure, 1, _score.MeasureCount);
-            _focusEndMeasure = (savedSettings.FocusEndMeasure <= 0 || savedSettings.FocusEndMeasure >= _score.MeasureCount)
-                ? 0
-                : Math.Clamp(savedSettings.FocusEndMeasure, _focusStartMeasure, _score.MeasureCount);
+            _focusStartMeasure = 1;
+            _focusEndMeasure = 0;
             var songKey = GetSongProgressKey(_score);
             (_profile.Songs ??= new Dictionary<string, SongProgressRecord>(StringComparer.OrdinalIgnoreCase))
                 .TryGetValue(songKey, out _currentSongProgress);
@@ -1273,9 +1389,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             OnPropertyChanged(nameof(CompletedAttemptCount));
             OnPropertyChanged(nameof(CanUseTransport));
             RefreshLessonGroups();
-            CursorBeat = _currentSongProgress is { LastPositionBeat: > 0 } progress
-                ? Math.Clamp(progress.LastPositionBeat, SelectedPreviewStartBeat, SelectedPreviewEndBeat)
-                : SelectedPreviewStartBeat;
+            CursorBeat = SelectedPreviewStartBeat;
             StatusMessage = _score.ValidationWarnings.Count == 0
                 ? $"Loaded {ScoreTitle} | {_score.MeasureCount:N0} written measures | {_score.PerformanceMeasures.Count:N0} performed measures | {_score.TempoBpm:0} BPM."
                 : $"Loaded with {_score.ValidationWarnings.Count} validation warning(s). Listen is available; affected assessed ranges are disabled.";
@@ -1425,6 +1539,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     {
         if (IsPreviewBuilding) return;
 
+        if (ResultsVisible)
+        {
+            await TriggerAutoRepeatAsync();
+            return;
+        }
+
         if (SelectedLessonMode == LessonMode.Listen)
         {
             if (IsPreviewPlaying)
@@ -1507,7 +1627,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         var targetIndex = Math.Clamp(currentIndex + Math.Sign(delta), 0, occurrences.Count - 1);
         var targetOccurrence = occurrences[targetIndex];
         var targetBeat = targetOccurrence.PerformanceStartBeat;
-        var wasPlaying = IsScorePreviewPlaying;
+        var wasPlaying = IsScorePreviewPlaying || IsPreviewBuilding;
         CancelPreviewPlayback();
         CursorBeat = targetBeat;
         IsPreviewPaused = !wasPlaying;
@@ -1556,6 +1676,38 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         UpdateExpectedGuideForCursor();
         LessonStatusLabel = $"Cued bar {target.MeasureNumber} · occurrence {target.RepeatPass}.";
         StatusMessage = "Score position changed. Start the selected lesson mode when ready.";
+    }
+
+    public async Task SeekDisplayPageAsync(int pageDelta)
+    {
+        if (_score is null || pageDelta == 0) return;
+        if (IsLessonActive) EndLesson(false);
+
+        var occurrences = SelectedPerformanceOccurrences;
+        if (occurrences.Count == 0) return;
+
+        var currentOcc = _score.OccurrenceAtBeat(CursorBeat) ?? occurrences[0];
+        var currentMeasure = int.TryParse(currentOcc.MeasureNumber, out var m) ? m : 1;
+        var targetMeasure = Math.Clamp(currentMeasure + (pageDelta * 4), 1, _score.MeasureCount);
+        var targetOcc = occurrences.FirstOrDefault(occ =>
+            int.TryParse(occ.MeasureNumber, out var om) && om >= targetMeasure) ?? occurrences.LastOrDefault();
+
+        if (targetOcc is not null)
+        {
+            var targetBeat = targetOcc.PerformanceStartBeat;
+            if (IsScorePreviewPlaying || IsPreviewBuilding)
+            {
+                await StartScorePreviewAsync(targetBeat);
+            }
+            else
+            {
+                CursorBeat = targetBeat;
+                IsPreviewPaused = true;
+                _previewUsesScore = true;
+                RaisePreviewStateProperties();
+                PreviewStatusLabel = $"Cued bar {targetOcc.MeasureNumber} · occurrence {targetOcc.RepeatPass}.";
+            }
+        }
     }
 
     private async Task StartScorePreviewAsync(double startBeat)
@@ -1819,6 +1971,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _audioService.StopPreview();
         _previewClock.Reset();
         IsPreviewPlaying = false;
+        IsPreviewBuilding = false;
+        RaisePreviewStateProperties();
     }
 
     public void SetPracticeMode(PracticeMode mode)
@@ -1832,7 +1986,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             _lessonGroups = _score.GetPracticeGroups(SelectedMode);
             _lessonGroupIndex = 0;
             _matchedNotes.Clear();
-            CursorBeat = _lessonGroups.Count > 0 ? _lessonGroups[0].OnsetBeats : SelectedPreviewStartBeat;
+            CursorBeat = SelectedPreviewStartBeat;
             UpdateExpectedGuideForCursor();
         }
         StatusMessage = $"{SelectedModeLabel} selected. Press Play (or Space) to start.";
@@ -1945,7 +2099,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         // Preserve an intentional focused selection. Only repair the default
         // whole-score range that would otherwise make Practice/Performance
         // look inert on an imported score with a bounded warning.
-        if (FocusStartMeasure != 1 || FocusEndMeasure != _score.MeasureCount) return false;
+        var isWholeScore = FocusStartMeasure == 1 && (FocusEndMeasure <= 0 || FocusEndMeasure >= _score.MeasureCount);
+        if (isWholeScore) return true;
 
         (int Start, int End, int Groups)? best = null;
         for (var start = 1; start <= _score.MeasureCount; start++)
@@ -1956,7 +2111,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 var groups = _score.GetPracticeGroups(SelectedMode).Count(group =>
                     int.TryParse(group.MeasureNumber, out var measure) && measure >= start && measure <= end);
                 if (groups == 0) continue;
-                if (best is null || groups > best.Value.Groups) best = (start, end, groups);
+                if (best is null || groups > best.Value.Groups || (groups == best.Value.Groups && start < best.Value.Start))
+                {
+                    best = (start, end, groups);
+                }
             }
         }
 
@@ -2033,7 +2191,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             .ToArray();
         ResetLessonStats();
         _lessonGroupIndex = 0;
-        _lessonStartBeat = _lessonGroups[0].OnsetBeats;
+        _lessonStartBeat = SelectedPreviewStartBeat;
         _nextMetronomeBeat = _lessonStartBeat;
         CursorBeat = _lessonStartBeat;
         if (SelectedLessonMode == LessonMode.TimedPlay)
@@ -2167,7 +2325,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
         if (pianoVolume <= 0 && !IsMetronomeAudible) return;
         StatusMessage = "Preparing synchronized lesson audio...";
-        var startBeat = _lessonGroups.Count > 0 ? _lessonGroups[0].OnsetBeats : SelectedPreviewStartBeat;
+        var startBeat = SelectedPreviewStartBeat;
         _preparedPerformanceWave = await _audioService.BuildPreviewAsync(
             _score,
             IsMetronomeAudible,
@@ -2320,9 +2478,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     private IReadOnlyList<ScoreMeasureOccurrence> SelectedPerformanceOccurrences => _score?.PerformanceMeasures
         .Where(occurrence =>
-            int.TryParse(occurrence.MeasureNumber, out var measure) &&
-            measure >= FocusStartMeasure &&
-            measure <= FocusEndMeasure)
+            (FocusStartMeasure <= 1 && occurrence.PerformanceStartBeat <= 0.001) ||
+            (int.TryParse(occurrence.MeasureNumber, out var measure) &&
+             measure >= FocusStartMeasure &&
+             (FocusEndMeasure <= 0 || measure <= FocusEndMeasure)))
         .OrderBy(occurrence => occurrence.PerformanceStartBeat)
         .ToArray() ?? [];
 
@@ -2362,6 +2521,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _timingQualityTotal = 0;
         _holdQualityTotal = 0;
         _holdQualityCount = 0;
+        _articulationQualityTotal = 0;
+        _articulationQualityCount = 0;
+        _voicingQualityTotal = 0;
+        _voicingQualityCount = 0;
+        _chordSyncTotal = 0;
+        _chordSyncCount = 0;
+        _chordHitsInGroup = 0;
         _pedalCorrect = 0;
         _pedalAttempts = 0;
         _matchedNotes.Clear();
@@ -2370,7 +2536,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         CurrentStreak = 0;
         BestStreak = 0;
         ResultsVisible = false;
-        CursorBeat = _lessonGroups.Count > 0 ? _lessonGroups[0].OnsetBeats : 0;
+        CursorBeat = SelectedPreviewStartBeat;
         CorrectLabel = "0";
         MissedLabel = "0";
         ExtraLabel = "0";
@@ -2499,6 +2665,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     private void HandleNoteOn(int midiNoteNumber, int velocity, bool simulation)
     {
+        if (ResultsVisible)
+        {
+            _ = TriggerAutoRepeatAsync();
+            return;
+        }
+
         var source = simulation ? "Simulation" : SelectedMidiDevice?.Name ?? "MIDI";
         InputActivityLabel = $"{source} note-on: {MidiNoteFormatter.Format(midiNoteNumber)} · velocity {velocity} · {DateTime.Now:HH:mm:ss.fff}";
         if (MidiMonitorEnabled)
@@ -2569,7 +2741,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 PlayPracticeGuidance(expected);
                 _lessonGroupIndex++;
                 _matchedNotes.Clear();
-                if (_lessonGroupIndex >= _lessonGroups.Count) EndLesson(true);
+                if (_lessonGroupIndex >= _lessonGroups.Count)
+                {
+                    var generation = _modeSwitchGeneration;
+                    _ = CompletePracticeLessonAsync(generation);
+                }
                 else
                 {
                     CursorBeat = _lessonGroups[_lessonGroupIndex].OnsetBeats;
@@ -2588,9 +2764,26 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 ResetPartialChord(expected);
             }
 
-            _extraCount++;
-            EmitNoteFeedback("extra", CursorBeat, midiNoteNumber);
-            LessonStatusLabel = $"Extra note. Resetting chord — strike all {expected.NoteCount} notes together.";
+            _missedCount++;
+            CurrentStreak = 0;
+            OnPropertyChanged(nameof(StreakProgress));
+            EmitNoteFeedback("wrong", CursorBeat, midiNoteNumber);
+            var preferFlats = _score?.KeySignature.Contains("b", StringComparison.OrdinalIgnoreCase) == true;
+            var playedName = MidiNoteFormatter.Format(midiNoteNumber, preferFlats);
+            var expectedNames = string.Join(" + ", expected.MidiNotes.Select(note => MidiNoteFormatter.Format(note, preferFlats)));
+            LessonStatusLabel = expected.NoteCount > 1
+                ? $"Wrong note ({playedName}, expected {expectedNames}). Resetting chord — strike expected notes together."
+                : $"Wrong note ({playedName}, expected {expectedNames}). Strike the correct key to proceed.";
+        }
+    }
+
+    private async Task CompletePracticeLessonAsync(int generation)
+    {
+        LessonStatusLabel = "Piece complete! Ringing out final chord...";
+        await Task.Delay(1800);
+        if (generation == _modeSwitchGeneration && IsLessonActive)
+        {
+            EndLesson(true);
         }
     }
 
@@ -2659,27 +2852,39 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         var expected = _lessonGroups[_lessonGroupIndex];
         var timingWindow = 0.55d;
         var error = beat - expected.OnsetBeats;
-        if (error >= -timingWindow && error <= timingWindow && expected.MidiNotes.Contains(midiNoteNumber))
+        if (error >= -timingWindow && error <= timingWindow)
         {
-            if (_matchedNotes.Contains(midiNoteNumber))
+            if (expected.MidiNotes.Contains(midiNoteNumber))
             {
-                // Note already matched in the active chord timing window; ignore duplicate hit.
-                return;
-            }
+                if (_matchedNotes.Contains(midiNoteNumber))
+                {
+                    // Note already matched in the active chord timing window; ignore duplicate hit.
+                    return;
+                }
 
-            _matchedNotes.Add(midiNoteNumber);
-            RegisterCorrect(expected.OnsetBeats, midiNoteNumber);
-            BeginHold(midiNoteNumber, expected);
-            _timingQualityTotal += Math.Max(0, 1d - Math.Abs(error) / timingWindow);
-            if (_matchedNotes.Count >= expected.NoteCount)
+                _matchedNotes.Add(midiNoteNumber);
+                RegisterCorrect(expected.OnsetBeats, midiNoteNumber);
+                BeginHold(midiNoteNumber, expected);
+                _timingQualityTotal += Math.Max(0, 1d - Math.Abs(error) / timingWindow);
+                if (_matchedNotes.Count >= expected.NoteCount)
+                {
+                    _lessonGroupIndex++;
+                    _matchedNotes.Clear();
+                    UpdateExpectedGuideForCursor();
+                }
+            }
+            else
             {
-                _lessonGroupIndex++;
-                _matchedNotes.Clear();
-                UpdateExpectedGuideForCursor();
+                // Played during an active note window, but wrong pitch!
+                _missedCount++;
+                CurrentStreak = 0;
+                OnPropertyChanged(nameof(StreakProgress));
+                EmitNoteFeedback("wrong", beat, midiNoteNumber);
             }
         }
         else
         {
+            // Played outside any active note window (e.g. rest or off-beat)
             _extraCount++;
             EmitNoteFeedback("extra", beat, midiNoteNumber);
         }
@@ -2794,6 +2999,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 BestStreak >= 8 ? $"Silver cadence · best streak {BestStreak}" :
                 $"First phrase · best streak {BestStreak}";
             ResultsVisible = true;
+            CursorBeat = SelectedPreviewStartBeat;
+            StartAutoRepeatCountdown();
             ResultsPresented?.Invoke(this, EventArgs.Empty);
         }
     }
@@ -2810,7 +3017,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         EmitNoteFeedback("correct", beat, midiNoteNumber);
     }
 
-    private void BeginHold(int midiNoteNumber, ScoreNoteGroup group)
+    private void BeginHold(int midiNoteNumber, ScoreNoteGroup group, int velocity = 90)
     {
         var expectedNote = group.Notes
             .Where(note => note.MidiNoteNumber == midiNoteNumber)
@@ -2825,9 +3032,57 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _activeHolds[midiNoteNumber] = new ActiveHold(
             Stopwatch.GetTimestamp(),
             Math.Max(0.05, expectedNote.DurationBeats),
-            expectedNote.OnsetBeats);
+            expectedNote.OnsetBeats,
+            expectedNote.IsStaccato,
+            expectedNote.IsAccent,
+            expectedNote.IsTenuto,
+            expectedNote.IsSlurred);
         HeldNoteNumbers = _activeHolds.Keys.ToHashSet();
         EmitNoteFeedback("hold", expectedNote.OnsetBeats, midiNoteNumber);
+
+        EvaluateVoiceVoicing(expectedNote, velocity);
+        EvaluateChordSync(group);
+    }
+
+    private void EvaluateVoiceVoicing(ScoreNote note, int velocity)
+    {
+        if (_score is null) return;
+        if (note.StaffNumber == 1)
+        {
+            _voicingQualityTotal += 1.0;
+            _voicingQualityCount++;
+        }
+        else if (note.StaffNumber == 2)
+        {
+            var quality = velocity > 102 ? 0.65 : 1.0;
+            _voicingQualityTotal += quality;
+            _voicingQualityCount++;
+        }
+    }
+
+    private void EvaluateChordSync(ScoreNoteGroup group)
+    {
+        if (group.NoteCount <= 1) return;
+        var now = Stopwatch.GetTimestamp();
+        if (_chordHitsInGroup == 0)
+        {
+            _chordFirstTimestamp = now;
+            _chordLastTimestamp = now;
+            _chordHitsInGroup = 1;
+        }
+        else
+        {
+            _chordLastTimestamp = now;
+            _chordHitsInGroup++;
+            if (_chordHitsInGroup >= group.NoteCount)
+            {
+                var spreadMs = Stopwatch.GetElapsedTime(_chordFirstTimestamp, _chordLastTimestamp).TotalMilliseconds;
+                var quality = spreadMs <= 28 ? 1.0 : Math.Clamp(1.0 - (spreadMs - 28) / 45.0, 0.25, 1.0);
+                _chordSyncTotal += quality;
+                _chordSyncCount++;
+                _chordHitsInGroup = 0;
+            }
+        }
     }
 
     private void CompleteHold(int midiNoteNumber)
@@ -2835,10 +3090,25 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         if (!_activeHolds.Remove(midiNoteNumber, out var hold)) return;
         var actualSeconds = Stopwatch.GetElapsedTime(hold.StartTimestamp).TotalSeconds;
         var expectedSeconds = hold.ExpectedBeats * 60d / Math.Max(1d, EffectiveLessonTempoBpm);
-        var tolerantTarget = Math.Max(0.08, expectedSeconds * 0.78);
-        var quality = expectedSeconds <= 0.12 ? 1d : Math.Clamp(actualSeconds / tolerantTarget, 0d, 1d);
+
+        double quality;
+        if (hold.IsStaccato)
+        {
+            quality = actualSeconds > expectedSeconds * 0.65
+                ? Math.Clamp(1.0 - (actualSeconds - expectedSeconds * 0.65) / expectedSeconds, 0.2, 1.0)
+                : 1.0;
+        }
+        else
+        {
+            var tolerantTarget = Math.Max(0.08, expectedSeconds * 0.78);
+            quality = expectedSeconds <= 0.12 ? 1d : Math.Clamp(actualSeconds / tolerantTarget, 0d, 1d);
+        }
+
         _holdQualityTotal += quality;
         _holdQualityCount++;
+        _articulationQualityTotal += quality;
+        _articulationQualityCount++;
+
         HeldNoteNumbers = _activeHolds.Keys.ToHashSet();
         OnPropertyChanged(nameof(HoldCategoryLabel));
         EmitNoteFeedback(quality < .72 ? "early" : "release", hold.OnsetBeat, midiNoteNumber);
@@ -2863,7 +3133,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         if (nearest <= 0.8) _pedalCorrect++;
     }
 
-    public void DismissResults() => ResultsVisible = false;
+    public void DismissResults()
+    {
+        StopAutoRepeatCountdown();
+        ResultsVisible = false;
+        ResultsDismissed?.Invoke(this, EventArgs.Empty);
+    }
 
     private string FormatExpectedGroup()
     {
@@ -2940,6 +3215,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(CanChooseInput));
         OnPropertyChanged(nameof(CanStartLesson));
         OnPropertyChanged(nameof(CanUseTransport));
+        OnPropertyChanged(nameof(PreviewButtonLabel));
         OnPropertyChanged(nameof(LessonButtonLabel));
         OnPropertyChanged(nameof(InputSourceLabel));
         OnPropertyChanged(nameof(StartLessonReason));
@@ -2984,6 +3260,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         settings.PlaybackSoundPresetId = PlaybackSoundPreset.Id;
         settings.LiveSoundPresetId = LiveSoundPreset.Id;
         settings.MatchPlaybackSynthEnabled = MatchPlaybackSynthEnabled;
+        settings.OnlyShowFeedbackOnPerformanceEnd = OnlyShowFeedbackOnPerformanceEnd;
         if (_score?.SourcePath is not null) settings.LastOpenedScorePath = _score.SourcePath;
         TrySaveProfile();
     }
@@ -3141,7 +3418,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 
-    private sealed record ActiveHold(long StartTimestamp, double ExpectedBeats, double OnsetBeat);
+    private sealed record ActiveHold(
+        long StartTimestamp,
+        double ExpectedBeats,
+        double OnsetBeat,
+        bool IsStaccato = false,
+        bool IsAccent = false,
+        bool IsTenuto = false,
+        bool IsSlurred = false);
 }
 
 public sealed record LessonNoteFeedbackEvent(

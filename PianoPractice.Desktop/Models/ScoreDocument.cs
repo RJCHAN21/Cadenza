@@ -165,7 +165,11 @@ public sealed record ScoreNote(
     string? Lyric,
     bool TieStart,
     bool TieStop,
-    int PerformanceOccurrence);
+    int PerformanceOccurrence,
+    bool IsStaccato = false,
+    bool IsAccent = false,
+    bool IsTenuto = false,
+    bool IsSlurred = false);
 
 public sealed record ScoreRest(
     double OnsetBeats,

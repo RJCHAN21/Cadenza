@@ -88,8 +88,13 @@
     #notation g.note.feedback-missed .notehead *,
     #notation g.note.audit-missed .notehead,
     #notation g.note.audit-missed .notehead * {
-      color: #ff6577 !important; fill: #ff6577 !important; stroke: #ff6577 !important;
-      filter: drop-shadow(0 0 6px rgba(255,101,119,.9));
+      color: #FF3B5C !important; fill: #FF3B5C !important; stroke: #FF3B5C !important;
+      filter: drop-shadow(0 0 10px rgba(255,59,92,0.95));
+    }
+    #notation g.note.feedback-extra .notehead,
+    #notation g.note.feedback-extra .notehead * {
+      color: #FF6B35 !important; fill: #FF6B35 !important; stroke: #FF6B35 !important;
+      filter: drop-shadow(0 0 10px rgba(255,107,53,0.95));
     }
     #notation g.note.feedback-early .notehead,
     #notation g.note.feedback-early .notehead *,
@@ -104,36 +109,40 @@
       filter: drop-shadow(0 0 7px rgba(255,181,77,1));
     }
     #notation g.note.feedback-missed {
-      filter: drop-shadow(0 0 7px rgba(255,101,119,1));
+      filter: drop-shadow(0 0 10px rgba(255,59,92,1));
+    }
+    #notation g.note.feedback-extra {
+      filter: drop-shadow(0 0 10px rgba(255,107,53,1));
     }
     #feedback {
       position: absolute; z-index: 7; top: 8%; transform: translate(-50%, -50%) scale(.85);
       min-width: 34px; height: 34px; padding: 0 8px; border-radius: 17px;
-      display: grid; place-items: center; color: #081014; font: 700 13px "Segoe UI", sans-serif;
+      display: grid; place-items: center; color: #FFFFFF; font: 800 13px "Segoe UI", sans-serif;
       opacity: 0; pointer-events: none; transition: opacity 100ms ease, transform 140ms ease;
     }
     #feedback.visible { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-    #feedback.correct { background: #19f47b; box-shadow: 0 0 16px rgba(25,244,123,.75); }
-    #feedback.wrong { background: #ff6577; box-shadow: 0 0 16px rgba(255,101,119,.7); }
-    #feedback.hold { background: #42d9f5; box-shadow: 0 0 16px rgba(66,217,245,.65); }
-    #feedback.early { background: #ffb54d; box-shadow: 0 0 16px rgba(255,181,77,.65); }
+    #feedback.correct { background: #19f47b; color: #081014; box-shadow: 0 0 16px rgba(25,244,123,.75); }
+    #feedback.wrong, #feedback.missed { background: #FF3B5C; color: #FFFFFF; box-shadow: 0 0 18px rgba(255,59,92,.85); }
+    #feedback.extra { background: #FF6B35; color: #FFFFFF; box-shadow: 0 0 18px rgba(255,107,53,.85); }
+    #feedback.hold { background: #42d9f5; color: #081014; box-shadow: 0 0 16px rgba(66,217,245,.65); }
+    #feedback.early { background: #ffb54d; color: #081014; box-shadow: 0 0 16px rgba(255,181,77,.65); }
     #practiceWrongNote {
       position: absolute; inset: 0; width: 100%; height: 100%; z-index: 8;
       overflow: visible; pointer-events: none; display: none;
     }
     #practiceWrongNote .wrong-feedback {
-      filter: drop-shadow(0 0 6px rgba(255,101,119,.9));
+      filter: drop-shadow(0 0 10px rgba(255,59,92,.95));
     }
     #practiceWrongNote .correct-feedback {
       filter:
         drop-shadow(0 0 2px rgba(4,30,17,1))
         drop-shadow(0 0 8px rgba(25,244,123,1));
     }
-    #practiceWrongNote .wrong-notehead { fill: #ff6577; stroke: #ff6577; }
+    #practiceWrongNote .wrong-notehead { fill: #FF3B5C; stroke: #FF3B5C; }
     #practiceWrongNote .correct-notehead { fill: #19f47b; stroke: #19f47b; }
-    #practiceWrongNote .wrong-ledger { stroke: #ff6577; stroke-width: 1.5; stroke-linecap: round; }
+    #practiceWrongNote .wrong-ledger { stroke: #FF3B5C; stroke-width: 1.5; stroke-linecap: round; }
     #practiceWrongNote .wrong-accidental {
-      fill: #ff6577; font: 700 21px "Segoe UI Symbol", "Segoe UI", sans-serif;
+      fill: #FF3B5C; font: 700 21px "Segoe UI Symbol", "Segoe UI", sans-serif;
     }
     #audit { position: absolute; inset: 0; z-index: 6; pointer-events: none; }
     .audit-mark {
@@ -218,6 +227,184 @@
       transform: scale(1.3);
       opacity: 1;
     }
+    #resultsModalOverlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 14, 20, 0.84);
+      backdrop-filter: blur(6px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 200ms ease;
+    }
+    #resultsModalOverlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .results-card {
+      width: 440px;
+      max-width: 90vw;
+      padding: 26px;
+      background: #1A2028;
+      border: 1px solid #D9AA5B;
+      border-radius: 18px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.75);
+      text-align: center;
+      color: #F6F2E9;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    .results-eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: #D9AA5B;
+      text-transform: uppercase;
+    }
+    .results-star {
+      font-size: 36px;
+      color: #D9AA5B;
+      margin-top: 4px;
+    }
+    .results-headline {
+      font-size: 26px;
+      font-weight: 600;
+      margin-top: 4px;
+    }
+    .results-summary {
+      font-size: 13px;
+      color: #9AA7B8;
+      margin: 8px 0 14px 0;
+      line-height: 1.4;
+    }
+    .results-reward {
+      background: #2C251B;
+      border-radius: 9px;
+      padding: 10px 14px;
+      color: #D9AA5B;
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 14px;
+    }
+    .results-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+    .stat-box {
+      background: #11161C;
+      border: 1px solid #242C37;
+      border-radius: 12px;
+      padding: 10px 6px;
+      text-align: center;
+    }
+    .stat-box.main-stat {
+      border-color: #D9AA5B;
+      background: #1A232E;
+    }
+    .stat-value {
+      font-size: 20px;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+    .stat-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: #9AA7B8;
+      letter-spacing: 0.05em;
+      margin-top: 4px;
+    }
+    .text-green { color: #19F47B; }
+    .text-blue { color: #8BEAFF; }
+    .text-gold { color: #D9AA5B; }
+    .text-purple { color: #C084FC; }
+
+    .results-counts-row {
+      display: flex;
+      justify-content: space-around;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .count-pill {
+      flex: 1;
+      background: #11161C;
+      border-radius: 8px;
+      padding: 7px 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .pill-green { border-bottom: 3px solid #19F47B; }
+    .pill-red { border-bottom: 3px solid #FF3B5C; }
+    .pill-orange { border-bottom: 3px solid #FF6B35; }
+    .count-num {
+      font-size: 16px;
+      font-weight: 800;
+    }
+    .pill-green .count-num { color: #19F47B; }
+    .pill-red .count-num { color: #FF3B5C; }
+    .pill-orange .count-num { color: #FF6B35; }
+    .count-lbl {
+      font-size: 9px;
+      font-weight: 700;
+      color: #8A96A6;
+      letter-spacing: 0.06em;
+      margin-top: 2px;
+    }
+    .results-repeat-box {
+      background: #11161C;
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 16px;
+    }
+    .results-repeat-text {
+      font-size: 12px;
+      font-weight: 600;
+      color: #D9AA5B;
+      margin-bottom: 8px;
+    }
+    .results-progress-bg {
+      height: 6px;
+      background: #242C37;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .results-progress-fill {
+      height: 100%;
+      background: #D9AA5B;
+      width: 100%;
+      transition: width 50ms linear;
+    }
+    .results-buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .results-btn {
+      height: 42px;
+      border-radius: 9px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid #3B4756;
+      background: #242C37;
+      color: #F6F2E9;
+      transition: background 150ms ease;
+    }
+    .results-btn:hover {
+      background: #2E3846;
+    }
+    .results-btn-gold {
+      background: #D9AA5B;
+      color: #11161C;
+      border: none;
+    }
+    .results-btn-gold:hover {
+      background: #E8B96A;
+    }
     @media (prefers-reduced-motion: reduce) {
       #notation { transition: none; }
       #playhead { box-shadow: none; }
@@ -235,6 +422,71 @@
     <div id="feedback" aria-live="polite"></div>
     <div id="hintLane"><div><div id="hintTitle">NEXT NOTES</div><div id="hintNotes">—</div></div><div id="hintKeys"></div></div>
     <div id="countdownOverlay"><div id="countdownNumber">4</div></div>
+    <div id="resultsModalOverlay">
+      <div class="results-card">
+        <div class="results-eyebrow">SESSION SUMMARY</div>
+        <div class="results-star">✦</div>
+        <div id="resultsHeadline" class="results-headline">Run Complete</div>
+        <div id="resultsReward" class="results-reward">First phrase</div>
+
+        <div id="resultsStatsGrid" class="results-stats-grid">
+          <div class="stat-box main-stat">
+            <div class="stat-value text-green" id="resAccuracy">100%</div>
+            <div class="stat-label">ACCURACY</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value text-blue" id="resTiming">94%</div>
+            <div class="stat-label">TIMING</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value text-gold" id="resHold">90%</div>
+            <div class="stat-label">NOTE HOLD</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value text-green" id="resVoicing">100%</div>
+            <div class="stat-label">VOICING</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value text-blue" id="resArticulation">100%</div>
+            <div class="stat-label">ARTICULATION</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value text-gold" id="resChordSync">100%</div>
+            <div class="stat-label">CHORD SYNC</div>
+          </div>
+          <div class="stat-box" id="resPedalBox" style="display:none;">
+            <div class="stat-value text-purple" id="resPedal">90%</div>
+            <div class="stat-label">PEDAL</div>
+          </div>
+        </div>
+
+        <div class="results-counts-row">
+          <div class="count-pill pill-green">
+            <span class="count-num" id="resCorrectCount">0</span>
+            <span class="count-lbl">CORRECT</span>
+          </div>
+          <div class="count-pill pill-red">
+            <span class="count-num" id="resMissedCount">0</span>
+            <span class="count-lbl">MISSED</span>
+          </div>
+          <div class="count-pill pill-orange">
+            <span class="count-num" id="resExtraCount">0</span>
+            <span class="count-lbl">EXTRA</span>
+          </div>
+        </div>
+
+        <div class="results-repeat-box">
+          <div id="resultsRepeatText" class="results-repeat-text">Auto-restarting in 5.0s...</div>
+          <div class="results-progress-bg">
+            <div id="resultsProgressFill" class="results-progress-fill"></div>
+          </div>
+        </div>
+        <div class="results-buttons">
+          <button class="results-btn" onclick="post('repeatLesson')">Repeat lesson ↻</button>
+          <button class="results-btn results-btn-gold" onclick="post('dismissResults')">Review annotated score</button>
+        </div>
+      </div>
+    </div>
   </div>
   <script>
     let toolkit = null;
@@ -256,6 +508,23 @@
     let lessonRunning = false;
     let lessonMode = "WaitForYou";
     let pendingPage = 0;
+    let performanceTimeline = [];
+
+    function setPerformanceTimeline(timeline) {
+      performanceTimeline = Array.isArray(timeline) ? timeline : [];
+    }
+
+    function performanceToSourceBeat(beat) {
+      const perfBeat = Math.max(0, Number(beat || 0));
+      if (!performanceTimeline.length) return perfBeat;
+      const occurrence = performanceTimeline.find(occ =>
+        perfBeat >= occ.performanceStartBeat - 0.0001 &&
+        perfBeat < occ.performanceStartBeat + occ.durationBeats + 0.0001
+      ) || performanceTimeline.at(-1);
+      if (!occurrence) return perfBeat;
+      const offset = Math.max(0, perfBeat - occurrence.performanceStartBeat);
+      return Math.min(occurrence.sourceStartBeat + occurrence.durationBeats, occurrence.sourceStartBeat + offset);
+    }
     let lastPositionKey = "";
     let pageTransitionTimer = 0;
     let pageTransitionGeneration = 0;
@@ -349,6 +618,20 @@
         applyReadingModeClass();
         bpm = Number(scoreBpm) || 120;
         keySignature = String(scoreKey || "");
+
+        // Reset all cursor, timeline, and feedback state for new score load
+        latestRequestedBeat = 0;
+        lastAuthoritativeBeat = 0;
+        lastPositionKey = "";
+        timelineRunning = false;
+        playing = false;
+        lessonRunning = false;
+        persistentCorrectFeedback.clear();
+        activeWrongFeedback = null;
+        clearPracticeWrongNote(true);
+        clearPracticeCorrectNotes();
+        resetContinuousViewport();
+
         toolkit.setOptions(optionsForMode(readingMode));
         const loaded = zipped
           ? toolkit.loadZipDataBase64(base64)
@@ -1048,9 +1331,7 @@
           targetFound: true
         };
       } else {
-        const event = eventAtBeat(item.beat);
-        const fallback = pitchPoint(event, item.midiNote, item.staffNumber);
-        if (fallback) point = { ...fallback, targetFound: false };
+        return null;
       }
       return overlayPointToScoreCoordinates(point);
     }
@@ -1058,8 +1339,12 @@
     function renderPracticeCorrectNote(key, item) {
       if (practiceWrongNote.querySelector(`:scope > g.correct-feedback[data-feedback-key="${CSS.escape(key)}"]`))
         return true;
+      const event = eventAtBeat(item.beat);
+      if (pageForEvent(event) !== currentPage) {
+        return false;
+      }
       const point = expectedOverlayPoint(item);
-      if (!point) return false;
+      if (!point || !point.targetFound) return false;
       const svgNs = "http://www.w3.org/2000/svg";
       const group = document.createElementNS(svgNs, "g");
       group.setAttribute("class", "correct-feedback");
@@ -1149,11 +1434,14 @@
       audit.innerHTML = "";
     }
 
-    function beginLesson(mode, startBeat = 0, timed = false, runGeneration = 0) {
+    let onlyShowFeedbackOnEnd = false;
+
+    function beginLesson(mode, startBeat = 0, timed = false, runGeneration = 0, hideLivePerformanceFeedback = false) {
       endTimeline();
       playhead.style.opacity = "0";
       lessonMode = String(mode || "WaitForYou");
       lessonRunning = true;
+      onlyShowFeedbackOnEnd = Boolean(hideLivePerformanceFeedback);
       lessonGeneration = Number(runGeneration || lessonGeneration + 1);
       persistentCorrectFeedback.clear();
       activeWrongFeedback = null;
@@ -1194,15 +1482,10 @@
       feedback.className = "";
       feedback.style.opacity = "0";
       clearTimeout(feedbackTimer);
-      clearPracticeWrongNote();
-      clearPracticeCorrectNotes();
-      persistentCorrectFeedback.clear();
-      document.querySelectorAll("g.note.feedback-correct, g.note.feedback-wrong, g.note.feedback-hold, g.note.feedback-early, g.note.feedback-missed")
-        .forEach(node => {
-          node.classList.remove("feedback-correct", "feedback-wrong", "feedback-hold", "feedback-early", "feedback-missed");
-          node.removeAttribute("data-cadenza-feedback");
-          paintNotehead(node);
-        });
+      
+      // Reveal/preserve all annotated green and red score markers for post-run review
+      reapplyLessonFeedback();
+
       auditVisible = Boolean(completed) && lessonMode === "TimedPlay";
       if (auditVisible) rebuildAudit();
       else resetAudit();
@@ -1242,18 +1525,20 @@
     }
 
     function elementsAtBeat(beat) {
-      const event = eventAtBeat(beat);
+      const sourceBeat = performanceToSourceBeat(beat);
+      const event = eventAtBeat(sourceBeat);
       return {
-        toolkit: toolkit?.getElementsAtTime(Math.max(0, Math.round(Number(beat || 0) * 60000 / bpm))) || null,
+        toolkit: toolkit?.getElementsAtTime(Math.max(0, Math.round(Number(sourceBeat || 0) * 60000 / bpm))) || null,
         indexedPage: pageForEvent(event),
         qstamp: event?.qstamp ?? null
       };
     }
 
     function eventAtBeat(beat) {
-      const target = Number(beat || 0);
+      const target = performanceToSourceBeat(beat);
       return timemap.reduce((best, event) =>
-        event.on?.length && Math.abs((event.qstamp ?? 0) - target) < Math.abs((best?.qstamp ?? 1e9) - target)
+        (event.on?.length || event.restsOn?.length || event.measureOn) &&
+        Math.abs((event.qstamp ?? 0) - target) < Math.abs((best?.qstamp ?? 1e9) - target)
           ? event : best, null);
     }
 
@@ -1362,7 +1647,8 @@
 
     function renderLatestCursor() {
       const beat = latestRequestedBeat;
-      const ms = beat * 60000 / bpm;
+      const sourceBeat = performanceToSourceBeat(beat);
+      const ms = sourceBeat * 60000 / bpm;
       const desiredPage = pageForEvent(eventAtBeat(beat));
       if (desiredPage !== currentPage) {
         if (!pendingPage || pendingPage !== desiredPage) {
@@ -1372,7 +1658,7 @@
         return;
       }
       if (pendingPage) return;
-      updateCursor(ms, true);
+      updateCursor(beat * 60000 / bpm, true);
       document.querySelectorAll(".expected").forEach(node => node.classList.remove("expected"));
       const atTime = toolkit?.getElementsAtTime(Math.max(0, Math.round(ms)));
       for (const id of atTime?.notes || []) {
@@ -1471,27 +1757,40 @@
     }
 
     function eventViewportCenter(event) {
+      const stageRect = stage.getBoundingClientRect();
       if (event?.cadenzaEnd) {
         const system = [...notation.querySelectorAll("g.system")].at(-1);
-        return system ? system.getBoundingClientRect().right - 12 : null;
+        return system ? systemEndBarLineX(system) : null;
       }
       const ids = positionIds(event);
-      if (!ids.length) return null;
-      const centers = ids.map(elementForVerovioId)
-        .filter(Boolean)
-        .map(element => {
-          // A Verovio note group can include a long tie, slur, lyric, flag, or
-          // accidental. Its full bounding box is therefore not a reliable
-          // onset coordinate and can be thousands of score units wide. Anchor
-          // note events to the canonical SMuFL notehead geometry instead.
-          const anchor = element.matches("g.note")
-            ? (element.querySelector(":scope > g.notehead") || element.querySelector("g.notehead") || element)
-            : element;
-          const rect = anchor.getBoundingClientRect();
-          return element.matches("g.measure") ? rect.left : rect.left + rect.width / 2;
-        });
-      if (!centers.length) return null;
-      return centers.reduce((sum, value) => sum + value, 0) / centers.length;
+      if (ids.length) {
+        const centers = ids.map(elementForVerovioId)
+          .filter(Boolean)
+          .map(element => {
+            const anchor = element.matches("g.note")
+              ? (element.querySelector(":scope > g.notehead") || element.querySelector("g.notehead") || element)
+              : element;
+            const rect = anchor.getBoundingClientRect();
+            const val = element.matches("g.measure") ? rect.left : rect.left + rect.width / 2;
+            return val - stageRect.left;
+          });
+        if (centers.length) {
+          return centers.reduce((sum, value) => sum + value, 0) / centers.length;
+        }
+      }
+
+      if (event?.measureOn) {
+        const measureEl = elementForVerovioId(event.measureOn) || notation.querySelector("g.measure");
+        if (measureEl) {
+          const rect = measureEl.getBoundingClientRect();
+          return rect.left - stageRect.left;
+        }
+      }
+      const firstMeasure = notation.querySelector("g.measure");
+      if (firstMeasure) {
+        return firstMeasure.getBoundingClientRect().left - stageRect.left;
+      }
+      return null;
     }
 
     function elementScoreX(element, useLeftEdge = false) {
@@ -1684,9 +1983,18 @@
     }
 
     function elementForVerovioId(id) {
-      // svgHtml5 emits semantic data-id attributes instead of XML id attributes.
-      return document.getElementById(id) ||
-        notation.querySelector(`[data-id="${CSS.escape(String(id))}"]`);
+      if (!id) return null;
+      const strId = String(id);
+      let found = document.getElementById(strId) ||
+        notation.querySelector(`[data-id="${CSS.escape(strId)}"]`);
+      if (found) return found;
+      if (strId.includes("rest")) {
+        return notation.querySelector("g.rest") || notation.querySelector(".rest");
+      }
+      if (strId.includes("measure")) {
+        return notation.querySelector("g.measure") || notation.querySelector(".measure");
+      }
+      return null;
     }
 
     function systemEndBarLineX(system) {
@@ -1705,9 +2013,12 @@
 
     function updateCursor(ms, immediate) {
       if (!toolkit || !timemap.length) return;
-      const atTime = toolkit.getElementsAtTime(Math.max(0, Math.round(ms)));
-      const previous = eventWithPositionAtOrBefore(ms);
-      const next = eventWithPositionAfter(ms);
+      const perfBeat = ms * bpm / 60000;
+      const sourceBeat = performanceToSourceBeat(perfBeat);
+      const sourceMs = sourceBeat * 60000 / bpm;
+      const atTime = toolkit.getElementsAtTime(Math.max(0, Math.round(sourceMs)));
+      const previous = eventWithPositionAtOrBefore(sourceMs);
+      const next = eventWithPositionAfter(sourceMs);
       const desiredPage = pageForEvent(previous || next);
       if (desiredPage !== currentPage) {
         return;
@@ -1726,8 +2037,8 @@
       if (x1 == null && x2 == null) return;
       if (x1 == null) x1 = x2;
       if (x2 == null) x2 = x1;
-      const span = Math.max(1, (next?.tstamp ?? ms) - (previous?.tstamp ?? ms));
-      const progress = Math.max(0, Math.min(1, (ms - (previous?.tstamp ?? ms)) / span));
+      const span = Math.max(1, (next?.tstamp ?? sourceMs) - (previous?.tstamp ?? sourceMs));
+      const progress = Math.max(0, Math.min(1, (sourceMs - (previous?.tstamp ?? sourceMs)) / span));
       const x = x1 + (x2 - x1) * progress;
       let visibleX = x;
       if (continuous) {
@@ -1968,7 +2279,14 @@
           persistentCorrectCount: persistentCorrectFeedback.size,
           paintedTargets
         });
+        if (lessonRunning && lessonMode === "TimedPlay" && onlyShowFeedbackOnEnd) {
+          return true;
+        }
         return true;
+      }
+
+      if (lessonRunning && lessonMode === "TimedPlay" && onlyShowFeedbackOnEnd) {
+        return;
       }
 
       if (kind === "release") {
@@ -2084,7 +2402,48 @@
       if (number) number.classList.remove("pulse");
     }
 
-    window.CadenzaNotation = { loadScore, setReadingMode, setHintMode, setHandMode, startPlayback, stopPlayback, beginTimeline, endTimeline, setCursorBeat, setZoom, setTempo, changePage, resetAudit, beginLesson, finishLesson, showFeedback, clearPartialFeedback, showCountdownStep, hideCountdown, getState, elementsAtBeat, validateRendererLayout, validateFeedbackGeometry };
+    function showResultsModal(headline, reward, accuracy, timing, hold, pedal, correctCount, missedCount, extraCount, repeatText, progress, voicing, articulation, chordSync) {
+      const overlay = document.getElementById("resultsModalOverlay");
+      if (!overlay) return;
+      document.getElementById("resultsHeadline").textContent = headline || "Run Complete";
+      document.getElementById("resultsReward").textContent = reward || "";
+      document.getElementById("resAccuracy").textContent = accuracy || "0%";
+      document.getElementById("resTiming").textContent = timing || "n/a";
+      document.getElementById("resHold").textContent = hold || "—";
+      document.getElementById("resVoicing").textContent = voicing || "100%";
+      document.getElementById("resArticulation").textContent = articulation || "100%";
+      document.getElementById("resChordSync").textContent = chordSync || "100%";
+
+      const pedalBox = document.getElementById("resPedalBox");
+      if (pedal !== null && pedal !== undefined) {
+        document.getElementById("resPedal").textContent = pedal;
+        if (pedalBox) pedalBox.style.display = "block";
+      } else {
+        if (pedalBox) pedalBox.style.display = "none";
+      }
+
+      document.getElementById("resCorrectCount").textContent = String(correctCount || 0);
+      document.getElementById("resMissedCount").textContent = String(missedCount || 0);
+      document.getElementById("resExtraCount").textContent = String(extraCount || 0);
+
+      updateResultsAutoRepeat(repeatText, progress);
+      overlay.classList.add("active");
+    }
+
+    function updateResultsAutoRepeat(text, progress) {
+      const txt = document.getElementById("resultsRepeatText");
+      const fill = document.getElementById("resultsProgressFill");
+      if (txt) txt.textContent = text || "";
+      const pct = Math.min(100, Math.max(0, Number(progress || 0) * 100));
+      if (fill) fill.style.width = `${pct}%`;
+    }
+
+    function hideResultsModal() {
+      const overlay = document.getElementById("resultsModalOverlay");
+      if (overlay) overlay.classList.remove("active");
+    }
+
+    window.CadenzaNotation = { loadScore, setPerformanceTimeline, setReadingMode, setHintMode, setHandMode, startPlayback, stopPlayback, beginTimeline, endTimeline, setCursorBeat, setZoom, setTempo, changePage, resetAudit, beginLesson, finishLesson, showFeedback, clearPartialFeedback, showCountdownStep, hideCountdown, showResultsModal, updateResultsAutoRepeat, hideResultsModal, getState, elementsAtBeat, validateRendererLayout, validateFeedbackGeometry };
 
     document.addEventListener("DOMContentLoaded", () => {
       verovio.module.onRuntimeInitialized = () => {

@@ -966,9 +966,10 @@
           </Border>
 
           <StackPanel x:Name="LiveStatsPanel" Orientation="Horizontal" VerticalAlignment="Center">
-            <StackPanel Width="64" ToolTip="Correct: expected chord tones accepted for the current onset."><TextBlock Text="CORRECT" Style="{StaticResource Eyebrow}" HorizontalAlignment="Center" /><TextBlock Text="{Binding CorrectLabel}" Foreground="{StaticResource Gold}" FontSize="17" HorizontalAlignment="Center" /></StackPanel>
-            <StackPanel Width="64" ToolTip="Missed: expected tones whose Performance timing window closed without a match. Practice notes remain pending and do not become misses."><TextBlock Text="MISSED" Style="{StaticResource Eyebrow}" HorizontalAlignment="Center" /><TextBlock Text="{Binding MissedLabel}" FontSize="17" HorizontalAlignment="Center" /></StackPanel>
-            <StackPanel Width="64" ToolTip="Extra: played wrong pitches or duplicate tones that were not currently eligible."><TextBlock Text="EXTRA" Style="{StaticResource Eyebrow}" HorizontalAlignment="Center" /><TextBlock Text="{Binding ExtraLabel}" FontSize="17" HorizontalAlignment="Center" /></StackPanel>
+            <StackPanel Width="64" ToolTip="Correct: expected chord tones accepted for the current onset."><TextBlock Text="CORRECT" Style="{StaticResource Eyebrow}" HorizontalAlignment="Center" /><TextBlock Text="{Binding CorrectLabel}" Foreground="#19F47B" FontSize="17" FontWeight="Bold" HorizontalAlignment="Center" /></StackPanel>
+            <StackPanel Width="64" ToolTip="Missed / Wrong: expected tones that were missed or played with an incorrect pitch."><TextBlock Text="MISSED" Style="{StaticResource Eyebrow}" HorizontalAlignment="Center" /><TextBlock Text="{Binding MissedLabel}" Foreground="#FF3B5C" FontSize="17" FontWeight="Bold" HorizontalAlignment="Center" /></StackPanel>
+            <StackPanel Width="64" ToolTip="Extra: unexpected notes played during rests or off-beat positions."><TextBlock Text="EXTRA" Style="{StaticResource Eyebrow}" HorizontalAlignment="Center" /><TextBlock Text="{Binding ExtraLabel}" Foreground="#FF6B35" FontSize="17" FontWeight="Bold" HorizontalAlignment="Center" /></StackPanel>
+            <StackPanel Width="70" ToolTip="Accuracy: percentage of correct notes out of all played attempts."><TextBlock Text="ACCURACY" Style="{StaticResource Eyebrow}" HorizontalAlignment="Center" /><TextBlock Text="{Binding AccuracyLabel}" Foreground="#8BEAFF" FontSize="17" FontWeight="Bold" HorizontalAlignment="Center" /></StackPanel>
           </StackPanel>
         </StackPanel>
       </Border>
@@ -1228,6 +1229,14 @@
                   </ItemsControl>
                 </StackPanel>
               </Expander>
+              <Separator Background="{StaticResource Line}" Margin="0,15" />
+              <TextBlock Text="PERFORMANCE MODE FEEDBACK" Style="{StaticResource Eyebrow}" />
+              <CheckBox Content="Only Show Note Feedback on Performance Mode End"
+                        IsChecked="{Binding OnlyShowFeedbackOnPerformanceEnd, Mode=TwoWay}"
+                        Margin="0,7,0,2"
+                        ToolTip="When checked, live green/red note overlays are hidden during performance playback and revealed all at once at the end." />
+              <TextBlock Text="When checked, live green and red note markers are hidden while performing and revealed on the score after completion."
+                         Foreground="{StaticResource Muted}" FontSize="9.5" TextWrapping="Wrap" Margin="0,0,0,6" />
             </StackPanel>
           </ScrollViewer>
         </Grid>
@@ -1251,32 +1260,6 @@
             <Button Content="Cancel" Click="CloseRenameOverlay_Click" Height="34" Padding="16,0" HorizontalAlignment="Left" />
             <Button Content="Save Title" Style="{StaticResource GoldButton}" Click="SaveRenameItem_Click" DockPanel.Dock="Right" Height="34" Padding="18,0" HorizontalAlignment="Right" />
           </DockPanel>
-        </StackPanel>
-      </Border>
-    </Grid>
-
-    <!-- Motivating end-of-run reward. -->
-    <Grid Visibility="{Binding ResultsVisible, Converter={StaticResource BoolToVisibility}}" Background="#C0000000">
-      <Border x:Name="ResultsPanel" Width="450" Padding="30" Background="#1A2028" CornerRadius="18"
-              BorderBrush="{StaticResource Gold}" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center"
-              RenderTransformOrigin=".5,.5">
-        <Border.RenderTransform><ScaleTransform x:Name="ResultsScale" ScaleX="1" ScaleY="1" /></Border.RenderTransform>
-        <StackPanel>
-          <TextBlock Text="PERFORMANCE REWARD" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" HorizontalAlignment="Center" />
-          <TextBlock Text="✦" Foreground="{StaticResource Gold}" FontSize="38" HorizontalAlignment="Center" Margin="0,8,0,0" />
-          <TextBlock Text="{Binding ResultHeadline}" FontSize="27" FontWeight="SemiBold" HorizontalAlignment="Center" />
-          <TextBlock Text="{Binding ResultSummary}" Foreground="{StaticResource Muted}" TextAlignment="Center" Margin="0,9" TextWrapping="Wrap" />
-          <UniformGrid Columns="2" Margin="0,5">
-            <TextBlock Text="{Binding PitchCategoryLabel}" TextAlignment="Center" Foreground="{StaticResource Gold}" />
-            <TextBlock Text="{Binding TimingCategoryLabel}" TextAlignment="Center" />
-            <TextBlock Text="{Binding HoldCategoryLabel}" TextAlignment="Center" Foreground="{StaticResource Gold}" Margin="0,6,0,0" />
-            <TextBlock Text="{Binding PedalCategoryLabel}" TextAlignment="Center" Margin="0,6,0,0" />
-          </UniformGrid>
-          <Border Background="#2C251B" CornerRadius="9" Padding="12,8" Margin="0,9">
-            <TextBlock Text="{Binding RewardLabel}" Foreground="{StaticResource Gold}" FontWeight="SemiBold" HorizontalAlignment="Center" />
-          </Border>
-          <Button Content="Review annotated score" Style="{StaticResource GoldButton}" Click="DismissResults_Click" Margin="0,15,0,0"
-                  ToolTip="Close this summary and inspect persistent green/check and red/diamond score markers." />
         </StackPanel>
       </Border>
     </Grid>

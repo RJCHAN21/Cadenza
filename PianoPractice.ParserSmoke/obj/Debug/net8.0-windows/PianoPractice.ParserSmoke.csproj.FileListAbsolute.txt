@@ -35,3 +35,4 @@ D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\r
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\PianoPractice.ParserSmoke.pdb
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\PianoPractice.ParserSmoke.genruntimeconfig.cache
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\ref\PianoPractice.ParserSmoke.dll
+D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\PianoPractice.ParserSmoke.sourcelink.json

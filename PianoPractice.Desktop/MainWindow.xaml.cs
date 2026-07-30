@@ -47,6 +47,8 @@ public partial class MainWindow : Window
         _viewModel.HideCountdownRequested += ViewModel_HideCountdownRequested;
         _viewModel.LessonRunStateChanged += ViewModel_LessonRunStateChanged;
         _viewModel.ResultsPresented += ViewModel_ResultsPresented;
+        _viewModel.AutoRepeatUpdated += ViewModel_AutoRepeatUpdated;
+        _viewModel.ResultsDismissed += ViewModel_ResultsDismissed;
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
         CompositionTarget.Rendering += CompositionTarget_Rendering;
     }
@@ -117,6 +119,20 @@ public partial class MainWindow : Window
                 var pages = root.TryGetProperty("pages", out var pagesProperty) ? pagesProperty.GetInt32() : 1;
                 ScorePageIndicator.Text = $"Page 1 / {pages} · System 1";
                 _viewModel.SetStatusMessage($"Score engraved locally with Verovio {version} and SMuFL notation.");
+                if (_viewModel.CurrentScore?.PerformanceMeasures is { Count: > 0 } timeline)
+                {
+                    var json = JsonSerializer.Serialize(timeline.Select(occ => new
+                    {
+                        occurrenceIndex = occ.OccurrenceIndex,
+                        sourceMeasureIndex = occ.SourceMeasureIndex,
+                        measureNumber = occ.MeasureNumber,
+                        sourceStartBeat = occ.SourceStartBeat,
+                        performanceStartBeat = occ.PerformanceStartBeat,
+                        durationBeats = occ.DurationBeats,
+                        repeatPass = occ.RepeatPass
+                    }));
+                    await NotationWebView.CoreWebView2.ExecuteScriptAsync($"window.CadenzaNotation.setPerformanceTimeline({json});");
+                }
                 await NotationWebView.CoreWebView2.ExecuteScriptAsync(
                     $"window.CadenzaNotation.setCursorBeat({_viewModel.CursorBeat.ToString(System.Globalization.CultureInfo.InvariantCulture)});");
                 await Task.Delay(240);
@@ -134,6 +150,15 @@ public partial class MainWindow : Window
                 var system = root.TryGetProperty("system", out var systemProperty) ? systemProperty.GetInt32() : 1;
                 var systems = root.TryGetProperty("systems", out var systemsProperty) ? systemsProperty.GetInt32() : 1;
                 ScorePageIndicator.Text = $"Page {page} / {pages} · System {system} / {systems}";
+            }
+            else if (type == "repeatLesson")
+            {
+                _viewModel.DismissResults();
+                await _viewModel.RestartPreviewAsync();
+            }
+            else if (type == "dismissResults")
+            {
+                _viewModel.DismissResults();
             }
             else if (type is "layoutValidation" or "runtimeTelemetry" or "alignmentTelemetry" or "feedbackTelemetry" or "feedbackAck" or "feedbackReapplied" or "layoutError")
             {
@@ -425,16 +450,16 @@ public partial class MainWindow : Window
 
     private async void PreviousScorePage_Click(object sender, RoutedEventArgs e)
     {
-        if (_viewModel.IsPreviewPlaying || _viewModel.ReadingMode == ScoreReadingMode.Continuous)
-            await _viewModel.SeekDisplayMeasureAsync(-4);
+        if (_viewModel.IsPreviewPlaying || _viewModel.IsPreviewBuilding || _viewModel.IsPreviewPaused || _viewModel.ReadingMode == ScoreReadingMode.Continuous)
+            await _viewModel.SeekDisplayPageAsync(-1);
         else if (_notationReady && NotationWebView.CoreWebView2 is not null)
             await NotationWebView.CoreWebView2.ExecuteScriptAsync("window.CadenzaNotation.changePage(-1);");
     }
 
     private async void NextScorePage_Click(object sender, RoutedEventArgs e)
     {
-        if (_viewModel.IsPreviewPlaying || _viewModel.ReadingMode == ScoreReadingMode.Continuous)
-            await _viewModel.SeekDisplayMeasureAsync(4);
+        if (_viewModel.IsPreviewPlaying || _viewModel.IsPreviewBuilding || _viewModel.IsPreviewPaused || _viewModel.ReadingMode == ScoreReadingMode.Continuous)
+            await _viewModel.SeekDisplayPageAsync(1);
         else if (_notationReady && NotationWebView.CoreWebView2 is not null)
             await NotationWebView.CoreWebView2.ExecuteScriptAsync("window.CadenzaNotation.changePage(1);");
     }
@@ -503,12 +528,21 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
-        if (e.Key == Key.Space && _viewModel.IsPlayerVisible)
+        if (e.Key == Key.Space || e.Key == Key.Enter)
         {
-            if (_viewModel.IsLessonActive) _viewModel.StopLesson();
-            else await _viewModel.StartSelectedModeAsync();
-            e.Handled = true;
-            return;
+            if (_viewModel.ResultsVisible)
+            {
+                _ = _viewModel.TriggerAutoRepeatAsync();
+                e.Handled = true;
+                return;
+            }
+            if (_viewModel.IsPlayerVisible)
+            {
+                if (_viewModel.IsLessonActive) _viewModel.StopLesson();
+                else await _viewModel.StartSelectedModeAsync();
+                e.Handled = true;
+                return;
+            }
         }
         if (e.Key == Key.Escape && _viewModel.IsLessonActive)
         {
@@ -543,6 +577,12 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void RepeatLesson_Click(object sender, RoutedEventArgs e)
+    {
+        _viewModel.DismissResults();
+        await _viewModel.RestartPreviewAsync();
+    }
+
     private void DismissResults_Click(object sender, RoutedEventArgs e)
     {
         _viewModel.DismissResults();
@@ -558,7 +598,7 @@ public partial class MainWindow : Window
             OpacityProperty,
             new DoubleAnimation(.55, 1, TimeSpan.FromMilliseconds(240))
             {
-                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+                AutoReverse = true
             });
     }
 
@@ -576,10 +616,10 @@ public partial class MainWindow : Window
     private async void ViewModel_NoteFeedback(object? sender, LessonNoteFeedbackEvent e)
     {
         if (!_notationReady || NotationWebView.CoreWebView2 is null) return;
-        var dispatchId = Interlocked.Increment(ref _rendererFeedbackDispatchId);
         await _rendererLifecycleGate.WaitAsync();
         try
         {
+            var dispatchId = Interlocked.Increment(ref _rendererFeedbackDispatchId);
             await NotationWebView.CoreWebView2.ExecuteScriptAsync(
                 $"window.CadenzaNotation.showFeedback({JsonSerializer.Serialize(e.Kind)}, {e.Beat.ToString(System.Globalization.CultureInfo.InvariantCulture)}, {(e.MidiNoteNumber?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null")}, {dispatchId}, {e.RunGeneration}, {e.EventId}, {e.OccurrenceIndex}, {e.StaffNumber});");
         }
@@ -643,7 +683,7 @@ public partial class MainWindow : Window
             _pendingCursorBeat = null;
             _lastQueuedCursorBeat = e.StartBeat;
             var script = e.State == "started"
-                ? $"window.CadenzaNotation.beginLesson({JsonSerializer.Serialize(e.Mode.ToString())}, {e.StartBeat.ToString(System.Globalization.CultureInfo.InvariantCulture)}, false, {e.RunGeneration});"
+                ? $"window.CadenzaNotation.beginLesson({JsonSerializer.Serialize(e.Mode.ToString())}, {e.StartBeat.ToString(System.Globalization.CultureInfo.InvariantCulture)}, false, {e.RunGeneration}, {_viewModel.OnlyShowFeedbackOnPerformanceEnd.ToString().ToLowerInvariant()});"
                 : $"window.CadenzaNotation.finishLesson({(e.State == "completed" ? "true" : "false")}, {e.RunGeneration});";
             await NotationWebView.CoreWebView2.ExecuteScriptAsync(script);
             if (e.State == "started")
@@ -747,29 +787,65 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ViewModel_ResultsPresented(object? sender, EventArgs e)
+    private async void ViewModel_ResultsPresented(object? sender, EventArgs e)
     {
-        NotationWebView.Visibility = Visibility.Collapsed;
-        if (!SystemParameters.ClientAreaAnimation)
+        if (!_notationReady || NotationWebView.CoreWebView2 is null) return;
+        await _rendererLifecycleGate.WaitAsync();
+        try
         {
-            ResultsPanel.Opacity = 1;
-            ResultsScale.ScaleX = ResultsScale.ScaleY = 1;
-            return;
+            var pedalJson = _viewModel.PedalStatValue is { } p ? JsonSerializer.Serialize(p) : "null";
+            await NotationWebView.CoreWebView2.ExecuteScriptAsync(
+                $"window.CadenzaNotation.showResultsModal(" +
+                $"{JsonSerializer.Serialize(_viewModel.ResultHeadline)}, " +
+                $"{JsonSerializer.Serialize(_viewModel.RewardLabel)}, " +
+                $"{JsonSerializer.Serialize(_viewModel.AccuracyLabel)}, " +
+                $"{JsonSerializer.Serialize(_viewModel.TimingStatValue)}, " +
+                $"{JsonSerializer.Serialize(_viewModel.HoldStatValue)}, " +
+                $"{pedalJson}, " +
+                $"{_viewModel.CorrectCount}, " +
+                $"{_viewModel.MissedCount}, " +
+                $"{_viewModel.ExtraCount}, " +
+                $"{JsonSerializer.Serialize(_viewModel.AutoRepeatStatusText)}, " +
+                $"{_viewModel.AutoRepeatProgress.ToString(System.Globalization.CultureInfo.InvariantCulture)}, " +
+                $"{JsonSerializer.Serialize(_viewModel.VoicingStatValue)}, " +
+                $"{JsonSerializer.Serialize(_viewModel.ArticulationStatValue)}, " +
+                $"{JsonSerializer.Serialize(_viewModel.ChordSyncStatValue)});");
         }
-
-        ResultsPanel.Opacity = 0;
-        ResultsScale.ScaleX = ResultsScale.ScaleY = .94;
-        ResultsPanel.BeginAnimation(OpacityProperty,
-            new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(260))
-            {
-                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
-            });
-        var scale = new DoubleAnimation(.94, 1, TimeSpan.FromMilliseconds(300))
+        finally
         {
-            EasingFunction = new BackEase { Amplitude = .22, EasingMode = EasingMode.EaseOut }
-        };
-        ResultsScale.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleXProperty, scale);
-        ResultsScale.BeginAnimation(System.Windows.Media.ScaleTransform.ScaleYProperty, scale);
+            _rendererLifecycleGate.Release();
+        }
+    }
+
+    private async void ViewModel_AutoRepeatUpdated(object? sender, EventArgs e)
+    {
+        if (!_notationReady || NotationWebView.CoreWebView2 is null || !_viewModel.ResultsVisible) return;
+        await _rendererLifecycleGate.WaitAsync();
+        try
+        {
+            await NotationWebView.CoreWebView2.ExecuteScriptAsync(
+                $"window.CadenzaNotation.updateResultsAutoRepeat(" +
+                $"{JsonSerializer.Serialize(_viewModel.AutoRepeatStatusText)}, " +
+                $"{_viewModel.AutoRepeatProgress.ToString(System.Globalization.CultureInfo.InvariantCulture)});");
+        }
+        finally
+        {
+            _rendererLifecycleGate.Release();
+        }
+    }
+
+    private async void ViewModel_ResultsDismissed(object? sender, EventArgs e)
+    {
+        if (!_notationReady || NotationWebView.CoreWebView2 is null) return;
+        await _rendererLifecycleGate.WaitAsync();
+        try
+        {
+            await NotationWebView.CoreWebView2.ExecuteScriptAsync("window.CadenzaNotation.hideResultsModal();");
+        }
+        finally
+        {
+            _rendererLifecycleGate.Release();
+        }
     }
 
     private void Window_Closed(object? sender, EventArgs e)
@@ -778,6 +854,8 @@ public partial class MainWindow : Window
         _viewModel.NoteFeedback -= ViewModel_NoteFeedback;
         _viewModel.LessonRunStateChanged -= ViewModel_LessonRunStateChanged;
         _viewModel.ResultsPresented -= ViewModel_ResultsPresented;
+        _viewModel.AutoRepeatUpdated -= ViewModel_AutoRepeatUpdated;
+        _viewModel.ResultsDismissed -= ViewModel_ResultsDismissed;
         _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
         CompositionTarget.Rendering -= CompositionTarget_Rendering;
         if (NotationWebView.CoreWebView2 is not null)
