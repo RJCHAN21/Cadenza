@@ -74,8 +74,8 @@ public sealed class UserProfileStore
 public sealed class CadenzaUserProfile
 {
     public int SchemaVersion { get; set; } = UserProfileStore.CurrentSchemaVersion;
-    public CadenzaUserSettings? Settings { get; set; } = new();
-    public Dictionary<string, SongProgressRecord>? Songs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public CadenzaUserSettings Settings { get; set; } = new();
+    public Dictionary<string, SongProgressRecord> Songs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public static CadenzaUserProfile CreateDefault() => new();
 }
