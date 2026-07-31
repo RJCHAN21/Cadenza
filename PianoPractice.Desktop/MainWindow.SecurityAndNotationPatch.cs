@@ -130,6 +130,7 @@ public partial class MainWindow
             tempoScale);
         var rangeEnd = SelectedPerformanceRangeEnd(score);
         targetBeat = Math.Clamp(targetBeat, _correctedClockAnchorBeat, rangeEnd);
+        targetBeat = Math.Max(_lastCorrectedBeat, targetBeat);
 
         _viewModel.CursorBeat = targetBeat;
         _lastCorrectedBeat = targetBeat;
