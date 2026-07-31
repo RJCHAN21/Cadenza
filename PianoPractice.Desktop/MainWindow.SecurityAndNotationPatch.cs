@@ -11,12 +11,15 @@ namespace PianoPractice.Desktop;
 
 public partial class MainWindow
 {
+    private static readonly TimeSpan CorrectedClockDispatchInterval = TimeSpan.FromMilliseconds(30);
+
     private bool _runtimeHardeningInstalled;
     private string? _runtimePatchScript;
     private readonly Stopwatch _correctedPerformanceClock = new();
     private bool _correctedClockActive;
     private double _correctedClockAnchorBeat;
     private double _lastCorrectedBeat;
+    private long _lastCorrectedDispatchTimestamp;
 
     static MainWindow()
     {
@@ -63,6 +66,13 @@ public partial class MainWindow
         core.WebMessageReceived -= NotationWebView_WebMessageReceived;
         core.WebMessageReceived += TrustedNotationWebMessageReceived;
 
+        // CursorBeat previously had two independent frame clocks: the original
+        // linear ViewModel clock and this tempo-aware performance clock. They
+        // repeatedly overwrote one another, delayed repeat/volta transitions,
+        // flooded WebView with cursor messages, and contributed to notation
+        // flashing. There is exactly one frame-clock owner from this point on.
+        CompositionTarget.Rendering -= CompositionTarget_Rendering;
+        CompositionTarget.Rendering -= RuntimeCorrectedRendering;
         CompositionTarget.Rendering += RuntimeCorrectedRendering;
         Closed += RuntimeHardeningClosed;
 
@@ -77,7 +87,8 @@ public partial class MainWindow
         {
             if (!File.Exists(patchPath))
             {
-                _viewModel.SetStatusMessage($"The notation safety patch {Path.GetFileName(patchPath)} is missing from the application output.");
+                _viewModel.SetStatusMessage(
+                    $"The notation safety patch {Path.GetFileName(patchPath)} is missing from the application output.");
                 return;
             }
             patchScripts.Add(await File.ReadAllTextAsync(patchPath));
@@ -90,6 +101,7 @@ public partial class MainWindow
 
     private void RuntimeHardeningClosed(object? sender, EventArgs args)
     {
+        CompositionTarget.Rendering -= CompositionTarget_Rendering;
         CompositionTarget.Rendering -= RuntimeCorrectedRendering;
         _correctedPerformanceClock.Stop();
     }
@@ -105,25 +117,28 @@ public partial class MainWindow
         {
             _correctedClockActive = false;
             _correctedPerformanceClock.Reset();
+            _lastCorrectedDispatchTimestamp = 0;
             return;
         }
 
         var observedBeat = Math.Clamp(_viewModel.CursorBeat, 0, score.TotalPerformanceBeats);
         if (!_correctedClockActive)
         {
-            // Start a new monotonic clock only when playback actually starts or
-            // restarts. The ViewModel's legacy linear timer also writes
-            // CursorBeat; re-anchoring to those writes during playback made the
-            // corrected tempo-aware clock fight the legacy timer and could delay
-            // repeat/volta transitions. Pausing or seeking deactivates playback,
-            // so the next active frame naturally establishes a fresh anchor.
             _correctedClockActive = true;
             _correctedClockAnchorBeat = observedBeat;
             _lastCorrectedBeat = observedBeat;
+            _lastCorrectedDispatchTimestamp = 0;
             _correctedPerformanceClock.Restart();
         }
 
-        var tempoScale = Math.Max(0.01, _viewModel.EffectiveLessonTempoBpm / Math.Max(1d, score.TempoBpm));
+        var now = Stopwatch.GetTimestamp();
+        if (_lastCorrectedDispatchTimestamp != 0 &&
+            Stopwatch.GetElapsedTime(_lastCorrectedDispatchTimestamp, now) < CorrectedClockDispatchInterval)
+            return;
+
+        var tempoScale = Math.Max(
+            0.01,
+            _viewModel.EffectiveLessonTempoBpm / Math.Max(1d, score.TempoBpm));
         var anchorSeconds = score.SecondsAtPerformanceBeat(_correctedClockAnchorBeat, tempoScale);
         var targetBeat = score.PerformanceBeatAtSeconds(
             anchorSeconds + _correctedPerformanceClock.Elapsed.TotalSeconds,
@@ -132,8 +147,13 @@ public partial class MainWindow
         targetBeat = Math.Clamp(targetBeat, _correctedClockAnchorBeat, rangeEnd);
         targetBeat = Math.Max(_lastCorrectedBeat, targetBeat);
 
-        _viewModel.CursorBeat = targetBeat;
+        var reachedEnd = targetBeat >= rangeEnd - 0.0001;
+        if (!reachedEnd && Math.Abs(targetBeat - _lastCorrectedBeat) < 0.001)
+            return;
+
+        _lastCorrectedDispatchTimestamp = now;
         _lastCorrectedBeat = targetBeat;
+        _viewModel.CursorBeat = targetBeat;
     }
 
     private double SelectedPerformanceRangeEnd(ScoreDocument score)
@@ -258,9 +278,12 @@ public partial class MainWindow
             bpm = change.Bpm
         }));
 
-        var totalBeats = score.TotalPerformanceBeats.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var initialBpm = score.TempoBpm.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var cursorBeat = _viewModel.CursorBeat.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var totalBeats = score.TotalPerformanceBeats.ToString(
+            System.Globalization.CultureInfo.InvariantCulture);
+        var initialBpm = score.TempoBpm.ToString(
+            System.Globalization.CultureInfo.InvariantCulture);
+        var cursorBeat = _viewModel.CursorBeat.ToString(
+            System.Globalization.CultureInfo.InvariantCulture);
         var script =
             $"window.CadenzaNotation?.setPerformanceTimeline({timeline});" +
             $"window.CadenzaNotation?.setPerformanceClock?.({tempoChanges},{totalBeats},{initialBpm});" +
