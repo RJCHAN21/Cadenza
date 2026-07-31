@@ -20,7 +20,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate notation runtime JavaScript
-        run: node --check PianoPractice.Desktop/Assets/Verovio/cadenza-runtime-patch.js
+        shell: pwsh
+        run: |
+          node --check PianoPractice.Desktop/Assets/Verovio/cadenza-runtime-patch.js
+          node --check PianoPractice.Desktop/Assets/Verovio/cadenza-runtime-edge-patch.js
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v4
@@ -33,5 +36,5 @@ jobs:
       - name: Build desktop project
         run: dotnet build PianoPractice.Desktop/PianoPractice.Desktop.csproj --configuration Release --no-restore
 
-      - name: Run deterministic MusicXML tests
+      - name: Run deterministic MusicXML and audio tests
         run: dotnet run --project PianoPractice.ParserSmoke/PianoPractice.ParserSmoke.csproj --configuration Release
