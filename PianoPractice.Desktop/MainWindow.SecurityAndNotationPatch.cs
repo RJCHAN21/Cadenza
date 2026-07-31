@@ -191,7 +191,7 @@ public partial class MainWindow
         if (!IsTrustedRendererUri(args.Source))
             return;
 
-        await NotationWebView_WebMessageReceived(sender, args);
+        NotationWebView_WebMessageReceived(sender, args);
 
         try
         {
