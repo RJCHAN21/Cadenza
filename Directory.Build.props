@@ -1,5 +1,14 @@
 <Project>
   <PropertyGroup>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!--
+      Historical bin/obj output was committed before these folders were ignored.
+      Keep all new compiler output in one clean, untracked location so WPF markup
+      generation never consumes stale MainWindow.g.cs or *_Content.g.cs metadata.
+      The project-name segment also prevents project-reference output collisions.
+    -->
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)artifacts\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)artifacts\bin\$(MSBuildProjectName)\</BaseOutputPath>
   </PropertyGroup>
 </Project>
