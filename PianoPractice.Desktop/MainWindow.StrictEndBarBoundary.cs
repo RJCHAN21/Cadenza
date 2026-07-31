@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Threading;
+using PianoPractice.Desktop.Models;
 using PianoPractice.Desktop.Services;
 
 namespace PianoPractice.Desktop;
