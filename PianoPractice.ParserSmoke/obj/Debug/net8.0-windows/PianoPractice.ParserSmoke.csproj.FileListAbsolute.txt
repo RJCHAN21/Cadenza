@@ -3,6 +3,10 @@ D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\r
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\runtimes\win-arm64\native\WebView2Loader.dll
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\PianoPractice.Desktop.deps.json
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\PianoPractice.Desktop.runtimeconfig.json
+D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\PianoPractice.Desktop.exe
+D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\PianoPractice.ParserSmoke.exe
+D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\Assets\Verovio\cadenza-runtime-edge-patch.js
+D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\Assets\Verovio\cadenza-runtime-patch.js
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\Assets\Verovio\COPYING.LESSER.txt
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\Assets\Verovio\COPYING.txt
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\Assets\Verovio\player.html
@@ -10,8 +14,6 @@ D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\A
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\Assets\Bravura\Bravura.otf
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\Assets\Bravura\bravura_metadata.json
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\Assets\Bravura\LICENSE.txt
-D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\PianoPractice.Desktop.exe
-D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\PianoPractice.ParserSmoke.exe
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\PianoPractice.ParserSmoke.deps.json
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\PianoPractice.ParserSmoke.runtimeconfig.json
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\bin\Debug\net8.0-windows\PianoPractice.ParserSmoke.dll
@@ -29,10 +31,10 @@ D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\P
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\PianoPractice.ParserSmoke.AssemblyInfoInputs.cache
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\PianoPractice.ParserSmoke.AssemblyInfo.cs
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\PianoPractice.ParserSmoke.csproj.CoreCompileInputs.cache
+D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\PianoPractice.ParserSmoke.sourcelink.json
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\PianoPra.A82BB8F5.Up2Date
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\PianoPractice.ParserSmoke.dll
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\refint\PianoPractice.ParserSmoke.dll
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\PianoPractice.ParserSmoke.pdb
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\PianoPractice.ParserSmoke.genruntimeconfig.cache
 D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\ref\PianoPractice.ParserSmoke.dll
-D:\Apps\Cadenza-development\PianoPractice.ParserSmoke\obj\Debug\net8.0-windows\PianoPractice.ParserSmoke.sourcelink.json

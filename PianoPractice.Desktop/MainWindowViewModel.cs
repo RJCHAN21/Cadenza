@@ -3269,6 +3269,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public void ShowDashboard()
     {
+        // A hold gesture started inside the player must not complete after
+        // navigation back to the dashboard.
+        CancelRemoteHold();
+        _prePracticeMatchedNotes.Clear();
         if (IsLessonActive) StopLesson();
         StopPreview();
         IsPlayerVisible = false;
@@ -4102,6 +4106,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         if (IsMidiLearningActive)
         {
             ApplyLearnedMidiNote(midiNoteNumber);
+            return;
+        }
+
+        // Dashboard MIDI input may still update connection diagnostics through
+        // RawMessage, but it must never dispatch score commands or sound lessons.
+        if (!IsPlayerVisible)
+        {
+            CancelRemoteHold();
+            _prePracticeMatchedNotes.Clear();
+            InputActivityLabel =
+                $"MIDI note ignored while dashboard is active: {MidiNoteFormatter.Format(midiNoteNumber)}";
             return;
         }
 

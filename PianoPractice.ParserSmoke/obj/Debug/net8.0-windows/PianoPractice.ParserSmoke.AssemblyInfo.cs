@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PianoPractice.ParserSmoke")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+535363413a411cd7e29a9affbec3b920845c8013")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+fe79a5fbb0e6c3b1ec3dbc902367e8ff4c8f8548")]
 [assembly: System.Reflection.AssemblyProductAttribute("PianoPractice.ParserSmoke")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PianoPractice.ParserSmoke")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

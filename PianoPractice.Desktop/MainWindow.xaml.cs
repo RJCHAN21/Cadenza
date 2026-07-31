@@ -626,6 +626,10 @@ public partial class MainWindow : Window
             }
         }
 
+        // Score transport and piano shortcuts are scoped to the player workspace.
+        // Shortcut learning remains available from Settings because it is handled above.
+        if (!_viewModel.IsPlayerVisible) return;
+
         var keyStr = e.Key.ToString();
         var keyListen = string.IsNullOrWhiteSpace(_viewModel.KeyShortcutListen) ? "F4" : _viewModel.KeyShortcutListen;
         var keyPractice = string.IsNullOrWhiteSpace(_viewModel.KeyShortcutStartPractice) ? "F5" : _viewModel.KeyShortcutStartPractice;
@@ -746,6 +750,7 @@ public partial class MainWindow : Window
     private void Window_PreviewKeyUp(object sender, KeyEventArgs e)
     {
         if (IsTextInputFocused(e)) return;
+        if (!_viewModel.IsPlayerVisible) return;
 
         if (_viewModel.UseKeyboardSimulation && ComputerKeyboardPianoMap.MidiNotes.TryGetValue(e.Key, out var midiNote))
         {

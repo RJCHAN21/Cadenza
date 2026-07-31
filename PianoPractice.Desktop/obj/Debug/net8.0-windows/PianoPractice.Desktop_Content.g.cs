@@ -7,6 +7,8 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
+[assembly: System.Windows.Resources.AssemblyAssociatedContentFileAttribute("assets/verovio/cadenza-runtime-edge-patch.js")]
+[assembly: System.Windows.Resources.AssemblyAssociatedContentFileAttribute("assets/verovio/cadenza-runtime-patch.js")]
 [assembly: System.Windows.Resources.AssemblyAssociatedContentFileAttribute("assets/verovio/copying.lesser.txt")]
 [assembly: System.Windows.Resources.AssemblyAssociatedContentFileAttribute("assets/verovio/copying.txt")]
 [assembly: System.Windows.Resources.AssemblyAssociatedContentFileAttribute("assets/verovio/player.html")]
