@@ -49,10 +49,22 @@ public static class PlaybackSelectionBoundaryResolver
             startOccurrence.PerformanceStartBeat,
             cursorBeat ?? startOccurrence.PerformanceStartBeat);
 
-        var endOccurrence = occurrences.FirstOrDefault(occurrence =>
-            occurrence.SourceMeasureIndex + 1 == endBar &&
-            occurrence.PerformanceStartBeat >= startOccurrence.PerformanceStartBeat - BeatEpsilon &&
-            occurrence.PerformanceStartBeat + occurrence.DurationBeats > searchBeat + BeatEpsilon);
+        var matchingEndOccurrences = occurrences
+            .Where(occurrence =>
+                occurrence.SourceMeasureIndex + 1 == endBar &&
+                occurrence.PerformanceStartBeat >= startOccurrence.PerformanceStartBeat - BeatEpsilon &&
+                occurrence.PerformanceStartBeat + occurrence.DurationBeats > searchBeat + BeatEpsilon)
+            .OrderBy(occurrence => occurrence.PerformanceStartBeat)
+            .ThenBy(occurrence => occurrence.OccurrenceIndex)
+            .ToArray();
+
+        // A focused range ending before the true final written bar is a hard user boundary:
+        // stop on the first reachable completion of that bar. When the selected end is the
+        // score's actual final bar, preserve the score's own terminal repeat/navigation and
+        // stop only after the last performed occurrence of that final bar.
+        var endOccurrence = endBar == maxBar
+            ? matchingEndOccurrences.LastOrDefault()
+            : matchingEndOccurrences.FirstOrDefault();
 
         if (endOccurrence is null)
         {
