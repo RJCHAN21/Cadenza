@@ -1,23 +1,24 @@
 (() => {
   "use strict";
 
-  const playheadResponseSeconds = 0.11;
-  const playheadMaximumSpeedPxPerSecond = 1100;
-  const playheadMaximumAccelerationPxPerSecondSquared = 8200;
-  const transformResponseSeconds = 0.13;
-  const transformMaximumSpeedPxPerSecond = 1350;
-  const transformMaximumAccelerationPxPerSecondSquared = 9200;
-  const verticalSystemJumpThresholdPx = 34;
-  const backwardGeometrySnapThresholdPx = 72;
+  const playheadSmoothTimeSeconds = 0.085;
+  const playheadMaximumSpeedPxPerSecond = 2200;
+  const playheadMaximumAccelerationPxPerSecondSquared = 18000;
+  const playheadOpacitySmoothTimeSeconds = 0.045;
+  const sheetSmoothTimeSeconds = 0.12;
+  const sheetMaximumSpeedPxPerSecond = 1500;
+  const sheetMaximumAccelerationPxPerSecondSquared = 10000;
+  const verticalRelocationThresholdPx = 36;
+  const backwardRelocationThresholdPx = 72;
 
   function install() {
     const api = window.CadenzaNotation;
     const stageElement = document.getElementById("stage");
     if (!api?.setCursorBeat || !stageElement ||
-        typeof setPixelStyle !== "function" ||
+        typeof playhead === "undefined" || !playhead ||
+        typeof notation === "undefined" || !notation ||
         typeof applyContinuousTransform !== "function" ||
-        typeof playhead === "undefined" ||
-        typeof notation === "undefined" ||
+        typeof setPixelStyle !== "function" ||
         typeof continuousOffsetX === "undefined" ||
         typeof continuousOffsetY === "undefined") {
       setTimeout(install, 10);
@@ -36,39 +37,79 @@
     const originalSetPixelStyle = setPixelStyle;
     const originalApplyContinuousTransform = applyContinuousTransform;
 
-    let visualFrameHandle = 0;
-    let visualLastFrameTimestamp = 0;
-    let visualInitialized = false;
-    let transformInitialized = false;
+    const proxy = createVisualPlayhead(playhead);
+    if (!proxy) return;
 
-    let transformTargetX = 0;
-    let transformTargetY = 0;
-    let transformRenderedX = 0;
-    let transformRenderedY = 0;
-    let transformVelocityX = 0;
-    let transformVelocityY = 0;
+    let frameHandle = 0;
+    let lastFrameTimestamp = 0;
+    let initialized = false;
+    let relocationPhase = "none";
 
-    let playheadTargetLeft = 0;
-    let playheadTargetTop = 0;
-    let playheadTargetHeight = 0;
-    let playheadRenderedLeft = 0;
-    let playheadRenderedTop = 0;
-    let playheadRenderedHeight = 0;
-    let playheadVelocityLeft = 0;
-    let playheadVelocityTop = 0;
-    let playheadVelocityHeight = 0;
-    let playheadSnapPending = false;
+    let targetX = 0;
+    let targetY = 0;
+    let targetHeight = 0;
+    let targetOpacity = 0;
+    let currentX = 0;
+    let currentY = 0;
+    let currentHeight = 0;
+    let currentOpacity = 0;
+    let velocityX = 0;
+    let velocityY = 0;
+    let velocityHeight = 0;
+    let velocityOpacity = 0;
 
-    let visualFrameSamples = 0;
-    let continuousTransformFrames = 0;
-    let pageModeVisualFrames = 0;
-    let smoothedPlayheadTargets = 0;
-    let geometrySnapCount = 0;
-    let maximumObservedPlayheadStepPx = 0;
-    let maximumObservedTransformStepPx = 0;
-    let previousAppliedPlayheadLeft = null;
-    let previousAppliedTransformX = null;
-    let visualSnapAppliedThisFrame = false;
+    let sheetInitialized = false;
+    let sheetTargetX = 0;
+    let sheetTargetY = 0;
+    let sheetCurrentX = 0;
+    let sheetCurrentY = 0;
+    let sheetVelocityX = 0;
+    let sheetVelocityY = 0;
+
+    let visualFrames = 0;
+    let pageModeFrames = 0;
+    let continuousModeFrames = 0;
+    let relocationFadeCount = 0;
+    let directWriteObservations = 0;
+    let maximumVisiblePlayheadStepPx = 0;
+    let previousVisibleX = null;
+
+    function createVisualPlayhead(source) {
+      const parent = source.parentElement;
+      if (!parent || typeof source.cloneNode !== "function") return null;
+
+      const visual = source.cloneNode(true);
+      visual.removeAttribute?.("id");
+      visual.setAttribute?.("aria-hidden", "true");
+      visual.setAttribute?.("data-cadenza-comfort-playhead", "true");
+      visual.classList?.add?.("cadenza-comfort-playhead");
+
+      const computed = typeof getComputedStyle === "function" ? getComputedStyle(source) : null;
+      const copiedProperties = [
+        "position", "width", "min-width", "max-width", "background",
+        "background-color", "border", "border-radius", "box-shadow",
+        "filter", "mix-blend-mode", "z-index"
+      ];
+      for (const property of copiedProperties) {
+        const value = computed?.getPropertyValue?.(property);
+        if (value) visual.style.setProperty(property, value);
+      }
+
+      visual.style.setProperty("left", "0px", "important");
+      visual.style.setProperty("top", "0px", "important");
+      visual.style.setProperty("margin", "0", "important");
+      visual.style.setProperty("pointer-events", "none", "important");
+      visual.style.setProperty("transition", "none", "important");
+      visual.style.setProperty("transform-origin", "0 0", "important");
+      visual.style.setProperty("will-change", "transform,height,opacity", "important");
+      visual.style.setProperty("visibility", "visible", "important");
+      visual.style.setProperty("opacity", "0", "important");
+
+      parent.appendChild(visual);
+      source.setAttribute?.("aria-hidden", "true");
+      source.style.setProperty("visibility", "hidden", "important");
+      return visual;
+    }
 
     function isContinuousMode() {
       return stageElement.classList.contains("continuous-mode");
@@ -78,19 +119,30 @@
       return typeof timelineRunning === "undefined" || Boolean(timelineRunning);
     }
 
-    function pixelValue(value, fallback = 0) {
-      const parsed = Number.parseFloat(String(value ?? ""));
-      return Number.isFinite(parsed) ? parsed : fallback;
+    function numericStyle(element, property, fallback = 0) {
+      const inlineValue = Number.parseFloat(String(element.style?.[property] ?? ""));
+      if (Number.isFinite(inlineValue)) return inlineValue;
+      if (typeof getComputedStyle === "function") {
+        const computedValue = Number.parseFloat(getComputedStyle(element).getPropertyValue(property));
+        if (Number.isFinite(computedValue)) return computedValue;
+      }
+      return fallback;
     }
 
-    function cancelVisualFrame() {
-      if (visualFrameHandle) cancelAnimationFrame(visualFrameHandle);
-      visualFrameHandle = 0;
-      visualLastFrameTimestamp = 0;
-    }
-
-    function scheduleVisualFrame() {
-      if (!visualFrameHandle) visualFrameHandle = requestAnimationFrame(renderVisualFrame);
+    function readAuthoritativeGeometry() {
+      const computed = typeof getComputedStyle === "function" ? getComputedStyle(playhead) : null;
+      const inlineOpacity = Number.parseFloat(String(playhead.style?.opacity ?? ""));
+      const computedOpacity = Number.parseFloat(computed?.getPropertyValue?.("opacity") ?? "1");
+      const display = computed?.getPropertyValue?.("display") || playhead.style?.display || "block";
+      return {
+        x: numericStyle(playhead, "left", targetX),
+        y: numericStyle(playhead, "top", targetY),
+        height: Math.max(1, numericStyle(playhead, "height", targetHeight || 1)),
+        opacity: display === "none"
+          ? 0
+          : Math.max(0, Math.min(1, Number.isFinite(inlineOpacity) ? inlineOpacity :
+              (Number.isFinite(computedOpacity) ? computedOpacity : 1)))
+      };
     }
 
     function moveTowards(current, target, maximumDelta) {
@@ -99,304 +151,294 @@
       return current + Math.sign(delta) * maximumDelta;
     }
 
-    function advanceAxis(
-      current,
-      target,
-      velocity,
-      deltaSeconds,
-      responseSeconds,
-      maximumSpeed,
-      maximumAcceleration,
-      positionEpsilon = 0.02) {
-      const error = target - current;
-      if (Math.abs(error) <= positionEpsilon && Math.abs(velocity) <= 0.5)
-        return { position: target, velocity: 0 };
+    function smoothDamp(current, target, velocity, smoothTime, maximumSpeed, deltaSeconds) {
+      const safeSmoothTime = Math.max(0.0001, smoothTime);
+      const omega = 2 / safeSmoothTime;
+      const x = omega * deltaSeconds;
+      const exponential = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+      let change = current - target;
+      const originalTarget = target;
+      const maximumChange = maximumSpeed * safeSmoothTime;
+      change = Math.max(-maximumChange, Math.min(maximumChange, change));
+      target = current - change;
+      const temporary = (velocity + omega * change) * deltaSeconds;
+      let nextVelocity = (velocity - omega * temporary) * exponential;
+      let output = target + (change + temporary) * exponential;
 
-      const desiredVelocity = Math.max(
-        -maximumSpeed,
-        Math.min(maximumSpeed, error / Math.max(0.01, responseSeconds)));
-      const nextVelocity = moveTowards(
-        velocity,
-        desiredVelocity,
-        maximumAcceleration * deltaSeconds);
-      const nextPosition = current + nextVelocity * deltaSeconds;
-
-      if ((target - current) * (target - nextPosition) <= 0)
-        return { position: target, velocity: 0 };
-
-      return { position: nextPosition, velocity: nextVelocity };
+      if ((originalTarget - current > 0) === (output > originalTarget)) {
+        output = originalTarget;
+        nextVelocity = 0;
+      }
+      return { position: output, velocity: nextVelocity };
     }
 
-    function applyRenderedTransform() {
+    function applyVisualPlayhead() {
+      proxy.style.setProperty(
+        "transform",
+        `translate3d(${currentX.toFixed(3)}px, ${currentY.toFixed(3)}px, 0)`,
+        "important");
+      proxy.style.setProperty("height", `${currentHeight.toFixed(3)}px`, "important");
+      proxy.style.setProperty("opacity", currentOpacity.toFixed(4), "important");
+
+      if (currentOpacity > 0.08 && previousVisibleX != null) {
+        maximumVisiblePlayheadStepPx = Math.max(
+          maximumVisiblePlayheadStepPx,
+          Math.abs(currentX - previousVisibleX));
+      }
+      if (currentOpacity > 0.08) previousVisibleX = currentX;
+    }
+
+    function applySheetTransform() {
       const zoom = Math.max(0.01, Number(typeof userZoom === "undefined" ? 1 : userZoom) || 1);
       const transform =
-        `translate3d(${transformRenderedX.toFixed(3)}px, ${transformRenderedY.toFixed(3)}px, 0) scale(${zoom})`;
+        `translate3d(${sheetCurrentX.toFixed(3)}px, ${sheetCurrentY.toFixed(3)}px, 0) scale(${zoom})`;
       notation.style.transform = transform;
-      if (typeof practiceWrongNote !== "undefined" && practiceWrongNote) {
+      if (typeof practiceWrongNote !== "undefined" && practiceWrongNote)
         practiceWrongNote.style.transform = isContinuousMode() ? transform : "";
+    }
+
+    function synchronizeImmediately() {
+      const geometry = readAuthoritativeGeometry();
+      targetX = currentX = geometry.x;
+      targetY = currentY = geometry.y;
+      targetHeight = currentHeight = geometry.height;
+      targetOpacity = currentOpacity = geometry.opacity;
+      velocityX = velocityY = velocityHeight = velocityOpacity = 0;
+      relocationPhase = "none";
+      initialized = true;
+      applyVisualPlayhead();
+    }
+
+    function geometryRequiresRelocation(next) {
+      const viewportWidth = Math.max(1, Number(stageElement.clientWidth) || 1);
+      return Math.abs(next.y - currentY) >= verticalRelocationThresholdPx ||
+        next.x < currentX - backwardRelocationThresholdPx ||
+        Math.abs(next.x - currentX) >= Math.max(260, viewportWidth * 0.58);
+    }
+
+    function updateTargetFromAuthoritativeSource(allowRelocation = true) {
+      const next = readAuthoritativeGeometry();
+      if (!initialized) {
+        targetX = currentX = next.x;
+        targetY = currentY = next.y;
+        targetHeight = currentHeight = next.height;
+        targetOpacity = currentOpacity = next.opacity;
+        initialized = true;
+        applyVisualPlayhead();
+        return;
       }
-      if (previousAppliedTransformX != null) {
-        maximumObservedTransformStepPx = Math.max(
-          maximumObservedTransformStepPx,
-          Math.abs(transformRenderedX - previousAppliedTransformX));
+
+      if (allowRelocation && relocationPhase === "none" && timelineIsRunning() &&
+          geometryRequiresRelocation(next)) {
+        relocationPhase = "fadeOut";
+        relocationFadeCount++;
       }
-      previousAppliedTransformX = transformRenderedX;
+
+      targetX = next.x;
+      targetY = next.y;
+      targetHeight = next.height;
+      targetOpacity = next.opacity;
     }
 
-    function applyRenderedPlayhead() {
-      originalSetPixelStyle(playhead, "left", playheadRenderedLeft);
-      originalSetPixelStyle(playhead, "top", playheadRenderedTop);
-      originalSetPixelStyle(playhead, "height", playheadRenderedHeight);
-      if (!visualSnapAppliedThisFrame && previousAppliedPlayheadLeft != null) {
-        maximumObservedPlayheadStepPx = Math.max(
-          maximumObservedPlayheadStepPx,
-          Math.abs(playheadRenderedLeft - previousAppliedPlayheadLeft));
-      }
-      previousAppliedPlayheadLeft = playheadRenderedLeft;
+    function scheduleFrame() {
+      if (!frameHandle) frameHandle = requestAnimationFrame(renderFrame);
     }
 
-    function initializeTransformState() {
-      transformTargetX = Number(continuousOffsetX) || 0;
-      transformTargetY = Number(continuousOffsetY) || 0;
-      transformRenderedX = transformTargetX;
-      transformRenderedY = transformTargetY;
-      transformVelocityX = 0;
-      transformVelocityY = 0;
-      transformInitialized = true;
-      previousAppliedTransformX = transformRenderedX;
-    }
-
-    function initializePlayheadState() {
-      playheadTargetLeft = pixelValue(playhead.style.left);
-      playheadTargetTop = pixelValue(playhead.style.top);
-      playheadTargetHeight = pixelValue(playhead.style.height);
-      playheadRenderedLeft = playheadTargetLeft;
-      playheadRenderedTop = playheadTargetTop;
-      playheadRenderedHeight = playheadTargetHeight;
-      playheadVelocityLeft = 0;
-      playheadVelocityTop = 0;
-      playheadVelocityHeight = 0;
-      playheadSnapPending = false;
-      visualInitialized = true;
-      previousAppliedPlayheadLeft = playheadRenderedLeft;
-    }
-
-    function snapVisualState() {
-      cancelVisualFrame();
-      initializeTransformState();
-      initializePlayheadState();
-      if (isContinuousMode()) applyRenderedTransform();
-      applyRenderedPlayhead();
-    }
-
-    function renderVisualFrame(timestamp) {
-      visualFrameHandle = 0;
-      if (!visualInitialized) initializePlayheadState();
-      if (isContinuousMode() && !transformInitialized) initializeTransformState();
-
-      const frameGapMilliseconds = visualLastFrameTimestamp > 0
-        ? Math.max(1, Math.min(34, timestamp - visualLastFrameTimestamp))
+    function renderFrame(timestamp) {
+      frameHandle = 0;
+      const frameGapMilliseconds = lastFrameTimestamp > 0
+        ? Math.max(1, Math.min(34, timestamp - lastFrameTimestamp))
         : 16.667;
-      visualLastFrameTimestamp = timestamp;
+      lastFrameTimestamp = timestamp;
       const deltaSeconds = frameGapMilliseconds / 1000;
-      visualFrameSamples++;
-      visualSnapAppliedThisFrame = false;
-      if (isContinuousMode()) continuousTransformFrames++;
-      else pageModeVisualFrames++;
+      visualFrames++;
+      if (isContinuousMode()) continuousModeFrames++;
+      else pageModeFrames++;
 
-      if (isContinuousMode() && transformInitialized) {
-        const x = advanceAxis(
-          transformRenderedX,
-          transformTargetX,
-          transformVelocityX,
-          deltaSeconds,
-          transformResponseSeconds,
-          transformMaximumSpeedPxPerSecond,
-          transformMaximumAccelerationPxPerSecondSquared);
-        transformRenderedX = x.position;
-        transformVelocityX = x.velocity;
+      updateTargetFromAuthoritativeSource(true);
 
-        const y = advanceAxis(
-          transformRenderedY,
-          transformTargetY,
-          transformVelocityY,
-          deltaSeconds,
+      if (isContinuousMode() && sheetInitialized) {
+        const sheetX = smoothDamp(
+          sheetCurrentX,
+          sheetTargetX,
+          sheetVelocityX,
+          sheetSmoothTimeSeconds,
+          sheetMaximumSpeedPxPerSecond,
+          deltaSeconds);
+        sheetCurrentX = sheetX.position;
+        sheetVelocityX = moveTowards(
+          sheetVelocityX,
+          sheetX.velocity,
+          sheetMaximumAccelerationPxPerSecondSquared * deltaSeconds);
+
+        const sheetY = smoothDamp(
+          sheetCurrentY,
+          sheetTargetY,
+          sheetVelocityY,
           0.09,
-          700,
-          6400);
-        transformRenderedY = y.position;
-        transformVelocityY = y.velocity;
-        applyRenderedTransform();
+          900,
+          deltaSeconds);
+        sheetCurrentY = sheetY.position;
+        sheetVelocityY = sheetY.velocity;
+        applySheetTransform();
       }
 
-      if (playheadSnapPending) {
-        playheadRenderedLeft = playheadTargetLeft;
-        playheadRenderedTop = playheadTargetTop;
-        playheadRenderedHeight = playheadTargetHeight;
-        playheadVelocityLeft = 0;
-        playheadVelocityTop = 0;
-        playheadVelocityHeight = 0;
-        playheadSnapPending = false;
-        visualSnapAppliedThisFrame = true;
+      if (relocationPhase === "fadeOut") {
+        const opacity = smoothDamp(
+          currentOpacity,
+          0,
+          velocityOpacity,
+          0.035,
+          20,
+          deltaSeconds);
+        currentOpacity = opacity.position;
+        velocityOpacity = opacity.velocity;
+        if (currentOpacity <= 0.025) {
+          currentX = targetX;
+          currentY = targetY;
+          currentHeight = targetHeight;
+          velocityX = velocityY = velocityHeight = 0;
+          relocationPhase = "fadeIn";
+          previousVisibleX = null;
+        }
       } else {
-        const left = advanceAxis(
-          playheadRenderedLeft,
-          playheadTargetLeft,
-          playheadVelocityLeft,
-          deltaSeconds,
-          playheadResponseSeconds,
+        const x = smoothDamp(
+          currentX,
+          targetX,
+          velocityX,
+          playheadSmoothTimeSeconds,
           playheadMaximumSpeedPxPerSecond,
-          playheadMaximumAccelerationPxPerSecondSquared);
-        playheadRenderedLeft = left.position;
-        playheadVelocityLeft = left.velocity;
+          deltaSeconds);
+        currentX = x.position;
+        velocityX = moveTowards(
+          velocityX,
+          x.velocity,
+          playheadMaximumAccelerationPxPerSecondSquared * deltaSeconds);
 
-        const top = advanceAxis(
-          playheadRenderedTop,
-          playheadTargetTop,
-          playheadVelocityTop,
-          deltaSeconds,
-          0.085,
-          650,
-          6200);
-        playheadRenderedTop = top.position;
-        playheadVelocityTop = top.velocity;
+        const y = smoothDamp(
+          currentY,
+          targetY,
+          velocityY,
+          0.065,
+          1100,
+          deltaSeconds);
+        currentY = y.position;
+        velocityY = y.velocity;
 
-        const height = advanceAxis(
-          playheadRenderedHeight,
-          playheadTargetHeight,
-          playheadVelocityHeight,
-          deltaSeconds,
-          0.09,
-          720,
-          6600);
-        playheadRenderedHeight = height.position;
-        playheadVelocityHeight = height.velocity;
+        const height = smoothDamp(
+          currentHeight,
+          targetHeight,
+          velocityHeight,
+          0.075,
+          1200,
+          deltaSeconds);
+        currentHeight = height.position;
+        velocityHeight = height.velocity;
+
+        const opacityTarget = relocationPhase === "fadeIn" ? targetOpacity : targetOpacity;
+        const opacity = smoothDamp(
+          currentOpacity,
+          opacityTarget,
+          velocityOpacity,
+          playheadOpacitySmoothTimeSeconds,
+          20,
+          deltaSeconds);
+        currentOpacity = opacity.position;
+        velocityOpacity = opacity.velocity;
+
+        if (relocationPhase === "fadeIn" &&
+            Math.abs(currentOpacity - targetOpacity) < 0.01)
+          relocationPhase = "none";
       }
 
-      applyRenderedPlayhead();
+      applyVisualPlayhead();
 
-      const transformPending = isContinuousMode() &&
-        (Math.abs(transformTargetX - transformRenderedX) > 0.02 ||
-         Math.abs(transformTargetY - transformRenderedY) > 0.02 ||
-         Math.abs(transformVelocityX) > 0.5 ||
-         Math.abs(transformVelocityY) > 0.5);
-      const playheadPending =
-        Math.abs(playheadTargetLeft - playheadRenderedLeft) > 0.02 ||
-        Math.abs(playheadTargetTop - playheadRenderedTop) > 0.02 ||
-        Math.abs(playheadTargetHeight - playheadRenderedHeight) > 0.02 ||
-        Math.abs(playheadVelocityLeft) > 0.5 ||
-        Math.abs(playheadVelocityTop) > 0.5 ||
-        Math.abs(playheadVelocityHeight) > 0.5;
-      if (transformPending || playheadPending)
-        scheduleVisualFrame();
+      const playheadPending = relocationPhase !== "none" ||
+        Math.abs(targetX - currentX) > 0.015 ||
+        Math.abs(targetY - currentY) > 0.015 ||
+        Math.abs(targetHeight - currentHeight) > 0.015 ||
+        Math.abs(targetOpacity - currentOpacity) > 0.005 ||
+        Math.abs(velocityX) > 0.3 ||
+        Math.abs(velocityY) > 0.3 ||
+        Math.abs(velocityHeight) > 0.3 ||
+        Math.abs(velocityOpacity) > 0.01;
+      const sheetPending = isContinuousMode() && sheetInitialized &&
+        (Math.abs(sheetTargetX - sheetCurrentX) > 0.015 ||
+         Math.abs(sheetTargetY - sheetCurrentY) > 0.015 ||
+         Math.abs(sheetVelocityX) > 0.3 ||
+         Math.abs(sheetVelocityY) > 0.3);
+      if (playheadPending || sheetPending) scheduleFrame();
+      else lastFrameTimestamp = 0;
     }
-
-    api.setCursorBeat = function comfortSetCursorBeat(beat, reset = false) {
-      const requestedBeat = Math.max(0, Number(beat) || 0);
-      if (reset) {
-        playheadSnapPending = true;
-        transformVelocityX = 0;
-        transformVelocityY = 0;
-      }
-      return originalSetCursorBeat(requestedBeat, reset);
-    };
 
     setPixelStyle = function comfortSetPixelStyle(element, property, value) {
-      if (element !== playhead ||
-          (property !== "left" && property !== "top" && property !== "height")) {
-        return originalSetPixelStyle(element, property, value);
+      const result = originalSetPixelStyle(element, property, value);
+      if (element === playhead &&
+          (property === "left" || property === "top" || property === "height")) {
+        updateTargetFromAuthoritativeSource(true);
+        scheduleFrame();
       }
-
-      const numericValue = Number(value);
-      if (!Number.isFinite(numericValue))
-        return originalSetPixelStyle(element, property, value);
-
-      if (!visualInitialized) initializePlayheadState();
-
-      const previousLeftTarget = playheadTargetLeft;
-      const previousTopTarget = playheadTargetTop;
-      if (property === "left") playheadTargetLeft = numericValue;
-      else if (property === "top") playheadTargetTop = numericValue;
-      else playheadTargetHeight = numericValue;
-
-      const verticalJump = property === "top" &&
-        Math.abs(numericValue - playheadRenderedTop) >= verticalSystemJumpThresholdPx;
-      const backwardJump = property === "left" &&
-        numericValue < playheadRenderedLeft - backwardGeometrySnapThresholdPx;
-      const viewportWidth = Math.max(1, Number(stageElement.clientWidth) || 1);
-      const hugeHorizontalJump = property === "left" &&
-        Math.abs(numericValue - playheadRenderedLeft) >= Math.max(240, viewportWidth * 0.55);
-      const shouldSnap = !timelineIsRunning() || verticalJump || backwardJump || hugeHorizontalJump;
-
-      if (shouldSnap) {
-        playheadSnapPending = true;
-        geometrySnapCount++;
-      } else if ((property === "left" && Math.abs(numericValue - previousLeftTarget) > 0.5) ||
-                 (property === "top" && Math.abs(numericValue - previousTopTarget) > 0.5)) {
-        smoothedPlayheadTargets++;
-      }
-
-      scheduleVisualFrame();
-      return undefined;
+      return result;
     };
 
     applyContinuousTransform = function comfortApplyContinuousTransform() {
       if (!isContinuousMode()) {
-        transformInitialized = false;
-        transformVelocityX = 0;
-        transformVelocityY = 0;
+        sheetInitialized = false;
+        sheetVelocityX = sheetVelocityY = 0;
         return originalApplyContinuousTransform();
       }
 
       const nextX = Number(continuousOffsetX) || 0;
       const nextY = Number(continuousOffsetY) || 0;
-      if (!transformInitialized) {
-        transformTargetX = nextX;
-        transformTargetY = nextY;
-        transformRenderedX = nextX;
-        transformRenderedY = nextY;
-        transformVelocityX = 0;
-        transformVelocityY = 0;
-        transformInitialized = true;
-        applyRenderedTransform();
+      if (!sheetInitialized) {
+        sheetTargetX = sheetCurrentX = nextX;
+        sheetTargetY = sheetCurrentY = nextY;
+        sheetVelocityX = sheetVelocityY = 0;
+        sheetInitialized = true;
+        applySheetTransform();
         return;
       }
 
-      transformTargetX = nextX;
-      transformTargetY = nextY;
       const viewportWidth = Math.max(1, Number(stageElement.clientWidth) || 1);
-      const backwardReposition = nextX > transformRenderedX + backwardGeometrySnapThresholdPx;
-      const hugeReposition = Math.abs(nextX - transformRenderedX) >= Math.max(280, viewportWidth * 0.55);
-      if (!timelineIsRunning() || backwardReposition || hugeReposition) {
-        transformRenderedX = transformTargetX;
-        transformRenderedY = transformTargetY;
-        transformVelocityX = 0;
-        transformVelocityY = 0;
-        geometrySnapCount++;
-        applyRenderedTransform();
+      const repeatRewind = nextX > sheetCurrentX + backwardRelocationThresholdPx;
+      const hugeReposition = Math.abs(nextX - sheetCurrentX) >= Math.max(300, viewportWidth * 0.6);
+      sheetTargetX = nextX;
+      sheetTargetY = nextY;
+      if (!timelineIsRunning() || repeatRewind || hugeReposition) {
+        sheetCurrentX = sheetTargetX;
+        sheetCurrentY = sheetTargetY;
+        sheetVelocityX = sheetVelocityY = 0;
+        applySheetTransform();
         return;
       }
+      scheduleFrame();
+    };
 
-      scheduleVisualFrame();
+    api.setCursorBeat = function comfortSetCursorBeat(beat, reset = false) {
+      const result = originalSetCursorBeat(Math.max(0, Number(beat) || 0), reset);
+      updateTargetFromAuthoritativeSource(!reset);
+      if (reset || !timelineIsRunning()) synchronizeImmediately();
+      else scheduleFrame();
+      return result;
     };
 
     function resetMotionState() {
-      cancelVisualFrame();
-      visualInitialized = false;
-      transformInitialized = false;
-      playheadSnapPending = false;
-      playheadVelocityLeft = 0;
-      playheadVelocityTop = 0;
-      playheadVelocityHeight = 0;
-      transformVelocityX = 0;
-      transformVelocityY = 0;
+      if (frameHandle) cancelAnimationFrame(frameHandle);
+      frameHandle = 0;
+      lastFrameTimestamp = 0;
+      initialized = false;
+      sheetInitialized = false;
+      relocationPhase = "none";
+      velocityX = velocityY = velocityHeight = velocityOpacity = 0;
+      sheetVelocityX = sheetVelocityY = 0;
+      previousVisibleX = null;
     }
 
     if (originalSetReadingMode) {
       api.setReadingMode = function comfortSetReadingMode(mode) {
         resetMotionState();
         const result = originalSetReadingMode(mode);
-        setTimeout(snapVisualState, 0);
+        setTimeout(synchronizeImmediately, 0);
         return result;
       };
     }
@@ -404,30 +446,53 @@
     if (originalLoadScore) {
       api.loadScore = function comfortLoadScore(...args) {
         resetMotionState();
-        return originalLoadScore(...args);
+        const result = originalLoadScore(...args);
+        setTimeout(synchronizeImmediately, 0);
+        return result;
       };
     }
 
     if (originalBeginTimeline) {
       api.beginTimeline = function comfortBeginTimeline(...args) {
         resetMotionState();
-        return originalBeginTimeline(...args);
+        const result = originalBeginTimeline(...args);
+        setTimeout(synchronizeImmediately, 0);
+        return result;
       };
     }
 
     if (originalEndTimeline) {
       api.endTimeline = function comfortEndTimeline(...args) {
-        playheadSnapPending = true;
-        scheduleVisualFrame();
-        return originalEndTimeline(...args);
+        const result = originalEndTimeline(...args);
+        updateTargetFromAuthoritativeSource(false);
+        scheduleFrame();
+        return result;
       };
     }
 
     if (originalStopPlayback) {
       api.stopPlayback = function comfortStopPlayback(...args) {
-        cancelVisualFrame();
-        return originalStopPlayback(...args);
+        const result = originalStopPlayback(...args);
+        updateTargetFromAuthoritativeSource(false);
+        scheduleFrame();
+        return result;
       };
+    }
+
+    if (typeof MutationObserver === "function") {
+      const observer = new MutationObserver(() => {
+        if (playhead.style.getPropertyValue("visibility") !== "hidden" ||
+            playhead.style.getPropertyPriority("visibility") !== "important") {
+          playhead.style.setProperty("visibility", "hidden", "important");
+        }
+        directWriteObservations++;
+        updateTargetFromAuthoritativeSource(true);
+        scheduleFrame();
+      });
+      observer.observe(playhead, {
+        attributes: true,
+        attributeFilter: ["style", "class"]
+      });
     }
 
     if (originalGetState) {
@@ -437,26 +502,29 @@
           ...state,
           comfortMotion: {
             installed: true,
+            visualProxyInstalled: Boolean(proxy?.isConnected ?? true),
             continuous: isContinuousMode(),
-            visualFrameSamples,
-            continuousTransformFrames,
-            pageModeVisualFrames,
-            smoothedPlayheadTargets,
-            geometrySnapCount,
-            maximumObservedPlayheadStepPx,
-            maximumObservedTransformStepPx,
-            playheadResponseSeconds,
+            relocationPhase,
+            visualFrames,
+            pageModeFrames,
+            continuousModeFrames,
+            relocationFadeCount,
+            directWriteObservations,
+            maximumVisiblePlayheadStepPx,
+            targetX,
+            currentX,
+            targetY,
+            currentY,
+            playheadSmoothTimeSeconds,
             playheadMaximumSpeedPxPerSecond,
             playheadMaximumAccelerationPxPerSecondSquared,
-            transformResponseSeconds,
-            transformMaximumSpeedPxPerSecond,
-            transformMaximumAccelerationPxPerSecondSquared,
-            verticalSystemJumpThresholdPx,
-            backwardGeometrySnapThresholdPx
+            sheetSmoothTimeSeconds
           }
         };
       };
     }
+
+    synchronizeImmediately();
   }
 
   install();
