@@ -10,5 +10,13 @@
     -->
     <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)artifacts\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
     <BaseOutputPath>$(MSBuildThisFileDirectory)artifacts\bin\$(MSBuildProjectName)\</BaseOutputPath>
+
+    <!--
+      Moving BaseIntermediateOutputPath changes the SDK's automatic exclusions.
+      Explicitly exclude every historical and current generated-output tree so
+      tracked legacy WPF files can never be globbed as ordinary C# or XAML input.
+    -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);$(MSBuildThisFileDirectory)**\bin\**;$(MSBuildThisFileDirectory)**\obj\**;$(MSBuildThisFileDirectory)artifacts\**</DefaultItemExcludes>
+    <DefaultExcludesInProjectFolder>$(DefaultExcludesInProjectFolder);**\bin\**;**\obj\**;**\artifacts\**</DefaultExcludesInProjectFolder>
   </PropertyGroup>
 </Project>
