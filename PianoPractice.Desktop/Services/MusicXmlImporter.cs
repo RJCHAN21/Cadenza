@@ -66,7 +66,11 @@ public sealed class MusicXmlImporter
     {
         var settings = new XmlReaderSettings
         {
-            DtdProcessing = DtdProcessing.Prohibit,
+            // MusicXML commonly includes a public/system DOCTYPE for its schema.
+            // Ignore the declaration so valid scores load, but never parse it or
+            // resolve external resources. Any custom entity reference therefore
+            // remains undeclared and is rejected by the XML parser.
+            DtdProcessing = DtdProcessing.Ignore,
             XmlResolver = null,
             IgnoreComments = true,
             IgnoreProcessingInstructions = true,
