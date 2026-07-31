@@ -80,7 +80,8 @@ public partial class MainWindow
         var patchPaths = new[]
         {
             Path.Combine(patchDirectory, "cadenza-runtime-patch.js"),
-            Path.Combine(patchDirectory, "cadenza-runtime-edge-patch.js")
+            Path.Combine(patchDirectory, "cadenza-runtime-edge-patch.js"),
+            Path.Combine(patchDirectory, "cadenza-continuous-motion-patch.js")
         };
         var patchScripts = new List<string>();
         foreach (var patchPath in patchPaths)
