@@ -60,7 +60,11 @@ public partial class MainWindow
         core.PermissionRequested += HardenedPermissionRequested;
         core.DownloadStarting += HardenedDownloadStarting;
         core.NavigationCompleted += HardenedNavigationCompleted;
-        core.WebMessageReceived += HardenedWebMessageReceived;
+
+        // Replace—not supplement—the original message subscription. This ensures
+        // every message is origin-checked before any native action or file write.
+        core.WebMessageReceived -= NotationWebView_WebMessageReceived;
+        core.WebMessageReceived += TrustedNotationWebMessageReceived;
 
         CompositionTarget.Rendering += RuntimeCorrectedRendering;
         Closed += RuntimeHardeningClosed;
@@ -183,7 +187,7 @@ public partial class MainWindow
         await SynchronizePerformanceModelAsync();
     }
 
-    private async void HardenedWebMessageReceived(
+    private async void TrustedNotationWebMessageReceived(
         object? sender,
         CoreWebView2WebMessageReceivedEventArgs args)
     {
@@ -202,8 +206,13 @@ public partial class MainWindow
         }
         catch (JsonException)
         {
-            // The existing message handler reports malformed trusted messages.
+            _viewModel.SetStatusMessage("Notation engine sent a malformed message, which was ignored.");
+            return;
         }
+
+        // The existing handler remains the single behavior dispatcher, but it is
+        // now reachable only after the trusted-origin and JSON checks above.
+        NotationWebView_WebMessageReceived(sender, args);
     }
 
     private async Task ApplyRuntimePatchToCurrentDocumentAsync()
