@@ -109,8 +109,14 @@ public partial class MainWindow
         }
 
         var observedBeat = Math.Clamp(_viewModel.CursorBeat, 0, score.TotalPerformanceBeats);
-        if (!_correctedClockActive || Math.Abs(observedBeat - _lastCorrectedBeat) > 0.75)
+        if (!_correctedClockActive)
         {
+            // Start a new monotonic clock only when playback actually starts or
+            // restarts. The ViewModel's legacy linear timer also writes
+            // CursorBeat; re-anchoring to those writes during playback made the
+            // corrected tempo-aware clock fight the legacy timer and could delay
+            // repeat/volta transitions. Pausing or seeking deactivates playback,
+            // so the next active frame naturally establishes a fresh anchor.
             _correctedClockActive = true;
             _correctedClockAnchorBeat = observedBeat;
             _lastCorrectedBeat = observedBeat;
