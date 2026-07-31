@@ -1,0 +1,34 @@
+name: Build and deterministic tests
+
+on:
+  push:
+    branches:
+      - main
+      - fix/**
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore desktop project
+        run: dotnet restore PianoPractice.Desktop/PianoPractice.Desktop.csproj
+
+      - name: Build desktop project
+        run: dotnet build PianoPractice.Desktop/PianoPractice.Desktop.csproj --configuration Release --no-restore
+
+      - name: Run deterministic MusicXML tests
+        run: dotnet run --project PianoPractice.ParserSmoke/PianoPractice.ParserSmoke.csproj --configuration Release
