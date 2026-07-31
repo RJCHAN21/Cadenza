@@ -13,154 +13,171 @@ public sealed class LibraryStore
     };
 
     private readonly List<LibraryItem> _items = [];
+    private readonly string _libraryRootWithSeparator;
 
     public LibraryStore(string? baseDir = null)
     {
-        var appDir = baseDir ?? Path.Combine(
+        var appDir = Path.GetFullPath(baseDir ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "CadenzaPianoStudio");
+            "CadenzaPianoStudio"));
 
-        LibraryDirectory = Path.Combine(appDir, "Library");
-        ManifestPath = Path.Combine(appDir, "library_manifest.json");
+        LibraryDirectory = Path.GetFullPath(Path.Combine(appDir, "Library"));
+        ManifestPath = Path.GetFullPath(Path.Combine(appDir, "library_manifest.json"));
+        _libraryRootWithSeparator = LibraryDirectory.TrimEnd(
+            Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
 
         Directory.CreateDirectory(LibraryDirectory);
     }
 
     public string LibraryDirectory { get; }
     public string ManifestPath { get; }
-
     public IReadOnlyList<LibraryItem> Items => _items.AsReadOnly();
 
     public List<LibraryItem> LoadLibrary()
     {
         _items.Clear();
+        if (!File.Exists(ManifestPath))
+            return _items;
+
         try
         {
-            if (File.Exists(ManifestPath))
+            var content = File.ReadAllText(ManifestPath);
+            var loaded = JsonSerializer.Deserialize<List<LibraryItem>>(content, JsonOptions);
+            if (loaded is null)
+                return _items;
+
+            var seenIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in loaded)
             {
-                var content = File.ReadAllText(ManifestPath);
-                var loaded = JsonSerializer.Deserialize<List<LibraryItem>>(content, JsonOptions);
-                if (loaded is not null)
-                {
-                    foreach (var item in loaded)
-                    {
-                        if (File.Exists(item.StoredFilePath))
-                        {
-                            _items.Add(item);
-                        }
-                    }
-                }
+                if (string.IsNullOrWhiteSpace(item.Id) ||
+                    !seenIds.Add(item.Id) ||
+                    !TryResolveLibraryFile(item.StoredFilePath, out var safePath) ||
+                    !File.Exists(safePath))
+                    continue;
+
+                item.StoredFilePath = safePath;
+                _items.Add(item);
             }
         }
-        catch (Exception)
+        catch (JsonException)
         {
-            // Silently recover if manifest is missing or corrupt
+            PreserveCorruptManifest();
+        }
+        catch (IOException)
+        {
+            // The caller can continue with an empty in-memory library.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // The caller can continue with an empty in-memory library.
         }
 
         return _items;
     }
 
-    public LibraryItem AddOrUpdateFile(string sourceFilePath, string title, string composer = "Unknown Composer", int measureCount = 0)
+    public LibraryItem AddOrUpdateFile(
+        string sourceFilePath,
+        string title,
+        string composer = "Unknown Composer",
+        int measureCount = 0)
     {
-        if (!File.Exists(sourceFilePath))
-            throw new FileNotFoundException("Source music file not found.", sourceFilePath);
+        var sourceFullPath = Path.GetFullPath(sourceFilePath);
+        if (!File.Exists(sourceFullPath))
+            throw new FileNotFoundException("Source music file not found.", sourceFullPath);
 
-        var originalFileName = Path.GetFileName(sourceFilePath);
-        var extension = Path.GetExtension(sourceFilePath);
+        var originalFileName = Path.GetFileName(sourceFullPath);
+        if (string.IsNullOrWhiteSpace(originalFileName))
+            throw new InvalidDataException("The source file does not have a valid filename.");
 
-        // Check if an existing library item points to the same file or filename
         var existing = _items.FirstOrDefault(item =>
-            string.Equals(item.StoredFilePath, sourceFilePath, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(item.OriginalFileName, originalFileName, StringComparison.OrdinalIgnoreCase));
+            string.Equals(item.OriginalFileName, originalFileName, StringComparison.OrdinalIgnoreCase) ||
+            (TryResolveLibraryFile(item.StoredFilePath, out var storedPath) &&
+             string.Equals(storedPath, sourceFullPath, StringComparison.OrdinalIgnoreCase)));
 
         if (existing is not null)
         {
             if (string.IsNullOrWhiteSpace(existing.DisplayName))
-            {
-                existing.DisplayName = string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(originalFileName) : title;
-            }
-            existing.Composer = string.IsNullOrWhiteSpace(composer) ? existing.Composer : composer;
-            if (measureCount > 0) existing.MeasureCount = measureCount;
+                existing.DisplayName = NormalizeDisplayName(title, originalFileName);
+            if (!string.IsNullOrWhiteSpace(composer))
+                existing.Composer = composer.Trim();
+            if (measureCount > 0)
+                existing.MeasureCount = measureCount;
             SaveManifest();
             return existing;
         }
 
-        // Copy file to Cadenza's persistent Library directory
-        var safeFileName = $"{Guid.NewGuid():N}_{originalFileName}";
-        var destinationPath = Path.Combine(LibraryDirectory, safeFileName);
-        File.Copy(sourceFilePath, destinationPath, overwrite: true);
+        var extension = Path.GetExtension(originalFileName);
+        var safeFileName = $"{Guid.NewGuid():N}{extension}";
+        var destinationPath = Path.GetFullPath(Path.Combine(LibraryDirectory, safeFileName));
+        EnsureInsideLibrary(destinationPath);
+        File.Copy(sourceFullPath, destinationPath, overwrite: false);
 
         var newItem = new LibraryItem
         {
             Id = Guid.NewGuid().ToString("N"),
-            DisplayName = string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(originalFileName) : title,
+            DisplayName = NormalizeDisplayName(title, originalFileName),
             OriginalFileName = originalFileName,
             StoredFilePath = destinationPath,
-            Composer = string.IsNullOrWhiteSpace(composer) ? "Unknown Composer" : composer,
+            Composer = string.IsNullOrWhiteSpace(composer) ? "Unknown Composer" : composer.Trim(),
             MeasureCount = measureCount,
             ImportedUtc = DateTimeOffset.UtcNow
         };
 
         _items.Insert(0, newItem);
-        SaveManifest();
+        try
+        {
+            SaveManifest();
+        }
+        catch
+        {
+            _items.Remove(newItem);
+            TryDeleteLibraryFile(destinationPath);
+            throw;
+        }
+
         return newItem;
     }
 
     public bool DeleteItem(string id)
     {
-        var item = _items.FirstOrDefault(i => string.Equals(i.Id, id, StringComparison.Ordinal));
-        if (item is null) return false;
+        var item = _items.FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, id, StringComparison.Ordinal));
+        if (item is null)
+            return false;
 
         _items.Remove(item);
-        try
-        {
-            if (File.Exists(item.StoredFilePath))
-            {
-                File.Delete(item.StoredFilePath);
-            }
-        }
-        catch (Exception)
-        {
-            // Best-effort file cleanup
-        }
-
+        TryDeleteLibraryFile(item.StoredFilePath);
         SaveManifest();
         return true;
     }
 
     public int DeleteItems(IEnumerable<string> ids)
     {
+        ArgumentNullException.ThrowIfNull(ids);
         var targetIds = ids.ToHashSet(StringComparer.Ordinal);
-        var toDelete = _items.Where(i => targetIds.Contains(i.Id)).ToList();
-        int count = 0;
+        var toDelete = _items.Where(item => targetIds.Contains(item.Id)).ToArray();
 
         foreach (var item in toDelete)
         {
             _items.Remove(item);
-            try
-            {
-                if (File.Exists(item.StoredFilePath))
-                {
-                    File.Delete(item.StoredFilePath);
-                }
-            }
-            catch (Exception)
-            {
-                // Best-effort cleanup
-            }
-            count++;
+            TryDeleteLibraryFile(item.StoredFilePath);
         }
 
-        if (count > 0) SaveManifest();
-        return count;
+        if (toDelete.Length > 0)
+            SaveManifest();
+        return toDelete.Length;
     }
 
     public bool RenameItem(string id, string newDisplayName)
     {
-        if (string.IsNullOrWhiteSpace(newDisplayName)) return false;
+        if (string.IsNullOrWhiteSpace(newDisplayName))
+            return false;
 
-        var item = _items.FirstOrDefault(i => string.Equals(i.Id, id, StringComparison.Ordinal));
-        if (item is null) return false;
+        var item = _items.FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, id, StringComparison.Ordinal));
+        if (item is null)
+            return false;
 
         item.DisplayName = newDisplayName.Trim();
         SaveManifest();
@@ -169,26 +186,89 @@ public sealed class LibraryStore
 
     public void RecordPlayed(string id)
     {
-        var item = _items.FirstOrDefault(i => string.Equals(i.Id, id, StringComparison.Ordinal));
-        if (item is not null)
-        {
-            item.LastPlayedUtc = DateTimeOffset.UtcNow;
-            SaveManifest();
-        }
+        var item = _items.FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, id, StringComparison.Ordinal));
+        if (item is null)
+            return;
+
+        item.LastPlayedUtc = DateTimeOffset.UtcNow;
+        SaveManifest();
     }
 
     public void SaveManifest()
     {
+        Directory.CreateDirectory(Path.GetDirectoryName(ManifestPath)!);
+        var json = JsonSerializer.Serialize(_items, JsonOptions);
+        var temporaryPath = ManifestPath + ".tmp";
+        File.WriteAllText(temporaryPath, json);
+        File.Move(temporaryPath, ManifestPath, overwrite: true);
+    }
+
+    private bool TryResolveLibraryFile(string? candidate, out string safePath)
+    {
+        safePath = string.Empty;
+        if (string.IsNullOrWhiteSpace(candidate))
+            return false;
+
         try
         {
-            var json = JsonSerializer.Serialize(_items, JsonOptions);
-            var tmp = ManifestPath + ".tmp";
-            File.WriteAllText(tmp, json);
-            File.Move(tmp, ManifestPath, overwrite: true);
+            var resolved = Path.GetFullPath(candidate);
+            EnsureInsideLibrary(resolved);
+            safePath = resolved;
+            return true;
         }
-        catch (Exception)
+        catch (Exception exception) when (
+            exception is ArgumentException or
+            NotSupportedException or
+            PathTooLongException or
+            InvalidOperationException)
         {
-            // Silently preserve stability
+            return false;
+        }
+    }
+
+    private void EnsureInsideLibrary(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        if (!fullPath.StartsWith(_libraryRootWithSeparator, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The requested library file is outside Cadenza's managed library directory.");
+    }
+
+    private void TryDeleteLibraryFile(string? candidate)
+    {
+        if (!TryResolveLibraryFile(candidate, out var safePath))
+            return;
+
+        try
+        {
+            if (File.Exists(safePath))
+                File.Delete(safePath);
+        }
+        catch (IOException)
+        {
+            // Keep manifest consistency even when Windows temporarily locks the file.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Never attempt a fallback deletion outside the managed directory.
+        }
+    }
+
+    private static string NormalizeDisplayName(string title, string originalFileName) =>
+        string.IsNullOrWhiteSpace(title)
+            ? Path.GetFileNameWithoutExtension(originalFileName)
+            : title.Trim();
+
+    private void PreserveCorruptManifest()
+    {
+        try
+        {
+            var backup = ManifestPath + $".corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}";
+            File.Move(ManifestPath, backup, overwrite: false);
+        }
+        catch
+        {
+            // The invalid manifest remains untouched if it cannot be moved.
         }
     }
 }
