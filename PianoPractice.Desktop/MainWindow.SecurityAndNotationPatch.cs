@@ -60,9 +60,6 @@ public partial class MainWindow
         core.PermissionRequested += HardenedPermissionRequested;
         core.DownloadStarting += HardenedDownloadStarting;
         core.NavigationCompleted += HardenedNavigationCompleted;
-
-        // Replace—not supplement—the original message subscription. This ensures
-        // every message is origin-checked before any native action or file write.
         core.WebMessageReceived -= NotationWebView_WebMessageReceived;
         core.WebMessageReceived += TrustedNotationWebMessageReceived;
 
@@ -194,6 +191,8 @@ public partial class MainWindow
         if (!IsTrustedRendererUri(args.Source))
             return;
 
+        await NotationWebView_WebMessageReceived(sender, args);
+
         try
         {
             using var document = JsonDocument.Parse(args.WebMessageAsJson);
@@ -206,13 +205,8 @@ public partial class MainWindow
         }
         catch (JsonException)
         {
-            _viewModel.SetStatusMessage("Notation engine sent a malformed message, which was ignored.");
-            return;
+            // The trusted message handler already reports malformed payloads.
         }
-
-        // The existing handler remains the single behavior dispatcher, but it is
-        // now reachable only after the trusted-origin and JSON checks above.
-        NotationWebView_WebMessageReceived(sender, args);
     }
 
     private async Task ApplyRuntimePatchToCurrentDocumentAsync()
@@ -284,6 +278,6 @@ public partial class MainWindow
         return string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
                string.Equals(uri.Host, "cadenza.local", StringComparison.OrdinalIgnoreCase) &&
                uri.IsDefaultPort &&
-               uri.AbsolutePath.StartsWith('/', StringComparison.Ordinal);
+               uri.AbsolutePath.StartsWith("/", StringComparison.Ordinal);
     }
 }
