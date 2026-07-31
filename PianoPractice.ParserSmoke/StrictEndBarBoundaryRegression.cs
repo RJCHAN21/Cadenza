@@ -9,6 +9,7 @@ internal static class StrictEndBarBoundaryRegression
     {
         StopsAtFirstSelectedEndBarOccurrence();
         ResumeUsesNextReachableEndBarOccurrence();
+        PreservesRepeatWhenSelectedEndIsTrueFinalBar();
         UsesTempoAwareRemainingDuration();
         Console.WriteLine("PASS strict selected end-bar boundary fixtures");
     }
@@ -21,9 +22,9 @@ internal static class StrictEndBarBoundaryRegression
         Assert(boundary.StartOccurrenceIndex == 0,
             $"Expected start occurrence 0, got {boundary.StartOccurrenceIndex}.");
         Assert(boundary.EndOccurrenceIndex == 2,
-            $"The selected end bar leaked into a later repeat occurrence {boundary.EndOccurrenceIndex}.");
+            $"The selected non-final end bar leaked into a later repeat occurrence {boundary.EndOccurrenceIndex}.");
         Assert(Math.Abs(boundary.EndBeat - 12d) < 0.0001,
-            $"Expected the first completion of bar 3 at beat 12, got {boundary.EndBeat:0.###}.");
+            $"Expected the first completion of non-final bar 3 at beat 12, got {boundary.EndBeat:0.###}.");
     }
 
     private static void ResumeUsesNextReachableEndBarOccurrence()
@@ -32,9 +33,20 @@ internal static class StrictEndBarBoundaryRegression
         var boundary = PlaybackSelectionBoundaryResolver.Resolve(score, 1, 3, cursorBeat: 13d);
 
         Assert(boundary.EndOccurrenceIndex == 4,
-            $"A resumed preview should stop at occurrence 4, got {boundary.EndOccurrenceIndex}.");
+            $"A resumed focused preview should stop at occurrence 4, got {boundary.EndOccurrenceIndex}.");
         Assert(Math.Abs(boundary.EndBeat - 20d) < 0.0001,
             $"Expected resumed completion at beat 20, got {boundary.EndBeat:0.###}.");
+    }
+
+    private static void PreservesRepeatWhenSelectedEndIsTrueFinalBar()
+    {
+        var score = FinalBarRepeatScore();
+        var boundary = PlaybackSelectionBoundaryResolver.Resolve(score, 1, 3);
+
+        Assert(boundary.EndOccurrenceIndex == 4,
+            $"The true final bar must preserve its terminal repeat and end at occurrence 4, got {boundary.EndOccurrenceIndex}.");
+        Assert(Math.Abs(boundary.EndBeat - 20d) < 0.0001,
+            $"Expected playback to complete the repeated final bar at beat 20, got {boundary.EndBeat:0.###}.");
     }
 
     private static void UsesTempoAwareRemainingDuration()
@@ -66,6 +78,23 @@ internal static class StrictEndBarBoundaryRegression
             new ScoreMeasureOccurrence(3, 1, "2", 4, 12, 4, 2, 0),
             new ScoreMeasureOccurrence(4, 2, "3", 8, 16, 4, 2, 0),
             new ScoreMeasureOccurrence(5, 3, "4", 12, 20, 4, 1)
+        ]
+    };
+
+    private static ScoreDocument FinalBarRepeatScore() => new()
+    {
+        SourcePath = "terminal-repeat.musicxml",
+        Title = "Terminal repeat fixture",
+        MeasureCount = 3,
+        TotalBeats = 12,
+        TempoBpm = 120,
+        PerformanceMeasures =
+        [
+            new ScoreMeasureOccurrence(0, 0, "1", 0, 0, 4, 1),
+            new ScoreMeasureOccurrence(1, 1, "2", 4, 4, 4, 1, 0),
+            new ScoreMeasureOccurrence(2, 2, "3", 8, 8, 4, 1, 0),
+            new ScoreMeasureOccurrence(3, 1, "2", 4, 12, 4, 2, 0),
+            new ScoreMeasureOccurrence(4, 2, "3", 8, 16, 4, 2, 0)
         ]
     };
 
