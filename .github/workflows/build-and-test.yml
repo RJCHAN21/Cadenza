@@ -24,6 +24,8 @@ jobs:
         run: |
           node --check PianoPractice.Desktop/Assets/Verovio/cadenza-runtime-patch.js
           node --check PianoPractice.Desktop/Assets/Verovio/cadenza-runtime-edge-patch.js
+          node --check PianoPractice.Desktop/Assets/Verovio/cadenza-continuous-motion-patch.js
+          node PianoPractice.RendererSmoke/continuous-motion-smoke.cjs
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v4
