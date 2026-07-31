@@ -65,18 +65,24 @@ public partial class MainWindow
         CompositionTarget.Rendering += RuntimeCorrectedRendering;
         Closed += RuntimeHardeningClosed;
 
-        var patchPath = Path.Combine(
-            AppContext.BaseDirectory,
-            "Assets",
-            "Verovio",
-            "cadenza-runtime-patch.js");
-        if (!File.Exists(patchPath))
+        var patchDirectory = Path.Combine(AppContext.BaseDirectory, "Assets", "Verovio");
+        var patchPaths = new[]
         {
-            _viewModel.SetStatusMessage("The notation safety patch is missing from the application output.");
-            return;
+            Path.Combine(patchDirectory, "cadenza-runtime-patch.js"),
+            Path.Combine(patchDirectory, "cadenza-runtime-edge-patch.js")
+        };
+        var patchScripts = new List<string>();
+        foreach (var patchPath in patchPaths)
+        {
+            if (!File.Exists(patchPath))
+            {
+                _viewModel.SetStatusMessage($"The notation safety patch {Path.GetFileName(patchPath)} is missing from the application output.");
+                return;
+            }
+            patchScripts.Add(await File.ReadAllTextAsync(patchPath));
         }
 
-        _runtimePatchScript = await File.ReadAllTextAsync(patchPath);
+        _runtimePatchScript = string.Join(Environment.NewLine, patchScripts);
         await core.AddScriptToExecuteOnDocumentCreatedAsync(_runtimePatchScript);
         await ApplyRuntimePatchToCurrentDocumentAsync();
     }
