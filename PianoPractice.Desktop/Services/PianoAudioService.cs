@@ -1,21 +1,35 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.Media;
+using System.Text;
 using PianoPractice.Desktop.Models;
 
 namespace PianoPractice.Desktop.Services;
 
 public sealed class PianoAudioService : IDisposable
 {
-    private const int SampleRate = 22050;
-    private const double ReleaseTailSeconds = 1.25;
-    private const double MaxPreviewSeconds = 30 * 60;
+    private const int CompatibilitySampleRate = 22050;
+    private const double MaximumPlaybackSeconds = 30 * 60;
+    private const double CompatibilityReleaseTailSeconds = 1.25;
+    private const int PlanMarkerOffset = 46;
+    private const string PlanMarker = "CADENZA-RT-PLAN-1";
 
-    private readonly ConcurrentDictionary<Guid, (SoundPlayer Player, MemoryStream Stream)> _livePlayers = new();
-    private SoundPlayer? _previewPlayer;
-    private MemoryStream? _previewStream;
-    private SoundPlayer? _clickPlayer;
-    private MemoryStream? _clickStream;
+    private static readonly byte[] PlanMarkerBytes = Encoding.ASCII.GetBytes(PlanMarker);
+
+    private readonly ConcurrentDictionary<Guid, PlaybackPlan> _pendingPlans = new();
+    private readonly MidiOutSynthService _previewSynth = new();
+    private readonly MidiOutSynthService _metronomeSynth = new();
+    private readonly MidiOutSynthService _liveNoteSynth = new();
+    private readonly object _previewGate = new();
+    private readonly object _synthGate = new();
+    private readonly Dictionary<int, int> _liveNoteReferenceCounts = [];
+
+    private SoundPlayer? _legacyPreviewPlayer;
+    private MemoryStream? _legacyPreviewStream;
+    private CancellationTokenSource? _activePlaybackCancellation;
+    private long _playbackGeneration;
+    private bool _realtimePlaybackActive;
     private bool _disposed;
 
     public event EventHandler<string>? AudioError;
@@ -62,7 +76,7 @@ public sealed class PianoAudioService : IDisposable
             pianoVolumePercent,
             metronomeVolumePercent,
             includedStaffNumber,
-            "acoustic_grand",
+            AudioSoundPreset.AcousticGrand.Id,
             cancellationToken);
 
     public Task<byte[]> BuildPreviewAsync(
@@ -75,9 +89,11 @@ public sealed class PianoAudioService : IDisposable
         int metronomeVolumePercent,
         int? includedStaffNumber,
         string presetId,
-        CancellationToken cancellationToken) =>
-        Task.Run(
-            () => BuildPreview(
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(score);
+        return Task.Run(
+            () => PrepareScorePlayback(
                 score,
                 includeMetronome,
                 startBeat,
@@ -89,13 +105,14 @@ public sealed class PianoAudioService : IDisposable
                 presetId,
                 cancellationToken),
             cancellationToken);
+    }
 
     public Task<byte[]> BuildMidiPreviewAsync(
         MidiReference midi,
         IReadOnlySet<int> trackIndexes,
         bool includeMetronome,
         CancellationToken cancellationToken) =>
-        BuildMidiPreviewAsync(midi, trackIndexes, includeMetronome, 100, 70, "acoustic_grand", cancellationToken);
+        BuildMidiPreviewAsync(midi, trackIndexes, includeMetronome, 100, 70, AudioSoundPreset.AcousticGrand.Id, cancellationToken);
 
     public Task<byte[]> BuildMidiPreviewAsync(
         MidiReference midi,
@@ -110,7 +127,7 @@ public sealed class PianoAudioService : IDisposable
             includeMetronome,
             pianoVolumePercent,
             metronomeVolumePercent,
-            "acoustic_grand",
+            AudioSoundPreset.AcousticGrand.Id,
             cancellationToken);
 
     public Task<byte[]> BuildMidiPreviewAsync(
@@ -120,9 +137,12 @@ public sealed class PianoAudioService : IDisposable
         int pianoVolumePercent,
         int metronomeVolumePercent,
         string presetId,
-        CancellationToken cancellationToken) =>
-        Task.Run(
-            () => BuildMidiPreview(
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(midi);
+        ArgumentNullException.ThrowIfNull(trackIndexes);
+        return Task.Run(
+            () => PrepareMidiPlayback(
                 midi,
                 trackIndexes,
                 includeMetronome,
@@ -131,109 +151,147 @@ public sealed class PianoAudioService : IDisposable
                 presetId,
                 cancellationToken),
             cancellationToken);
+    }
 
-    public void PlayPreview(byte[] waveData)
+    public void PlayPreview(byte[] playbackData)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        ArgumentNullException.ThrowIfNull(waveData);
-        StopPreview();
+        ArgumentNullException.ThrowIfNull(playbackData);
 
-        _previewStream = new MemoryStream(waveData, writable: false);
-        _previewPlayer = new SoundPlayer(_previewStream);
-        _previewPlayer.Load();
-        _previewPlayer.Play();
+        if (TryReadPlanId(playbackData, out var planId))
+        {
+            if (!_pendingPlans.TryRemove(planId, out var plan))
+                throw new InvalidOperationException("The prepared real-time playback plan is no longer available.");
+
+            StartRealtimePlayback(plan);
+            return;
+        }
+
+        StopPreview();
+        _legacyPreviewStream = new MemoryStream(playbackData, writable: false);
+        _legacyPreviewPlayer = new SoundPlayer(_legacyPreviewStream);
+        _legacyPreviewPlayer.Load();
+        _legacyPreviewPlayer.Play();
     }
 
     public void StopPreview()
     {
-        _previewPlayer?.Stop();
-        _previewPlayer?.Dispose();
-        _previewPlayer = null;
-        _previewStream?.Dispose();
-        _previewStream = null;
+        CancellationTokenSource? cancellation;
+        lock (_previewGate)
+        {
+            _playbackGeneration++;
+            cancellation = _activePlaybackCancellation;
+            _activePlaybackCancellation = null;
+            _realtimePlaybackActive = false;
+        }
+
+        cancellation?.Cancel();
+
+        lock (_synthGate)
+        {
+            _previewSynth.AllNotesOff();
+            _metronomeSynth.AllNotesOff();
+        }
+
+        _legacyPreviewPlayer?.Stop();
+        _legacyPreviewPlayer?.Dispose();
+        _legacyPreviewPlayer = null;
+        _legacyPreviewStream?.Dispose();
+        _legacyPreviewStream = null;
     }
 
     public void PlayMetronomeClick(bool accent, int volumePercent = 70)
     {
-        if (_disposed || _previewPlayer is not null)
+        if (_disposed || IsPreviewOutputActive())
             return;
 
-        _clickPlayer?.Stop();
-        _clickPlayer?.Dispose();
-        _clickStream?.Dispose();
+        var note = accent ? 76 : 77;
+        lock (_synthGate)
+        {
+            _metronomeSynth.VolumePercent = Math.Clamp(volumePercent, 0, 100);
+            var result = _metronomeSynth.NoteOn(note, accent ? 118 : 96, channel: 9);
+            if (!result.Success)
+            {
+                AudioError?.Invoke(this, $"Metronome output failed: {result.Message}");
+                return;
+            }
+        }
 
-        _clickStream = new MemoryStream(CreateClickWave(accent, volumePercent), writable: false);
-        _clickPlayer = new SoundPlayer(_clickStream);
-        _clickPlayer.Load();
-        _clickPlayer.Play();
+        _ = ReleaseStandaloneClickAsync(note);
     }
 
     public void PlayLiveNote(int midiNote, int velocity, int volumePercent, string presetId)
     {
-        if (_disposed || volumePercent <= 0 || _previewPlayer is not null)
+        if (_disposed || volumePercent <= 0 || IsPreviewOutputActive())
             return;
 
-        var id = Guid.NewGuid();
-        _ = Task.Run(() =>
+        var preset = AudioSoundPreset.FromId(presetId, AudioSoundPreset.AcousticGrand);
+        var patch = ResolveRealtimePatch(preset);
+        lock (_synthGate)
         {
-            SoundPlayer? player = null;
-            MemoryStream? stream = null;
-            try
+            _liveNoteSynth.VolumePercent = Math.Clamp(volumePercent, 0, 100);
+            var programResult = _liveNoteSynth.SetProgram(patch);
+            if (!programResult.Success)
             {
-                var samples = new float[(int)(1.25 * SampleRate)];
-                AddPianoVoice(
-                    samples,
-                    midiNote,
-                    velocity,
-                    onsetSeconds: 0,
-                    soundingDurationSeconds: 0.8,
-                    elapsedSeconds: 0,
-                    gain: Math.Clamp(volumePercent, 0, 100) / 100d,
-                    presetId,
-                    CancellationToken.None);
+                AudioError?.Invoke(this, $"Live note output failed: {programResult.Message}");
+                return;
+            }
 
-                stream = new MemoryStream(ToWaveFile(samples), writable: false);
-                player = new SoundPlayer(stream);
-                _livePlayers[id] = (player, stream);
-                player.Load();
-                player.PlaySync();
-            }
-            catch (Exception exception)
+            var noteResult = _liveNoteSynth.NoteOn(midiNote, velocity);
+            if (!noteResult.Success)
             {
-                AudioError?.Invoke(this, $"Live note playback failed: {exception.Message}");
+                AudioError?.Invoke(this, $"Live note output failed: {noteResult.Message}");
+                return;
             }
-            finally
-            {
-                _livePlayers.TryRemove(id, out _);
-                player?.Dispose();
-                stream?.Dispose();
-            }
-        });
+
+            _liveNoteReferenceCounts[midiNote] =
+                _liveNoteReferenceCounts.GetValueOrDefault(midiNote) + 1;
+        }
+
+        _ = ReleaseLiveNoteAsync(midiNote);
+    }
+
+    public bool TryGetPreparedPlaybackInfo(
+        byte[] playbackData,
+        out PreparedPlaybackInfo info)
+    {
+        info = default;
+        if (!TryReadPlanId(playbackData, out var planId) ||
+            !_pendingPlans.TryGetValue(planId, out var plan))
+        {
+            return false;
+        }
+
+        info = new PreparedPlaybackInfo(
+            plan.DurationSeconds,
+            plan.PianoNoteCount,
+            plan.MetronomePulseCount,
+            plan.Events.Any(playbackEvent =>
+                playbackEvent.Kind == PlaybackEventKind.PianoOn &&
+                playbackEvent.AtSeconds <= 0.001));
+        return true;
     }
 
     public void Dispose()
     {
         if (_disposed)
             return;
+
         _disposed = true;
-
         StopPreview();
-        _clickPlayer?.Stop();
-        _clickPlayer?.Dispose();
-        _clickStream?.Dispose();
-        _clickPlayer = null;
-        _clickStream = null;
+        _pendingPlans.Clear();
 
-        foreach (var (_, entry) in _livePlayers)
+        lock (_synthGate)
         {
-            entry.Player.Stop();
-            entry.Player.Dispose();
-            entry.Stream.Dispose();
+            _liveNoteReferenceCounts.Clear();
+            _liveNoteSynth.AllNotesOff();
+            _previewSynth.Dispose();
+            _metronomeSynth.Dispose();
+            _liveNoteSynth.Dispose();
         }
-        _livePlayers.Clear();
     }
 
-    private static byte[] BuildPreview(
+    private byte[] PrepareScorePlayback(
         ScoreDocument score,
         bool includeMetronome,
         double startBeat,
@@ -245,85 +303,169 @@ public sealed class PianoAudioService : IDisposable
         string presetId,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(score);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        var maxBeats = Math.Max(0.01, score.TotalPerformanceBeats);
-        startBeat = Math.Clamp(startBeat, 0, maxBeats);
-        if (startBeat >= maxBeats - 1e-9)
-            startBeat = Math.Max(0, maxBeats - 0.01);
-        endBeat = Math.Clamp(endBeat, startBeat + 0.01, maxBeats);
+        var maximumBeat = Math.Max(0.01, score.TotalPerformanceBeats);
+        startBeat = Math.Clamp(startBeat, 0, maximumBeat);
+        if (startBeat >= maximumBeat - 1e-9)
+            startBeat = Math.Max(0, maximumBeat - 0.01);
+        endBeat = Math.Clamp(endBeat, startBeat + 0.01, maximumBeat);
 
         var tempoScale = Math.Max(0.01, requestedInitialTempoBpm / Math.Max(1d, score.TempoBpm));
         var selectionStartSeconds = score.SecondsAtPerformanceBeat(startBeat, tempoScale);
         var selectionEndSeconds = score.SecondsAtPerformanceBeat(endBeat, tempoScale);
-        var selectionSeconds = Math.Max(0.01, selectionEndSeconds - selectionStartSeconds);
-        if (selectionSeconds > MaxPreviewSeconds)
-            throw new InvalidOperationException(
-                $"The requested preview is {selectionSeconds / 60d:0.0} minutes long and exceeds the {MaxPreviewSeconds / 60d:0} minute safety limit.");
+        var durationSeconds = Math.Max(0.01, selectionEndSeconds - selectionStartSeconds);
+        ValidateDuration(durationSeconds);
 
-        var totalSamplesLong = checked((long)Math.Ceiling((selectionSeconds + ReleaseTailSeconds) * SampleRate));
-        if (totalSamplesLong > int.MaxValue)
-            throw new InvalidOperationException("The requested preview is too large to render safely.");
-
-        var samples = new float[(int)Math.Max(SampleRate, totalSamplesLong)];
-        var pianoGain = Math.Clamp(pianoVolumePercent, 0, 100) / 100d;
-        var metronomeGain = Math.Clamp(metronomeVolumePercent, 0, 100) / 100d;
-
-        foreach (var note in score.Notes)
+        var events = new List<PlaybackEvent>();
+        var pianoNoteCount = 0;
+        if (pianoVolumePercent > 0)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (includedStaffNumber.HasValue &&
-                ScoreDocument.ResolveStaffNumber(note.StaffNumber, note.MidiNoteNumber) != includedStaffNumber.Value)
-                continue;
+            foreach (var note in score.Notes)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (includedStaffNumber.HasValue &&
+                    ScoreDocument.ResolveStaffNumber(note.StaffNumber, note.MidiNoteNumber) != includedStaffNumber.Value)
+                {
+                    continue;
+                }
 
-            var noteEndBeat = note.OnsetBeats + Math.Max(0.01, note.DurationBeats);
-            if (noteEndBeat <= startBeat + 1e-9 || note.OnsetBeats >= endBeat - 1e-9)
-                continue;
+                var noteEndBeat = note.OnsetBeats + Math.Max(0.01, note.DurationBeats);
+                if (noteEndBeat <= startBeat + 1e-9 || note.OnsetBeats >= endBeat - 1e-9)
+                    continue;
 
-            var absoluteOnsetSeconds = score.SecondsAtPerformanceBeat(note.OnsetBeats, tempoScale);
-            var absoluteEndSeconds = score.SecondsAtPerformanceBeat(noteEndBeat, tempoScale);
-            var relativeOnsetSeconds = absoluteOnsetSeconds - selectionStartSeconds;
-            var soundingDurationSeconds = Math.Max(0.05, absoluteEndSeconds - absoluteOnsetSeconds);
-            var elapsedSeconds = relativeOnsetSeconds < 0 ? -relativeOnsetSeconds : 0;
-            var outputOnsetSeconds = Math.Max(0, relativeOnsetSeconds);
+                var audibleStartBeat = Math.Max(startBeat, note.OnsetBeats);
+                var audibleEndBeat = Math.Min(endBeat, noteEndBeat);
+                var noteOnSeconds = Math.Max(
+                    0,
+                    score.SecondsAtPerformanceBeat(audibleStartBeat, tempoScale) - selectionStartSeconds);
+                var noteOffSeconds = Math.Min(
+                    durationSeconds,
+                    Math.Max(
+                        noteOnSeconds + 0.03,
+                        score.SecondsAtPerformanceBeat(audibleEndBeat, tempoScale) - selectionStartSeconds));
 
-            AddPianoVoice(
-                samples,
-                note.MidiNoteNumber,
-                note.Velocity,
-                outputOnsetSeconds,
-                soundingDurationSeconds,
-                elapsedSeconds,
-                pianoGain,
-                presetId,
-                cancellationToken);
+                events.Add(new PlaybackEvent(
+                    noteOnSeconds,
+                    PlaybackEventKind.PianoOn,
+                    note.MidiNoteNumber,
+                    Math.Clamp(note.Velocity, 1, 127)));
+                events.Add(new PlaybackEvent(
+                    noteOffSeconds,
+                    PlaybackEventKind.PianoOff,
+                    note.MidiNoteNumber,
+                    0));
+                pianoNoteCount++;
+            }
         }
 
-        if (includeMetronome && metronomeGain > 0)
-            AddScoreMetronome(
-                samples,
+        var metronomePulseCount = includeMetronome && metronomeVolumePercent > 0
+            ? AddScoreMetronomeEvents(
+                events,
                 score,
                 startBeat,
                 endBeat,
                 selectionStartSeconds,
                 tempoScale,
-                metronomeGain,
-                cancellationToken);
+                durationSeconds,
+                cancellationToken)
+            : 0;
 
-        return ToWaveFile(samples);
+        SortEvents(events);
+        var preset = AudioSoundPreset.FromId(presetId, AudioSoundPreset.AcousticGrand);
+        return RegisterPlan(new PlaybackPlan(
+            events,
+            durationSeconds,
+            ResolveRealtimePatch(preset),
+            Math.Clamp(pianoVolumePercent, 0, 100),
+            Math.Clamp(metronomeVolumePercent, 0, 100),
+            pianoNoteCount,
+            metronomePulseCount,
+            DateTimeOffset.UtcNow));
     }
 
-    private static void AddScoreMetronome(
-        float[] samples,
+    private byte[] PrepareMidiPlayback(
+        MidiReference midi,
+        IReadOnlySet<int> trackIndexes,
+        bool includeMetronome,
+        int pianoVolumePercent,
+        int metronomeVolumePercent,
+        string presetId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var secondsPerBeat = 60d / Math.Max(1d, midi.TempoBpm);
+        var durationSeconds = Math.Max(0.01, Math.Max(1d, midi.TotalBeats) * secondsPerBeat);
+        ValidateDuration(durationSeconds);
+
+        var events = new List<PlaybackEvent>();
+        var pianoNoteCount = 0;
+        if (pianoVolumePercent > 0)
+        {
+            foreach (var note in midi.Notes)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!trackIndexes.Contains(note.TrackIndex) || note.Channel == 9)
+                    continue;
+
+                var noteOnSeconds = Math.Max(0, note.OnsetBeats * secondsPerBeat);
+                var noteOffSeconds = Math.Min(
+                    durationSeconds,
+                    Math.Max(noteOnSeconds + 0.03, (note.OnsetBeats + Math.Max(0.01, note.DurationBeats)) * secondsPerBeat));
+                events.Add(new PlaybackEvent(
+                    noteOnSeconds,
+                    PlaybackEventKind.PianoOn,
+                    note.NoteNumber,
+                    Math.Clamp(note.Velocity, 1, 127)));
+                events.Add(new PlaybackEvent(
+                    noteOffSeconds,
+                    PlaybackEventKind.PianoOff,
+                    note.NoteNumber,
+                    0));
+                pianoNoteCount++;
+            }
+        }
+
+        var metronomePulseCount = 0;
+        if (includeMetronome && metronomeVolumePercent > 0)
+        {
+            for (var beat = 0d; beat <= midi.TotalBeats + 1e-9; beat += 1d)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                AddMetronomePulse(
+                    events,
+                    beat * secondsPerBeat,
+                    Math.Abs(beat % 4d) < 1e-9,
+                    durationSeconds);
+                metronomePulseCount++;
+            }
+        }
+
+        SortEvents(events);
+        var preset = AudioSoundPreset.FromId(presetId, AudioSoundPreset.AcousticGrand);
+        return RegisterPlan(new PlaybackPlan(
+            events,
+            durationSeconds,
+            ResolveRealtimePatch(preset),
+            Math.Clamp(pianoVolumePercent, 0, 100),
+            Math.Clamp(metronomeVolumePercent, 0, 100),
+            pianoNoteCount,
+            metronomePulseCount,
+            DateTimeOffset.UtcNow));
+    }
+
+    private static int AddScoreMetronomeEvents(
+        List<PlaybackEvent> events,
         ScoreDocument score,
         double startBeat,
         double endBeat,
         double selectionStartSeconds,
         double tempoScale,
-        double gain,
+        double durationSeconds,
         CancellationToken cancellationToken)
     {
-        var scheduledSamples = new HashSet<int>();
+        var scheduledPulses = new HashSet<long>();
+        var pulseCount = 0;
         IReadOnlyList<ScoreMeasureOccurrence> occurrences = score.PerformanceMeasures.Count > 0
             ? score.PerformanceMeasures
             : [new ScoreMeasureOccurrence(0, 0, "1", 0, 0, score.TotalPerformanceBeats, 1)];
@@ -344,260 +486,441 @@ public sealed class PianoAudioService : IDisposable
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var beat = occurrence.PerformanceStartBeat + offset;
-                if (beat < startBeat - 1e-9 || beat > endBeat + 1e-9)
+                if (beat < startBeat - 1e-9 || beat >= endBeat - 1e-9)
                 {
                     pulseIndex++;
                     continue;
                 }
 
-                var absoluteSeconds = score.SecondsAtPerformanceBeat(beat, tempoScale);
-                var sample = (int)Math.Round((absoluteSeconds - selectionStartSeconds) * SampleRate);
-                if (sample >= 0 && sample < samples.Length && scheduledSamples.Add(sample))
-                    AddClick(samples, sample, pulseIndex == 0, gain);
+                var atSeconds = Math.Max(
+                    0,
+                    score.SecondsAtPerformanceBeat(beat, tempoScale) - selectionStartSeconds);
+                var pulseKey = (long)Math.Round(atSeconds * 1_000_000d);
+                if (scheduledPulses.Add(pulseKey))
+                {
+                    AddMetronomePulse(events, atSeconds, pulseIndex == 0, durationSeconds);
+                    pulseCount++;
+                }
                 pulseIndex++;
             }
         }
+
+        return pulseCount;
     }
 
-    private static byte[] BuildMidiPreview(
-        MidiReference midi,
-        IReadOnlySet<int> trackIndexes,
-        bool includeMetronome,
-        int pianoVolumePercent,
-        int metronomeVolumePercent,
-        string presetId,
-        CancellationToken cancellationToken)
+    private static void AddMetronomePulse(
+        List<PlaybackEvent> events,
+        double atSeconds,
+        bool accent,
+        double durationSeconds)
     {
-        var selectedNotes = midi.Notes
-            .Where(note => trackIndexes.Contains(note.TrackIndex) && note.Channel != 9)
-            .ToArray();
-        var beats = Math.Max(1, selectedNotes.Length == 0
-            ? 1
-            : selectedNotes.Max(note => note.OnsetBeats + note.DurationBeats));
-        var secondsPerBeat = 60d / Math.Max(1d, midi.TempoBpm);
-        var totalSeconds = beats * secondsPerBeat + ReleaseTailSeconds;
-        if (totalSeconds > MaxPreviewSeconds)
-            throw new InvalidOperationException("The MIDI preview exceeds the safe render duration.");
+        if (atSeconds > durationSeconds + 1e-9)
+            return;
 
-        var samples = new float[(int)Math.Max(SampleRate, Math.Ceiling(totalSeconds * SampleRate))];
-        foreach (var note in selectedNotes)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            AddPianoVoice(
-                samples,
-                note.NoteNumber,
-                note.Velocity,
-                note.OnsetBeats * secondsPerBeat,
-                Math.Max(0.05, note.DurationBeats * secondsPerBeat),
-                0,
-                Math.Clamp(pianoVolumePercent, 0, 100) / 100d,
-                presetId,
-                cancellationToken);
-        }
+        var note = accent ? 76 : 77;
+        events.Add(new PlaybackEvent(
+            Math.Max(0, atSeconds),
+            PlaybackEventKind.MetronomeOn,
+            note,
+            accent ? 118 : 96));
+        events.Add(new PlaybackEvent(
+            Math.Min(durationSeconds, Math.Max(0, atSeconds) + (accent ? 0.08 : 0.055)),
+            PlaybackEventKind.MetronomeOff,
+            note,
+            0));
+    }
 
-        if (includeMetronome)
+    private byte[] RegisterPlan(PlaybackPlan plan)
+    {
+        PrunePendingPlans();
+        var planId = Guid.NewGuid();
+        if (!_pendingPlans.TryAdd(planId, plan))
+            throw new InvalidOperationException("A unique real-time playback plan could not be registered.");
+        return CreateCompatibilityEnvelope(planId, plan.DurationSeconds);
+    }
+
+    private void StartRealtimePlayback(PlaybackPlan plan)
+    {
+        StopPreview();
+
+        if (plan.PianoNoteCount > 0)
         {
-            for (var beat = 0d; beat <= beats + 1e-9; beat += 1d)
+            lock (_synthGate)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                AddClick(
-                    samples,
-                    (int)Math.Round(beat * secondsPerBeat * SampleRate),
-                    Math.Abs(beat % 4d) < 1e-9,
-                    Math.Clamp(metronomeVolumePercent, 0, 100) / 100d);
+                _previewSynth.VolumePercent = plan.PianoVolumePercent;
+                var programResult = _previewSynth.SetProgram(plan.PianoPatch);
+                if (!programResult.Success)
+                    throw new InvalidOperationException(programResult.Message);
             }
         }
 
-        return ToWaveFile(samples);
+        if (plan.MetronomePulseCount > 0)
+        {
+            lock (_synthGate)
+            {
+                _metronomeSynth.VolumePercent = plan.MetronomeVolumePercent;
+                var metronomeResult = _metronomeSynth.Open();
+                if (!metronomeResult.Success)
+                    throw new InvalidOperationException(metronomeResult.Message);
+            }
+        }
+
+        lock (_synthGate)
+        {
+            _liveNoteSynth.AllNotesOff();
+            _liveNoteReferenceCounts.Clear();
+        }
+
+        var cancellation = new CancellationTokenSource();
+        long generation;
+        lock (_previewGate)
+        {
+            _activePlaybackCancellation = cancellation;
+            _realtimePlaybackActive = true;
+            generation = ++_playbackGeneration;
+        }
+
+        _ = RunPlaybackPlanSafelyAsync(plan, generation, cancellation);
     }
 
-    private static void AddPianoVoice(
-        float[] samples,
-        int midiNote,
-        int velocity,
-        double onsetSeconds,
-        double soundingDurationSeconds,
-        double elapsedSeconds,
-        double gain,
-        string presetId,
+    private async Task RunPlaybackPlanSafelyAsync(
+        PlaybackPlan plan,
+        long generation,
+        CancellationTokenSource cancellation)
+    {
+        try
+        {
+            await RunPlaybackPlanAsync(plan, generation, cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            AudioError?.Invoke(this, $"Real-time playback failed: {exception.Message}");
+        }
+        finally
+        {
+            var ownsOutput = false;
+            lock (_previewGate)
+            {
+                if (_playbackGeneration == generation)
+                {
+                    _activePlaybackCancellation = null;
+                    _realtimePlaybackActive = false;
+                    ownsOutput = true;
+                }
+            }
+
+            if (ownsOutput)
+            {
+                lock (_synthGate)
+                {
+                    _previewSynth.AllNotesOff();
+                    _metronomeSynth.AllNotesOff();
+                }
+            }
+
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task RunPlaybackPlanAsync(
+        PlaybackPlan plan,
+        long generation,
         CancellationToken cancellationToken)
     {
-        var start = Math.Max(0, (int)Math.Round(onsetSeconds * SampleRate));
-        var durationSeconds = Math.Max(0.05, soundingDurationSeconds);
-        var voiceSeconds = Math.Max(0.12, durationSeconds + ReleaseTailSeconds - elapsedSeconds);
-        var length = Math.Min(samples.Length - start, (int)Math.Ceiling(voiceSeconds * SampleRate));
-        if (length <= 0)
-            return;
+        var clock = Stopwatch.StartNew();
+        var activePianoNotes = new Dictionary<int, int>();
+        var eventIndex = 0;
 
-        var frequency = 440d * Math.Pow(2d, (midiNote - 69) / 12d);
-        var level = Math.Clamp(velocity / 127d, 0.05, 1d);
-        for (var index = 0; index < length; index++)
+        while (eventIndex < plan.Events.Count)
         {
-            if ((index & 2047) == 0)
+            cancellationToken.ThrowIfCancellationRequested();
+            var scheduledSeconds = plan.Events[eventIndex].AtSeconds;
+            await WaitUntilAsync(clock, scheduledSeconds, cancellationToken);
+
+            while (eventIndex < plan.Events.Count &&
+                   Math.Abs(plan.Events[eventIndex].AtSeconds - scheduledSeconds) <= 0.0005)
+            {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (!IsCurrentPlaybackGeneration(generation))
+                    return;
 
-            var time = elapsedSeconds + index / (double)SampleRate;
-            var sampleValue = PianoSample(presetId, frequency, time, durationSeconds, level, gain);
-            samples[start + index] += (float)sampleValue;
+                DispatchPlaybackEvent(plan.Events[eventIndex], activePianoNotes);
+                eventIndex++;
+            }
+        }
+
+        await WaitUntilAsync(
+            clock,
+            plan.DurationSeconds,
+            cancellationToken);
+    }
+
+    private void DispatchPlaybackEvent(
+        PlaybackEvent playbackEvent,
+        Dictionary<int, int> activePianoNotes)
+    {
+        lock (_synthGate)
+        {
+            switch (playbackEvent.Kind)
+            {
+                case PlaybackEventKind.PianoOff:
+                    if (!activePianoNotes.TryGetValue(playbackEvent.Note, out var activeCount))
+                        return;
+                    if (activeCount <= 1)
+                    {
+                        activePianoNotes.Remove(playbackEvent.Note);
+                        var offResult = _previewSynth.NoteOff(playbackEvent.Note);
+                        if (!offResult.Success)
+                            throw new InvalidOperationException(offResult.Message);
+                    }
+                    else
+                    {
+                        activePianoNotes[playbackEvent.Note] = activeCount - 1;
+                    }
+                    break;
+
+                case PlaybackEventKind.MetronomeOff:
+                    var clickOffResult = _metronomeSynth.NoteOff(playbackEvent.Note, channel: 9);
+                    if (!clickOffResult.Success)
+                        throw new InvalidOperationException(clickOffResult.Message);
+                    break;
+
+                case PlaybackEventKind.MetronomeOn:
+                    var clickOnResult = _metronomeSynth.NoteOn(
+                        playbackEvent.Note,
+                        playbackEvent.Velocity,
+                        channel: 9);
+                    if (!clickOnResult.Success)
+                        throw new InvalidOperationException(clickOnResult.Message);
+                    break;
+
+                case PlaybackEventKind.PianoOn:
+                    var noteOnResult = _previewSynth.NoteOn(
+                        playbackEvent.Note,
+                        playbackEvent.Velocity);
+                    if (!noteOnResult.Success)
+                        throw new InvalidOperationException(noteOnResult.Message);
+                    activePianoNotes[playbackEvent.Note] =
+                        activePianoNotes.GetValueOrDefault(playbackEvent.Note) + 1;
+                    break;
+            }
         }
     }
 
-    private static double PianoSample(
-        string presetId,
-        double frequency,
-        double time,
-        double durationSeconds,
-        double level,
-        double gain)
+    private bool IsCurrentPlaybackGeneration(long generation)
     {
-        var release = time <= durationSeconds
-            ? 1d
-            : Math.Exp(-(time - durationSeconds) * (presetId == "church_organ" ? 15d : 6d));
-
-        if (presetId == "soft_synth")
+        lock (_previewGate)
         {
-            var attack = Math.Min(1d, time / 0.008d);
-            var envelope = attack * Math.Exp(-time * 2.4d) * release * 0.12d * level * gain;
-            return (
-                Math.Sin(2d * Math.PI * frequency * time) +
-                Math.Sin(2d * Math.PI * frequency * 2d * time) * 0.32d +
-                Math.Sin(2d * Math.PI * frequency * 3d * time) * 0.13d) * envelope;
+            return !_disposed &&
+                   _realtimePlaybackActive &&
+                   _playbackGeneration == generation;
         }
-
-        if (presetId == "bright_piano")
-        {
-            var attack = Math.Min(1d, time / 0.002d);
-            var envelope = attack * Math.Exp(-time * 2d) * release * 0.14d * level * gain;
-            return (
-                Math.Sin(2d * Math.PI * frequency * time) +
-                Math.Sin(4d * Math.PI * frequency * time) * 0.55d +
-                Math.Sin(6d * Math.PI * frequency * time) * 0.35d +
-                Math.Sin(8d * Math.PI * frequency * time) * 0.20d) * envelope;
-        }
-
-        if (presetId == "electric_grand")
-        {
-            var attack = Math.Min(1d, time / 0.003d);
-            var envelope = attack * Math.Exp(-time * 1.9d) * release * 0.14d * level * gain;
-            return (
-                Math.Sin(2d * Math.PI * frequency * time) +
-                Math.Sin(4d * Math.PI * frequency * time) * 0.40d +
-                Math.Sin(3d * Math.PI * frequency * time) * 0.25d) * envelope;
-        }
-
-        if (presetId == "honky_tonk")
-        {
-            var attack = Math.Min(1d, time / 0.004d);
-            var envelope = attack * Math.Exp(-time * 2.2d) * release * 0.13d * level * gain;
-            return (
-                Math.Sin(2d * Math.PI * frequency * time) +
-                Math.Sin(2d * Math.PI * frequency * 1.004d * time) * 0.85d +
-                Math.Sin(4d * Math.PI * frequency * time) * 0.35d) * envelope;
-        }
-
-        if (presetId == "electric_piano")
-        {
-            var attack = Math.Min(1d, time / 0.003d);
-            var envelope = attack * Math.Exp(-time * 1.8d) * release * 0.14d * level * gain;
-            var tine = Math.Sin(2d * Math.PI * frequency * 7d * time) * Math.Exp(-time * 25d) * 0.35d;
-            return (
-                Math.Sin(2d * Math.PI * frequency * time) +
-                Math.Sin(4d * Math.PI * frequency * time) * 0.20d +
-                tine) * envelope;
-        }
-
-        if (presetId == "harpsichord")
-        {
-            var attack = Math.Min(1d, time / 0.001d);
-            var envelope = attack * Math.Exp(-time * 3.5d) * release * 0.11d * level * gain;
-            return (
-                Math.Sin(2d * Math.PI * frequency * time) +
-                Math.Sin(4d * Math.PI * frequency * time) * 0.60d +
-                Math.Sin(6d * Math.PI * frequency * time) * 0.40d +
-                Math.Sin(8d * Math.PI * frequency * time) * 0.25d) * envelope;
-        }
-
-        if (presetId == "church_organ")
-        {
-            var attack = Math.Min(1d, time / 0.035d);
-            var envelope = attack * release * 0.08d * level * gain;
-            return (
-                Math.Sin(Math.PI * frequency * time) * 0.40d +
-                Math.Sin(2d * Math.PI * frequency * time) +
-                Math.Sin(4d * Math.PI * frequency * time) * 0.50d +
-                Math.Sin(6d * Math.PI * frequency * time) * 0.30d +
-                Math.Sin(8d * Math.PI * frequency * time) * 0.20d) * envelope;
-        }
-
-        const double stiffness = 0.00025d;
-        var acousticAttack = Math.Min(1d, time / 0.0035d);
-        var bodyDecay = Math.Exp(-time * 1.8d) * 0.65d + Math.Exp(-time * 0.35d) * 0.35d;
-        var acousticEnvelope = acousticAttack * bodyDecay * release * 0.13d * level * gain;
-        var sum = Math.Sin(2d * Math.PI * frequency * Math.Sqrt(1d + stiffness) * time);
-        var weights = new[] { 0d, 0d, 0.42d, 0.28d, 0.18d, 0.12d, 0.08d, 0.05d, 0.03d };
-        for (var harmonic = 2; harmonic <= 8; harmonic++)
-        {
-            var partialFrequency = harmonic * frequency *
-                                   Math.Sqrt(1d + stiffness * harmonic * harmonic);
-            sum += Math.Sin(2d * Math.PI * partialFrequency * time) * weights[harmonic];
-        }
-
-        sum += Math.Sin(2d * Math.PI * frequency * 1.0018d * time) * 0.14d;
-        sum += Math.Sin(2d * Math.PI * frequency * 14.5d * time) *
-               Math.Exp(-time * 110d) * 0.22d;
-        return sum * acousticEnvelope;
     }
 
-    private static void AddClick(float[] samples, int start, bool accent, double gain)
+    private bool IsPreviewOutputActive()
     {
-        var length = Math.Min(samples.Length - start, (int)((accent ? 0.09 : 0.065) * SampleRate));
-        if (length <= 0)
+        lock (_previewGate)
+        {
+            return _realtimePlaybackActive || _legacyPreviewPlayer is not null;
+        }
+    }
+
+    private async Task ReleaseStandaloneClickAsync(int note)
+    {
+        try
+        {
+            await Task.Delay(90);
+            if (_disposed || IsPreviewOutputActive())
+                return;
+
+            lock (_synthGate)
+            {
+                _metronomeSynth.NoteOff(note, channel: 9);
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private async Task ReleaseLiveNoteAsync(int midiNote)
+    {
+        try
+        {
+            await Task.Delay(850);
+            if (_disposed)
+                return;
+
+            lock (_synthGate)
+            {
+                if (!_liveNoteReferenceCounts.TryGetValue(midiNote, out var activeCount))
+                    return;
+
+                if (activeCount <= 1)
+                {
+                    _liveNoteReferenceCounts.Remove(midiNote);
+                    _liveNoteSynth.NoteOff(midiNote);
+                }
+                else
+                {
+                    _liveNoteReferenceCounts[midiNote] = activeCount - 1;
+                }
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private static async Task WaitUntilAsync(
+        Stopwatch clock,
+        double targetSeconds,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var remainingSeconds = targetSeconds - clock.Elapsed.TotalSeconds;
+            if (remainingSeconds <= 0)
+                return;
+
+            if (remainingSeconds > 0.012)
+            {
+                var delay = TimeSpan.FromSeconds(Math.Min(0.025, remainingSeconds - 0.004));
+                await Task.Delay(delay, cancellationToken);
+            }
+            else if (remainingSeconds > 0.002)
+            {
+                await Task.Delay(1, cancellationToken);
+            }
+            else
+            {
+                await Task.Yield();
+            }
+        }
+    }
+
+    private void PrunePendingPlans()
+    {
+        var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(2);
+        foreach (var entry in _pendingPlans)
+        {
+            if (entry.Value.CreatedUtc < cutoff)
+                _pendingPlans.TryRemove(entry.Key, out _);
+        }
+
+        if (_pendingPlans.Count <= 16)
             return;
 
-        var frequency = accent ? 1320d : 880d;
-        for (var index = 0; index < length; index++)
+        foreach (var planId in _pendingPlans
+                     .OrderBy(entry => entry.Value.CreatedUtc)
+                     .Take(_pendingPlans.Count - 16)
+                     .Select(entry => entry.Key))
         {
-            var time = index / (double)SampleRate;
-            var envelope = Math.Exp(-time * 48d) * (accent ? 0.25d : 0.18d) * gain;
-            samples[start + index] += (float)(Math.Sin(2d * Math.PI * frequency * time) * envelope);
+            _pendingPlans.TryRemove(planId, out _);
         }
     }
 
-    private static byte[] CreateClickWave(bool accent, int volumePercent)
+    private static void SortEvents(List<PlaybackEvent> events) =>
+        events.Sort(static (left, right) =>
+        {
+            var timeComparison = left.AtSeconds.CompareTo(right.AtSeconds);
+            return timeComparison != 0
+                ? timeComparison
+                : left.Kind.CompareTo(right.Kind);
+        });
+
+    private static void ValidateDuration(double durationSeconds)
     {
-        var seconds = accent ? 0.09 : 0.065;
-        var samples = new float[(int)(seconds * SampleRate)];
-        AddClick(samples, 0, accent, Math.Clamp(volumePercent, 0, 100) / 100d);
-        return ToWaveFile(samples);
+        if (!double.IsFinite(durationSeconds) || durationSeconds <= 0)
+            throw new InvalidOperationException("The requested playback duration is invalid.");
+        if (durationSeconds > MaximumPlaybackSeconds)
+        {
+            throw new InvalidOperationException(
+                $"The requested playback is {durationSeconds / 60d:0.0} minutes long and exceeds the {MaximumPlaybackSeconds / 60d:0} minute safety limit.");
+        }
     }
 
-    private static byte[] ToWaveFile(float[] samples)
-    {
-        using var stream = new MemoryStream(44 + samples.Length * 2);
-        using var writer = new BinaryWriter(stream);
-        writer.Write(new[] { 'R', 'I', 'F', 'F' });
-        writer.Write(36 + samples.Length * 2);
-        writer.Write(new[] { 'W', 'A', 'V', 'E' });
-        writer.Write(new[] { 'f', 'm', 't', ' ' });
-        writer.Write(16);
-        writer.Write((short)1);
-        writer.Write((short)1);
-        writer.Write(SampleRate);
-        writer.Write(SampleRate * 2);
-        writer.Write((short)2);
-        writer.Write((short)16);
-        writer.Write(new[] { 'd', 'a', 't', 'a' });
-        writer.Write(samples.Length * 2);
+    private static int ResolveRealtimePatch(AudioSoundPreset preset) =>
+        preset.IsSoftSynth ? 88 : Math.Clamp(preset.PatchNumber, 0, 127);
 
-        foreach (var sample in samples)
+    private static byte[] CreateCompatibilityEnvelope(Guid planId, double durationSeconds)
+    {
+        var approximatePayloadLength = Math.Clamp(
+            (int)Math.Ceiling(durationSeconds * 512d),
+            PlanMarkerOffset + PlanMarkerBytes.Length + 16,
+            4 * 1024 * 1024);
+        var envelope = new byte[approximatePayloadLength];
+        var claimedDataBytes = checked((int)Math.Min(
+            int.MaxValue - 36L,
+            Math.Ceiling((durationSeconds + CompatibilityReleaseTailSeconds) * CompatibilitySampleRate * 2d)));
+
+        WriteAscii(envelope, 0, "RIFF");
+        BitConverter.GetBytes(36 + claimedDataBytes).CopyTo(envelope, 4);
+        WriteAscii(envelope, 8, "WAVE");
+        WriteAscii(envelope, 12, "fmt ");
+        BitConverter.GetBytes(16).CopyTo(envelope, 16);
+        BitConverter.GetBytes((short)1).CopyTo(envelope, 20);
+        BitConverter.GetBytes((short)1).CopyTo(envelope, 22);
+        BitConverter.GetBytes(CompatibilitySampleRate).CopyTo(envelope, 24);
+        BitConverter.GetBytes(CompatibilitySampleRate * 2).CopyTo(envelope, 28);
+        BitConverter.GetBytes((short)2).CopyTo(envelope, 32);
+        BitConverter.GetBytes((short)16).CopyTo(envelope, 34);
+        WriteAscii(envelope, 36, "data");
+        BitConverter.GetBytes(claimedDataBytes).CopyTo(envelope, 40);
+        BitConverter.GetBytes((short)256).CopyTo(envelope, 44);
+        PlanMarkerBytes.CopyTo(envelope, PlanMarkerOffset);
+        planId.ToByteArray().CopyTo(envelope, PlanMarkerOffset + PlanMarkerBytes.Length);
+        return envelope;
+    }
+
+    private static bool TryReadPlanId(byte[] playbackData, out Guid planId)
+    {
+        planId = Guid.Empty;
+        var requiredLength = PlanMarkerOffset + PlanMarkerBytes.Length + 16;
+        if (playbackData.Length < requiredLength ||
+            !playbackData.AsSpan(PlanMarkerOffset, PlanMarkerBytes.Length).SequenceEqual(PlanMarkerBytes))
         {
-            var softSample = (float)Math.Tanh(sample);
-            writer.Write((short)Math.Clamp(
-                softSample * short.MaxValue,
-                short.MinValue,
-                short.MaxValue));
+            return false;
         }
 
-        return stream.ToArray();
+        planId = new Guid(playbackData.AsSpan(PlanMarkerOffset + PlanMarkerBytes.Length, 16));
+        return true;
     }
+
+    private static void WriteAscii(byte[] destination, int offset, string value) =>
+        Encoding.ASCII.GetBytes(value).CopyTo(destination, offset);
+
+    private enum PlaybackEventKind
+    {
+        PianoOff = 0,
+        MetronomeOff = 1,
+        MetronomeOn = 2,
+        PianoOn = 3
+    }
+
+    private readonly record struct PlaybackEvent(
+        double AtSeconds,
+        PlaybackEventKind Kind,
+        int Note,
+        int Velocity);
+
+    private sealed record PlaybackPlan(
+        IReadOnlyList<PlaybackEvent> Events,
+        double DurationSeconds,
+        int PianoPatch,
+        int PianoVolumePercent,
+        int MetronomeVolumePercent,
+        int PianoNoteCount,
+        int MetronomePulseCount,
+        DateTimeOffset CreatedUtc);
 }
+
+public readonly record struct PreparedPlaybackInfo(
+    double DurationSeconds,
+    int PianoNoteCount,
+    int MetronomePulseCount,
+    bool HasImmediatePianoEvent);
