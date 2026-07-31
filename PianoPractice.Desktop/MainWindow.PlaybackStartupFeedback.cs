@@ -35,11 +35,14 @@ public partial class MainWindow
         _viewModel.PropertyChanged += ViewModel_PlaybackStartupPropertyChanged;
         _viewModel.CountdownStepRequested += ViewModel_PlaybackCountdownStarted;
         _viewModel.HideCountdownRequested += ViewModel_PlaybackCountdownEnded;
+        Closed += MainWindow_PlaybackStartupClosed;
         UpdatePlaybackStartupFeedback();
     }
 
-    protected override void OnClosed(EventArgs e)
+    private void MainWindow_PlaybackStartupClosed(object? sender, EventArgs e)
     {
+        Closed -= MainWindow_PlaybackStartupClosed;
+
         if (_playbackStartupFeedbackInstalled)
         {
             _viewModel.PropertyChanged -= ViewModel_PlaybackStartupPropertyChanged;
@@ -49,7 +52,7 @@ public partial class MainWindow
 
         _playbackStartupTimer?.Stop();
         RestorePlaybackPreparationCursor();
-        base.OnClosed(e);
+        _playbackStartupFeedbackInstalled = false;
     }
 
     private void InstallPlaybackStartupFeedback()
