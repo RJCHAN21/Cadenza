@@ -1,16 +1,22 @@
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
+using PianoPractice.Desktop.Models;
 
 namespace PianoPractice.Desktop;
 
 public partial class MainWindow
 {
-    private const string TrustedNotationOrigin = "https://cadenza.local";
     private bool _runtimeHardeningInstalled;
     private string? _runtimePatchScript;
+    private readonly Stopwatch _correctedPerformanceClock = new();
+    private bool _correctedClockActive;
+    private double _correctedClockAnchorBeat;
+    private double _lastCorrectedBeat;
 
     static MainWindow()
     {
@@ -56,6 +62,9 @@ public partial class MainWindow
         core.NavigationCompleted += HardenedNavigationCompleted;
         core.WebMessageReceived += HardenedWebMessageReceived;
 
+        CompositionTarget.Rendering += RuntimeCorrectedRendering;
+        Closed += RuntimeHardeningClosed;
+
         var patchPath = Path.Combine(
             AppContext.BaseDirectory,
             "Assets",
@@ -70,6 +79,62 @@ public partial class MainWindow
         _runtimePatchScript = await File.ReadAllTextAsync(patchPath);
         await core.AddScriptToExecuteOnDocumentCreatedAsync(_runtimePatchScript);
         await ApplyRuntimePatchToCurrentDocumentAsync();
+    }
+
+    private void RuntimeHardeningClosed(object? sender, EventArgs args)
+    {
+        CompositionTarget.Rendering -= RuntimeCorrectedRendering;
+        _correctedPerformanceClock.Stop();
+    }
+
+    private void RuntimeCorrectedRendering(object? sender, EventArgs args)
+    {
+        var score = _viewModel.CurrentScore;
+        var clockRequired = score is not null &&
+            ((_viewModel.IsPreviewPlaying && !_viewModel.IsLessonActive) ||
+             (_viewModel.IsLessonActive && _viewModel.SelectedLessonMode == LessonMode.TimedPlay));
+
+        if (!clockRequired || score is null)
+        {
+            _correctedClockActive = false;
+            _correctedPerformanceClock.Reset();
+            return;
+        }
+
+        var observedBeat = Math.Clamp(_viewModel.CursorBeat, 0, score.TotalPerformanceBeats);
+        if (!_correctedClockActive || Math.Abs(observedBeat - _lastCorrectedBeat) > 0.75)
+        {
+            _correctedClockActive = true;
+            _correctedClockAnchorBeat = observedBeat;
+            _lastCorrectedBeat = observedBeat;
+            _correctedPerformanceClock.Restart();
+        }
+
+        var tempoScale = Math.Max(0.01, _viewModel.EffectiveLessonTempoBpm / Math.Max(1d, score.TempoBpm));
+        var anchorSeconds = score.SecondsAtPerformanceBeat(_correctedClockAnchorBeat, tempoScale);
+        var targetBeat = score.PerformanceBeatAtSeconds(
+            anchorSeconds + _correctedPerformanceClock.Elapsed.TotalSeconds,
+            tempoScale);
+        var rangeEnd = SelectedPerformanceRangeEnd(score);
+        targetBeat = Math.Clamp(targetBeat, _correctedClockAnchorBeat, rangeEnd);
+
+        _viewModel.CursorBeat = targetBeat;
+        _lastCorrectedBeat = targetBeat;
+    }
+
+    private double SelectedPerformanceRangeEnd(ScoreDocument score)
+    {
+        var endMeasure = _viewModel.FocusEndMeasure <= 0
+            ? score.MeasureCount
+            : _viewModel.FocusEndMeasure;
+        return score.PerformanceMeasures
+            .Where(occurrence =>
+                int.TryParse(occurrence.MeasureNumber, out var measure) &&
+                measure >= _viewModel.FocusStartMeasure &&
+                measure <= endMeasure)
+            .Select(occurrence => occurrence.PerformanceStartBeat + occurrence.DurationBeats)
+            .DefaultIfEmpty(score.TotalPerformanceBeats)
+            .Max();
     }
 
     private static void HardenedNavigationStarting(
