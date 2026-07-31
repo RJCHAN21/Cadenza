@@ -13,6 +13,7 @@ internal static class AuthoritativeNavigationRegression
         EventsPastWrittenBarlineCannotLeakAcrossRepeat();
         ExpectedGroupsMatchExpandedPerformance();
         Console.WriteLine("PASS authoritative navigation regression fixtures");
+        TraceUserScoreIfProvided();
     }
 
     private static void StandardVoltaSkipsFirstEndingOnSecondPass()
@@ -80,6 +81,51 @@ internal static class AuthoritativeNavigationRegression
             $"Expected-note groups ({groups.Count}) disagree with expanded note onsets ({expectedOnsets}).");
         Assert(groups.Count > 0 && groups[^1].OnsetBeats < score.TotalPerformanceBeats,
             "The final expected-note group lies outside the performance plan.");
+    }
+
+    private static void TraceUserScoreIfProvided()
+    {
+        var scorePath = Environment.GetCommandLineArgs()
+            .Skip(1)
+            .FirstOrDefault(File.Exists);
+        if (scorePath is null)
+            return;
+
+        var score = new MusicXmlImporter().Import(scorePath);
+        var groups = score.GetPracticeGroups(PracticeMode.BothHands);
+        Console.WriteLine();
+        Console.WriteLine("AUTHORITATIVE PERFORMANCE TRACE");
+        Console.WriteLine($"Score: {score.Title}");
+        Console.WriteLine(
+            $"Written measures={score.MeasureCount}; occurrences={score.PerformanceMeasures.Count}; " +
+            $"performance beats={score.TotalPerformanceBeats:0.###}; expected groups={groups.Count}; " +
+            $"last expected beat={(groups.Count == 0 ? -1 : groups[^1].OnsetBeats):0.###}; " +
+            $"warnings={score.ValidationWarnings.Count}");
+        Console.WriteLine("Sequence: " + string.Join(" -> ", score.PerformanceMeasures.Select(occurrence =>
+            $"{occurrence.MeasureNumber}[pass {occurrence.RepeatPass}; occ {occurrence.OccurrenceIndex}]")));
+
+        for (var index = 1; index < score.PerformanceMeasures.Count; index++)
+        {
+            var previous = score.PerformanceMeasures[index - 1];
+            var current = score.PerformanceMeasures[index];
+            var normalNext = current.SourceMeasureIndex == previous.SourceMeasureIndex + 1;
+            if (normalNext)
+                continue;
+
+            Console.WriteLine(
+                $"JUMP at performance beat {current.PerformanceStartBeat:0.###}: " +
+                $"measure {previous.MeasureNumber} (source {previous.SourceMeasureIndex}, pass {previous.RepeatPass}) -> " +
+                $"measure {current.MeasureNumber} (source {current.SourceMeasureIndex}, pass {current.RepeatPass})");
+        }
+
+        foreach (var warning in score.ValidationWarnings)
+        {
+            Console.WriteLine(
+                $"WARNING [{warning.Code}] bars {warning.StartMeasure}-{warning.EndMeasure} " +
+                $"blocking={warning.BlocksAssessment}: {warning.Message}");
+        }
+        Console.WriteLine("END AUTHORITATIVE PERFORMANCE TRACE");
+        Console.WriteLine();
     }
 
     private static ScoreDocument Import(string xml)
