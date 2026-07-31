@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Threading;
 using System.Xml;
@@ -221,6 +222,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _midiDeviceService.InputDisconnected += MidiDeviceService_InputDisconnected;
         _midiDeviceService.Diagnostic += MidiDeviceService_Diagnostic;
         RefreshLibrary();
+        SanitizeShortcutBindings();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -264,6 +266,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         {
             if (!SetField(ref _expectedLabel, value)) return;
             OnPropertyChanged(nameof(NextNotesLabel));
+            OnPropertyChanged(nameof(CurrentBarLabel));
+            OnPropertyChanged(nameof(CurrentNoteToHitLabel));
         }
     }
     public string NextNotesLabel
@@ -274,6 +278,21 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             return separator >= 0 ? ExpectedLabel[(separator + 1)..].Trim() : ExpectedLabel;
         }
     }
+    public string CurrentBarLabel
+    {
+        get
+        {
+            var separator = ExpectedLabel.IndexOf('|');
+            return separator >= 0 ? ExpectedLabel[..separator].Trim() : (HasScore ? "Bar 1" : string.Empty);
+        }
+    }
+    public string CurrentNoteToHitLabel => NextNotesLabel;
+    public string ModeTitleLabel => SelectedLessonMode switch
+    {
+        LessonMode.Listen => "LISTEN MODE",
+        LessonMode.WaitForYou => "PRACTICE MODE",
+        _ => "PERFORMANCE MODE"
+    };
     public string CorrectLabel { get => _correctLabel; private set => SetField(ref _correctLabel, value); }
     public string MissedLabel { get => _missedLabel; private set => SetField(ref _missedLabel, value); }
     public string ExtraLabel { get => _extraLabel; private set => SetField(ref _extraLabel, value); }
@@ -327,9 +346,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public double CursorBeat
     {
         get => _cursorBeat;
-        private set
+        set
         {
             if (!SetField(ref _cursorBeat, value)) return;
+            _prePracticeMatchedNotes.Clear();
             UpdateExpectedGuideForCursor();
         }
     }
@@ -549,10 +569,1110 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         set => SetField(ref _autoRepeatStatusText, value);
     }
 
+    public bool AutoDismissResultsEnabled
+    {
+        get => _profile.Settings.AutoDismissResultsEnabled;
+        set
+        {
+            if (_profile.Settings.AutoDismissResultsEnabled != value)
+            {
+                _profile.Settings.AutoDismissResultsEnabled = value;
+                OnPropertyChanged();
+                SaveProfileSettings();
+                if (ResultsVisible)
+                {
+                    if (value) StartAutoRepeatCountdown();
+                    else StopAutoRepeatCountdown();
+                }
+            }
+        }
+    }
+
+    public int CustomScoreScale
+    {
+        get => _profile.Settings.CustomScoreScale <= 0 ? 75 : _profile.Settings.CustomScoreScale;
+        set
+        {
+            var clamped = Math.Clamp(value, 50, 120);
+            if (_profile.Settings.CustomScoreScale != clamped)
+            {
+                _profile.Settings.CustomScoreScale = clamped;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(CustomScoreScaleLabel));
+                SaveProfileSettings();
+            }
+        }
+    }
+
+    public string CustomScoreScaleLabel => CustomScoreScale switch
+    {
+        <= 60 => $"{CustomScoreScale}% (Compact)",
+        <= 75 => $"{CustomScoreScale}% (Balanced)",
+        <= 90 => $"{CustomScoreScale}% (Large)",
+        _ => $"{CustomScoreScale}% (Extra Large)"
+    };
+
+    public int CustomScoreMargin
+    {
+        get => _profile.Settings.CustomScoreMargin <= 0 ? 80 : _profile.Settings.CustomScoreMargin;
+        set
+        {
+            var clamped = Math.Clamp(value, 20, 120);
+            if (_profile.Settings.CustomScoreMargin != clamped)
+            {
+                _profile.Settings.CustomScoreMargin = clamped;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(CustomScoreMarginLabel));
+                SaveProfileSettings();
+            }
+        }
+    }
+
+    public string CustomScoreMarginLabel => CustomScoreMargin switch
+    {
+        <= 35 => $"{CustomScoreMargin}px (Full Width)",
+        <= 65 => $"{CustomScoreMargin}px (Balanced)",
+        <= 95 => $"{CustomScoreMargin}px (Spacious)",
+        _ => $"{CustomScoreMargin}px (Wide Margins)"
+    };
+
+    public int CustomNoteSpacing
+    {
+        get => _profile.Settings.CustomNoteSpacing <= 0 ? 100 : _profile.Settings.CustomNoteSpacing;
+        set
+        {
+            var clamped = Math.Clamp(value, 50, 160);
+            if (_profile.Settings.CustomNoteSpacing != clamped)
+            {
+                _profile.Settings.CustomNoteSpacing = clamped;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(CustomNoteSpacingLabel));
+                SaveProfileSettings();
+            }
+        }
+    }
+
+    public string CustomNoteSpacingLabel => CustomNoteSpacing switch
+    {
+        <= 70 => $"{CustomNoteSpacing}% (Tight Note Distance)",
+        <= 110 => $"{CustomNoteSpacing}% (Balanced Note Distance)",
+        <= 135 => $"{CustomNoteSpacing}% (Spacious Note Distance)",
+        _ => $"{CustomNoteSpacing}% (Expanded Note Distance)"
+    };
+
+    public int CustomBarDensity
+    {
+        get => _profile.Settings.CustomBarDensity <= 0 ? 4 : _profile.Settings.CustomBarDensity;
+        set
+        {
+            var clamped = Math.Clamp(value, 2, 8);
+            if (_profile.Settings.CustomBarDensity != clamped)
+            {
+                _profile.Settings.CustomBarDensity = clamped;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(CustomBarDensityLabel));
+                SaveProfileSettings();
+            }
+        }
+    }
+
+    public string CustomBarDensityLabel => CustomBarDensity switch
+    {
+        <= 2 => $"{CustomBarDensity} Bars per Line (Spacious)",
+        <= 4 => $"{CustomBarDensity} Bars per Line (Balanced)",
+        <= 6 => $"{CustomBarDensity} Bars per Line (Dense)",
+        _ => $"{CustomBarDensity} Bars per Line (Max Density)"
+    };
+
+    private bool _isKeyLearningActive;
+    private bool _isMidiLearningActive;
+    private string _learningActionName = string.Empty;
+    private string _learningPromptText = string.Empty;
+
+    public bool IsKeyLearningActive
+    {
+        get => _isKeyLearningActive;
+        set => SetField(ref _isKeyLearningActive, value);
+    }
+
+    public bool IsMidiLearningActive
+    {
+        get => _isMidiLearningActive;
+        set => SetField(ref _isMidiLearningActive, value);
+    }
+
+    public bool IsShortcutLearningActive => IsKeyLearningActive || IsMidiLearningActive;
+
+    public string LearningActionName
+    {
+        get => _learningActionName;
+        set => SetField(ref _learningActionName, value);
+    }
+
+    public string LearningPromptText
+    {
+        get => _learningPromptText;
+        set => SetField(ref _learningPromptText, value);
+    }
+
+    public string KeyShortcutStartPractice
+    {
+        get => _profile.Settings.KeyShortcutStartPractice;
+        set
+        {
+            _profile.Settings.KeyShortcutStartPractice = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(KeyShortcutStartPracticeText));
+            SaveProfileSettings();
+        }
+    }
+
+    public string KeyShortcutStartPerformance
+    {
+        get => _profile.Settings.KeyShortcutStartPerformance;
+        set
+        {
+            _profile.Settings.KeyShortcutStartPerformance = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(KeyShortcutStartPerformanceText));
+            SaveProfileSettings();
+        }
+    }
+
+    public string KeyShortcutRestartSession
+    {
+        get => _profile.Settings.KeyShortcutRestartSession;
+        set
+        {
+            _profile.Settings.KeyShortcutRestartSession = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(KeyShortcutRestartSessionText));
+            SaveProfileSettings();
+        }
+    }
+
+    public string KeyShortcutDismissResults
+    {
+        get => _profile.Settings.KeyShortcutDismissResults;
+        set
+        {
+            _profile.Settings.KeyShortcutDismissResults = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(KeyShortcutDismissResultsText));
+            SaveProfileSettings();
+        }
+    }
+
+    public string KeyShortcutRepeatResults
+    {
+        get => _profile.Settings.KeyShortcutRepeatResults;
+        set
+        {
+            _profile.Settings.KeyShortcutRepeatResults = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(KeyShortcutRepeatResultsText));
+            SaveProfileSettings();
+        }
+    }
+
+    public double HoldDurationSeconds
+    {
+        get => _profile.Settings.MidiShortcutHoldSeconds <= 0 ? 3.0 : _profile.Settings.MidiShortcutHoldSeconds;
+        set
+        {
+            var clamped = Math.Clamp(Math.Round(value * 2.0) / 2.0, 1.0, 5.0);
+            if (Math.Abs(_profile.Settings.MidiShortcutHoldSeconds - clamped) < 0.01) return;
+            _profile.Settings.MidiShortcutHoldSeconds = clamped;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HoldDurationSecondsText));
+            SaveProfileSettings();
+        }
+    }
+
+    public string HoldDurationSecondsText => $"{HoldDurationSeconds:0.0} seconds";
+
+    public int MidiShortcutRestartNote
+    {
+        get => _profile.Settings.MidiShortcutRestartNote;
+        set
+        {
+            _profile.Settings.MidiShortcutRestartNote = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MidiShortcutRestartNoteText));
+            SaveProfileSettings();
+        }
+    }
+
+    public string KeyShortcutListen
+    {
+        get => _profile.Settings.KeyShortcutListen;
+        set { _profile.Settings.KeyShortcutListen = value; OnPropertyChanged(); OnPropertyChanged(nameof(KeyShortcutListenText)); SaveProfileSettings(); }
+    }
+
+    public string KeyShortcutTogglePlay
+    {
+        get => _profile.Settings.KeyShortcutTogglePlay;
+        set { _profile.Settings.KeyShortcutTogglePlay = value; OnPropertyChanged(); OnPropertyChanged(nameof(KeyShortcutTogglePlayText)); SaveProfileSettings(); }
+    }
+
+    public string KeyShortcutPreviousMeasure
+    {
+        get => _profile.Settings.KeyShortcutPreviousMeasure;
+        set { _profile.Settings.KeyShortcutPreviousMeasure = value; OnPropertyChanged(); OnPropertyChanged(nameof(KeyShortcutPreviousMeasureText)); SaveProfileSettings(); }
+    }
+
+    public string KeyShortcutNextMeasure
+    {
+        get => _profile.Settings.KeyShortcutNextMeasure;
+        set { _profile.Settings.KeyShortcutNextMeasure = value; OnPropertyChanged(); OnPropertyChanged(nameof(KeyShortcutNextMeasureText)); SaveProfileSettings(); }
+    }
+
+    public string KeyShortcutPreviousPage
+    {
+        get => _profile.Settings.KeyShortcutPreviousPage;
+        set { _profile.Settings.KeyShortcutPreviousPage = value; OnPropertyChanged(); OnPropertyChanged(nameof(KeyShortcutPreviousPageText)); SaveProfileSettings(); }
+    }
+
+    public string KeyShortcutNextPage
+    {
+        get => _profile.Settings.KeyShortcutNextPage;
+        set { _profile.Settings.KeyShortcutNextPage = value; OnPropertyChanged(); OnPropertyChanged(nameof(KeyShortcutNextPageText)); SaveProfileSettings(); }
+    }
+
+    public int MidiShortcutListenNote
+    {
+        get => _profile.Settings.MidiShortcutListenNote;
+        set { _profile.Settings.MidiShortcutListenNote = value; OnPropertyChanged(); OnPropertyChanged(nameof(MidiShortcutListenNoteText)); SaveProfileSettings(); }
+    }
+
+    public int MidiShortcutTogglePlayNote
+    {
+        get => _profile.Settings.MidiShortcutTogglePlayNote;
+        set { _profile.Settings.MidiShortcutTogglePlayNote = value; OnPropertyChanged(); OnPropertyChanged(nameof(MidiShortcutTogglePlayNoteText)); SaveProfileSettings(); }
+    }
+
+    public int MidiShortcutPreviousMeasureNote
+    {
+        get => _profile.Settings.MidiShortcutPreviousMeasureNote;
+        set { _profile.Settings.MidiShortcutPreviousMeasureNote = value; OnPropertyChanged(); OnPropertyChanged(nameof(MidiShortcutPreviousMeasureNoteText)); SaveProfileSettings(); }
+    }
+
+    public int MidiShortcutNextMeasureNote
+    {
+        get => _profile.Settings.MidiShortcutNextMeasureNote;
+        set { _profile.Settings.MidiShortcutNextMeasureNote = value; OnPropertyChanged(); OnPropertyChanged(nameof(MidiShortcutNextMeasureNoteText)); SaveProfileSettings(); }
+    }
+
+    public int MidiShortcutPreviousPageNote
+    {
+        get => _profile.Settings.MidiShortcutPreviousPageNote;
+        set { _profile.Settings.MidiShortcutPreviousPageNote = value; OnPropertyChanged(); OnPropertyChanged(nameof(MidiShortcutPreviousPageNoteText)); SaveProfileSettings(); }
+    }
+
+    public int MidiShortcutNextPageNote
+    {
+        get => _profile.Settings.MidiShortcutNextPageNote;
+        set { _profile.Settings.MidiShortcutNextPageNote = value; OnPropertyChanged(); OnPropertyChanged(nameof(MidiShortcutNextPageNoteText)); SaveProfileSettings(); }
+    }
+
+    public string KeyShortcutListenText => string.IsNullOrWhiteSpace(KeyShortcutListen) ? "F4" : KeyShortcutListen;
+    public string KeyShortcutStartPracticeText => string.IsNullOrWhiteSpace(KeyShortcutStartPractice) ? "F5" : KeyShortcutStartPractice;
+    public string KeyShortcutStartPerformanceText => string.IsNullOrWhiteSpace(KeyShortcutStartPerformance) ? "F6" : KeyShortcutStartPerformance;
+    public string KeyShortcutTogglePlayText => string.IsNullOrWhiteSpace(KeyShortcutTogglePlay) ? "Space" : KeyShortcutTogglePlay;
+    public int MidiShortcutDismissResultsNote
+    {
+        get => _profile.Settings.MidiShortcutDismissResultsNote;
+        set { _profile.Settings.MidiShortcutDismissResultsNote = value; OnPropertyChanged(); OnPropertyChanged(nameof(MidiShortcutDismissResultsNoteText)); SaveProfileSettings(); }
+    }
+
+    public int MidiShortcutRepeatResultsNote
+    {
+        get => _profile.Settings.MidiShortcutRepeatResultsNote;
+        set { _profile.Settings.MidiShortcutRepeatResultsNote = value; OnPropertyChanged(); OnPropertyChanged(nameof(MidiShortcutRepeatResultsNoteText)); SaveProfileSettings(); }
+    }
+
+    public string KeyShortcutRestartSessionText => string.IsNullOrWhiteSpace(KeyShortcutRestartSession) ? "R" : KeyShortcutRestartSession;
+    public string KeyShortcutPreviousMeasureText => string.IsNullOrWhiteSpace(KeyShortcutPreviousMeasure) ? "Left" : KeyShortcutPreviousMeasure;
+    public string KeyShortcutNextMeasureText => string.IsNullOrWhiteSpace(KeyShortcutNextMeasure) ? "Right" : KeyShortcutNextMeasure;
+    public string KeyShortcutPreviousPageText => string.IsNullOrWhiteSpace(KeyShortcutPreviousPage) ? "PageUp" : KeyShortcutPreviousPage;
+    public string KeyShortcutNextPageText => string.IsNullOrWhiteSpace(KeyShortcutNextPage) ? "PageDown" : KeyShortcutNextPage;
+    public string KeyShortcutDismissResultsText => string.IsNullOrWhiteSpace(KeyShortcutDismissResults) ? "Escape" : KeyShortcutDismissResults;
+    public string KeyShortcutRepeatResultsText => string.IsNullOrWhiteSpace(KeyShortcutRepeatResults) ? "Enter" : KeyShortcutRepeatResults;
+
+    public IReadOnlyList<string> ShortcutBehaviorOptions { get; } = new string[]
+    {
+        "Hold Note (1s-5s)",
+        "Single Tap Note",
+        "Double-Tap Note",
+        "Triple-Tap Note",
+        "Multi-Tap Note (Custom)",
+        "1-Bar Sequence",
+        "2-Bar Sequence",
+        "Visible Page Sequence",
+        "First & Last Note Sequence"
+    };
+
+    public int GetMultiTapCountForAction(string actionName) => actionName switch
+    {
+        "Listen" => _profile.Settings.MultiTapCountListen > 1 ? _profile.Settings.MultiTapCountListen : 4,
+        "Practice" => _profile.Settings.MultiTapCountPractice > 1 ? _profile.Settings.MultiTapCountPractice : 4,
+        "Performance" => _profile.Settings.MultiTapCountPerformance > 1 ? _profile.Settings.MultiTapCountPerformance : 4,
+        "TogglePlay" => _profile.Settings.MultiTapCountTogglePlay > 1 ? _profile.Settings.MultiTapCountTogglePlay : 4,
+        "Restart" => _profile.Settings.MultiTapCountRestart > 1 ? _profile.Settings.MultiTapCountRestart : 4,
+        "PrevMeasure" => _profile.Settings.MultiTapCountPrevMeasure > 1 ? _profile.Settings.MultiTapCountPrevMeasure : 4,
+        "NextMeasure" => _profile.Settings.MultiTapCountNextMeasure > 1 ? _profile.Settings.MultiTapCountNextMeasure : 4,
+        "PrevPage" => _profile.Settings.MultiTapCountPrevPage > 1 ? _profile.Settings.MultiTapCountPrevPage : 4,
+        "NextPage" => _profile.Settings.MultiTapCountNextPage > 1 ? _profile.Settings.MultiTapCountNextPage : 4,
+        "Dismiss" => _profile.Settings.MultiTapCountDismiss > 1 ? _profile.Settings.MultiTapCountDismiss : 4,
+        "Repeat" => _profile.Settings.MultiTapCountRepeat > 1 ? _profile.Settings.MultiTapCountRepeat : 4,
+        _ => 4
+    };
+
+    public void SetMultiTapCountForAction(string actionName, int count)
+    {
+        var clamped = Math.Clamp(count, 2, 10);
+        switch (actionName)
+        {
+            case "Listen": _profile.Settings.MultiTapCountListen = clamped; break;
+            case "Practice": _profile.Settings.MultiTapCountPractice = clamped; break;
+            case "Performance": _profile.Settings.MultiTapCountPerformance = clamped; break;
+            case "TogglePlay": _profile.Settings.MultiTapCountTogglePlay = clamped; break;
+            case "Restart": _profile.Settings.MultiTapCountRestart = clamped; break;
+            case "PrevMeasure": _profile.Settings.MultiTapCountPrevMeasure = clamped; break;
+            case "NextMeasure": _profile.Settings.MultiTapCountNextMeasure = clamped; break;
+            case "PrevPage": _profile.Settings.MultiTapCountPrevPage = clamped; break;
+            case "NextPage": _profile.Settings.MultiTapCountNextPage = clamped; break;
+            case "Dismiss": _profile.Settings.MultiTapCountDismiss = clamped; break;
+            case "Repeat": _profile.Settings.MultiTapCountRepeat = clamped; break;
+        }
+        SaveProfileSettings();
+    }
+
+    public string FormatMidiShortcutText(string actionName, int behaviorIndex, int midiNoteNumber) => behaviorIndex switch
+    {
+        3 => "3x Tap Note",
+        4 => $"{GetMultiTapCountForAction(actionName)}x Tap Note",
+        5 => "Bar 1 Notes",
+        6 => "First 2 Bars",
+        7 => "Page Notes",
+        8 => "First & Last Note",
+        _ => midiNoteNumber > 0 ? MidiNoteFormatter.Format(midiNoteNumber) : "Unassigned"
+    };
+
+    public string MidiShortcutListenNoteText => FormatMidiShortcutText("Listen", BehaviorListenIndex, MidiShortcutListenNote);
+    public string MidiShortcutPracticeNoteText => FormatMidiShortcutText("Practice", BehaviorPracticeIndex, _profile.Settings.MidiShortcutPracticeNote);
+    public string MidiShortcutPerformanceNoteText => FormatMidiShortcutText("Performance", BehaviorPerformanceIndex, _profile.Settings.MidiShortcutPerformanceNote);
+    public string MidiShortcutTogglePlayNoteText => FormatMidiShortcutText("TogglePlay", BehaviorTogglePlayIndex, MidiShortcutTogglePlayNote);
+    public string MidiShortcutRestartNoteText => FormatMidiShortcutText("Restart", BehaviorRestartIndex, MidiShortcutRestartNote);
+    public string MidiShortcutPreviousMeasureNoteText => FormatMidiShortcutText("PrevMeasure", BehaviorPrevMeasureIndex, MidiShortcutPreviousMeasureNote);
+    public string MidiShortcutNextMeasureNoteText => FormatMidiShortcutText("NextMeasure", BehaviorNextMeasureIndex, MidiShortcutNextMeasureNote);
+    public string MidiShortcutPreviousPageNoteText => FormatMidiShortcutText("PrevPage", BehaviorPrevPageIndex, MidiShortcutPreviousPageNote);
+    public string MidiShortcutNextPageNoteText => FormatMidiShortcutText("NextPage", BehaviorNextPageIndex, MidiShortcutNextPageNote);
+    public string MidiShortcutDismissResultsNoteText => FormatMidiShortcutText("Dismiss", BehaviorDismissIndex, MidiShortcutDismissResultsNote);
+    public string MidiShortcutRepeatResultsNoteText => FormatMidiShortcutText("Repeat", BehaviorRepeatIndex, MidiShortcutRepeatResultsNote);
+
+    public bool IsHoldTimerVisibleListen => BehaviorListenIndex == 0;
+    public bool IsHoldTimerVisiblePractice => BehaviorPracticeIndex == 0;
+    public bool IsHoldTimerVisiblePerformance => BehaviorPerformanceIndex == 0;
+    public bool IsHoldTimerVisibleTogglePlay => BehaviorTogglePlayIndex == 0;
+    public bool IsHoldTimerVisibleRestart => BehaviorRestartIndex == 0;
+    public bool IsHoldTimerVisiblePrevMeasure => BehaviorPrevMeasureIndex == 0;
+    public bool IsHoldTimerVisibleNextMeasure => BehaviorNextMeasureIndex == 0;
+    public bool IsHoldTimerVisiblePrevPage => BehaviorPrevPageIndex == 0;
+    public bool IsHoldTimerVisibleNextPage => BehaviorNextPageIndex == 0;
+    public bool IsHoldTimerVisibleDismiss => BehaviorDismissIndex == 0;
+    public bool IsHoldTimerVisibleRepeat => BehaviorRepeatIndex == 0;
+
+    public int BehaviorListenIndex
+    {
+        get => _profile.Settings.BehaviorListenIndex;
+        set
+        {
+            _profile.Settings.BehaviorListenIndex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MidiShortcutListenNoteText));
+            OnPropertyChanged(nameof(IsHoldTimerVisibleListen));
+            SaveProfileSettings();
+            if (value == 4) OpenMultiTapPrompt("Listen");
+        }
+    }
+
+    public int BehaviorPracticeIndex
+    {
+        get => _profile.Settings.BehaviorPracticeIndex;
+        set
+        {
+            _profile.Settings.BehaviorPracticeIndex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MidiShortcutPracticeNoteText));
+            OnPropertyChanged(nameof(IsHoldTimerVisiblePractice));
+            SaveProfileSettings();
+            if (value == 4) OpenMultiTapPrompt("Practice");
+        }
+    }
+
+    public int BehaviorPerformanceIndex
+    {
+        get => _profile.Settings.BehaviorPerformanceIndex;
+        set
+        {
+            _profile.Settings.BehaviorPerformanceIndex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MidiShortcutPerformanceNoteText));
+            OnPropertyChanged(nameof(IsHoldTimerVisiblePerformance));
+            SaveProfileSettings();
+            if (value == 4) OpenMultiTapPrompt("Performance");
+        }
+    }
+
+    public int BehaviorTogglePlayIndex
+    {
+        get => _profile.Settings.BehaviorTogglePlayIndex;
+        set
+        {
+            _profile.Settings.BehaviorTogglePlayIndex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MidiShortcutTogglePlayNoteText));
+            OnPropertyChanged(nameof(IsHoldTimerVisibleTogglePlay));
+            SaveProfileSettings();
+            if (value == 4) OpenMultiTapPrompt("TogglePlay");
+        }
+    }
+
+    public int BehaviorRestartIndex
+    {
+        get => _profile.Settings.BehaviorRestartIndex;
+        set
+        {
+            _profile.Settings.BehaviorRestartIndex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MidiShortcutRestartNoteText));
+            OnPropertyChanged(nameof(IsHoldTimerVisibleRestart));
+            SaveProfileSettings();
+            if (value == 4) OpenMultiTapPrompt("Restart");
+        }
+    }
+
+    public int BehaviorPrevMeasureIndex
+    {
+        get => _profile.Settings.BehaviorPrevMeasureIndex;
+        set
+        {
+            _profile.Settings.BehaviorPrevMeasureIndex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MidiShortcutPreviousMeasureNoteText));
+            OnPropertyChanged(nameof(IsHoldTimerVisiblePrevMeasure));
+            SaveProfileSettings();
+            if (value == 4) OpenMultiTapPrompt("PrevMeasure");
+        }
+    }
+
+    public int BehaviorNextMeasureIndex
+    {
+        get => _profile.Settings.BehaviorNextMeasureIndex;
+        set
+        {
+            _profile.Settings.BehaviorNextMeasureIndex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MidiShortcutNextMeasureNoteText));
+            OnPropertyChanged(nameof(IsHoldTimerVisibleNextMeasure));
+            SaveProfileSettings();
+            if (value == 4) OpenMultiTapPrompt("NextMeasure");
+        }
+    }
+
+    public int BehaviorPrevPageIndex
+    {
+        get => _profile.Settings.BehaviorPrevPageIndex;
+        set
+        {
+            _profile.Settings.BehaviorPrevPageIndex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MidiShortcutPreviousPageNoteText));
+            OnPropertyChanged(nameof(IsHoldTimerVisiblePrevPage));
+            SaveProfileSettings();
+            if (value == 4) OpenMultiTapPrompt("PrevPage");
+        }
+    }
+
+    public int BehaviorNextPageIndex
+    {
+        get => _profile.Settings.BehaviorNextPageIndex;
+        set
+        {
+            _profile.Settings.BehaviorNextPageIndex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MidiShortcutNextPageNoteText));
+            OnPropertyChanged(nameof(IsHoldTimerVisibleNextPage));
+            SaveProfileSettings();
+            if (value == 4) OpenMultiTapPrompt("NextPage");
+        }
+    }
+
+    public int BehaviorDismissIndex
+    {
+        get => _profile.Settings.BehaviorDismissIndex;
+        set
+        {
+            _profile.Settings.BehaviorDismissIndex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MidiShortcutDismissResultsNoteText));
+            OnPropertyChanged(nameof(IsHoldTimerVisibleDismiss));
+            SaveProfileSettings();
+            if (value == 4) OpenMultiTapPrompt("Dismiss");
+        }
+    }
+
+    public int BehaviorRepeatIndex
+    {
+        get => _profile.Settings.BehaviorRepeatIndex;
+        set
+        {
+            _profile.Settings.BehaviorRepeatIndex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MidiShortcutRepeatResultsNoteText));
+            OnPropertyChanged(nameof(IsHoldTimerVisibleRepeat));
+            SaveProfileSettings();
+            if (value == 4) OpenMultiTapPrompt("Repeat");
+        }
+    }
+
+    public double HoldSecondsListen
+    {
+        get => _profile.Settings.HoldSecondsListen > 0 ? _profile.Settings.HoldSecondsListen : 3.0;
+        set { _profile.Settings.HoldSecondsListen = value; OnPropertyChanged(); SaveProfileSettings(); }
+    }
+    public double HoldSecondsPractice
+    {
+        get => _profile.Settings.HoldSecondsPractice > 0 ? _profile.Settings.HoldSecondsPractice : 3.0;
+        set { _profile.Settings.HoldSecondsPractice = value; OnPropertyChanged(); SaveProfileSettings(); }
+    }
+    public double HoldSecondsPerformance
+    {
+        get => _profile.Settings.HoldSecondsPerformance > 0 ? _profile.Settings.HoldSecondsPerformance : 3.0;
+        set { _profile.Settings.HoldSecondsPerformance = value; OnPropertyChanged(); SaveProfileSettings(); }
+    }
+    public double HoldSecondsTogglePlay
+    {
+        get => _profile.Settings.HoldSecondsTogglePlay > 0 ? _profile.Settings.HoldSecondsTogglePlay : 3.0;
+        set { _profile.Settings.HoldSecondsTogglePlay = value; OnPropertyChanged(); SaveProfileSettings(); }
+    }
+    public double HoldSecondsRestart
+    {
+        get => _profile.Settings.HoldSecondsRestart > 0 ? _profile.Settings.HoldSecondsRestart : 3.0;
+        set { _profile.Settings.HoldSecondsRestart = value; OnPropertyChanged(); SaveProfileSettings(); }
+    }
+    public double HoldSecondsPrevMeasure
+    {
+        get => _profile.Settings.HoldSecondsPrevMeasure > 0 ? _profile.Settings.HoldSecondsPrevMeasure : 3.0;
+        set { _profile.Settings.HoldSecondsPrevMeasure = value; OnPropertyChanged(); SaveProfileSettings(); }
+    }
+    public double HoldSecondsNextMeasure
+    {
+        get => _profile.Settings.HoldSecondsNextMeasure > 0 ? _profile.Settings.HoldSecondsNextMeasure : 3.0;
+        set { _profile.Settings.HoldSecondsNextMeasure = value; OnPropertyChanged(); SaveProfileSettings(); }
+    }
+    public double HoldSecondsPrevPage
+    {
+        get => _profile.Settings.HoldSecondsPrevPage > 0 ? _profile.Settings.HoldSecondsPrevPage : 3.0;
+        set { _profile.Settings.HoldSecondsPrevPage = value; OnPropertyChanged(); SaveProfileSettings(); }
+    }
+    public double HoldSecondsNextPage
+    {
+        get => _profile.Settings.HoldSecondsNextPage > 0 ? _profile.Settings.HoldSecondsNextPage : 3.0;
+        set { _profile.Settings.HoldSecondsNextPage = value; OnPropertyChanged(); SaveProfileSettings(); }
+    }
+    public double HoldSecondsDismiss
+    {
+        get => _profile.Settings.HoldSecondsDismiss > 0 ? _profile.Settings.HoldSecondsDismiss : 3.0;
+        set { _profile.Settings.HoldSecondsDismiss = value; OnPropertyChanged(); SaveProfileSettings(); }
+    }
+    public double HoldSecondsRepeat
+    {
+        get => _profile.Settings.HoldSecondsRepeat > 0 ? _profile.Settings.HoldSecondsRepeat : 3.0;
+        set { _profile.Settings.HoldSecondsRepeat = value; OnPropertyChanged(); SaveProfileSettings(); }
+    }
+
+    public double GetHoldSecondsForAction(string actionName) => actionName switch
+    {
+        "Listen" => HoldSecondsListen,
+        "Practice" => HoldSecondsPractice,
+        "Performance" => HoldSecondsPerformance,
+        "TogglePlay" => HoldSecondsTogglePlay,
+        "Restart" => HoldSecondsRestart,
+        "PrevMeasure" => HoldSecondsPrevMeasure,
+        "NextMeasure" => HoldSecondsNextMeasure,
+        "PrevPage" => HoldSecondsPrevPage,
+        "NextPage" => HoldSecondsNextPage,
+        "Dismiss" => HoldSecondsDismiss,
+        "Repeat" => HoldSecondsRepeat,
+        _ => 3.0
+    };
+
+    private int _selectedSettingsTabIndex = 0;
+    public int SelectedSettingsTabIndex
+    {
+        get => _selectedSettingsTabIndex;
+        set
+        {
+            if (SetField(ref _selectedSettingsTabIndex, Math.Clamp(value, 0, 3)))
+            {
+                OnPropertyChanged(nameof(IsSettingsTabShortcutsVisible));
+                OnPropertyChanged(nameof(IsSettingsTabMidiVisible));
+                OnPropertyChanged(nameof(IsSettingsTabLatencyVisible));
+                OnPropertyChanged(nameof(IsSettingsTabDisplayVisible));
+            }
+        }
+    }
+
+    public bool IsSettingsTabShortcutsVisible => SelectedSettingsTabIndex == 0;
+    public bool IsSettingsTabMidiVisible => SelectedSettingsTabIndex == 1;
+    public bool IsSettingsTabLatencyVisible => SelectedSettingsTabIndex == 2;
+    public bool IsSettingsTabDisplayVisible => SelectedSettingsTabIndex == 3;
+
+    private bool _isMultiTapPromptActive;
+    private string _multiTapPromptActionName = string.Empty;
+    private int _pendingMultiTapCount = 4;
+
+    public bool IsMultiTapPromptActive
+    {
+        get => _isMultiTapPromptActive;
+        set => SetField(ref _isMultiTapPromptActive, value);
+    }
+
+    public string MultiTapPromptActionName
+    {
+        get => _multiTapPromptActionName;
+        set => SetField(ref _multiTapPromptActionName, value);
+    }
+
+    public int PendingMultiTapCount
+    {
+        get => _pendingMultiTapCount;
+        set { SetField(ref _pendingMultiTapCount, Math.Clamp(value, 2, 10)); OnPropertyChanged(nameof(MultiTapPromptHeadlineText)); }
+    }
+
+    public string MultiTapPromptHeadlineText => $"Configure Multi-Tap Count for {GetActionDisplayName(MultiTapPromptActionName)}";
+
+    public void OpenMultiTapPrompt(string actionName)
+    {
+        MultiTapPromptActionName = actionName;
+        PendingMultiTapCount = GetMultiTapCountForAction(actionName);
+        OnPropertyChanged(nameof(MultiTapPromptHeadlineText));
+        IsMultiTapPromptActive = true;
+    }
+
+    public void AcceptMultiTapPrompt()
+    {
+        SetMultiTapCountForAction(MultiTapPromptActionName, PendingMultiTapCount);
+        IsMultiTapPromptActive = false;
+        NotifyMidiNoteTextChanged(MultiTapPromptActionName);
+    }
+
+    public void CancelMultiTapPrompt()
+    {
+        IsMultiTapPromptActive = false;
+    }
+
+    public void IncrementMultiTapCount() => PendingMultiTapCount++;
+    public void DecrementMultiTapCount() => PendingMultiTapCount--;
+
+    public void NotifyMidiNoteTextChanged(string actionName)
+    {
+        switch (actionName)
+        {
+            case "Listen": OnPropertyChanged(nameof(MidiShortcutListenNoteText)); break;
+            case "Practice": OnPropertyChanged(nameof(MidiShortcutPracticeNoteText)); break;
+            case "Performance": OnPropertyChanged(nameof(MidiShortcutPerformanceNoteText)); break;
+            case "TogglePlay": OnPropertyChanged(nameof(MidiShortcutTogglePlayNoteText)); break;
+            case "Restart": OnPropertyChanged(nameof(MidiShortcutRestartNoteText)); break;
+            case "PrevMeasure": OnPropertyChanged(nameof(MidiShortcutPreviousMeasureNoteText)); break;
+            case "NextMeasure": OnPropertyChanged(nameof(MidiShortcutNextMeasureNoteText)); break;
+            case "PrevPage": OnPropertyChanged(nameof(MidiShortcutPreviousPageNoteText)); break;
+            case "NextPage": OnPropertyChanged(nameof(MidiShortcutNextPageNoteText)); break;
+            case "Dismiss": OnPropertyChanged(nameof(MidiShortcutDismissResultsNoteText)); break;
+            case "Repeat": OnPropertyChanged(nameof(MidiShortcutRepeatResultsNoteText)); break;
+        }
+    }
+
+    public bool AlwaysShowLiveNoteFeedback
+    {
+        get => _profile.Settings.AlwaysShowLiveNoteFeedback;
+        set { _profile.Settings.AlwaysShowLiveNoteFeedback = value; OnPropertyChanged(); SaveProfileSettings(); }
+    }
+
+    public event EventHandler<(string kind, double beat, int midiNote)>? OnLiveNoteFeedbackTriggered;
+
+    public void StartKeyLearning(string actionName)
+    {
+        CancelLearning();
+        LearningActionName = actionName;
+        LearningPromptText = $"Press any key on your keyboard to set shortcut for {actionName}...";
+        IsKeyLearningActive = true;
+        OnPropertyChanged(nameof(IsShortcutLearningActive));
+    }
+
+    public void StartMidiLearning(string actionName)
+    {
+        CancelLearning();
+        LearningActionName = actionName;
+        LearningPromptText = $"Press any key or pedal on your MIDI controller to bind {actionName}...";
+        IsMidiLearningActive = true;
+        OnPropertyChanged(nameof(IsShortcutLearningActive));
+    }
+
+    private bool _isConflictOverlayVisible;
+    private string _conflictMessageText = string.Empty;
+    public string PendingConflictActionName { get; set; } = string.Empty;
+    public int? PendingConflictMidiNote { get; set; }
+    public string? PendingConflictKeyString { get; set; }
+
+    public bool IsConflictOverlayVisible
+    {
+        get => _isConflictOverlayVisible;
+        set => SetField(ref _isConflictOverlayVisible, value);
+    }
+
+    public string ConflictMessageText
+    {
+        get => _conflictMessageText;
+        set => SetField(ref _conflictMessageText, value);
+    }
+
+    public void CancelLearning()
+    {
+        IsKeyLearningActive = false;
+        IsMidiLearningActive = false;
+        LearningActionName = string.Empty;
+        LearningPromptText = string.Empty;
+        OnPropertyChanged(nameof(IsShortcutLearningActive));
+    }
+
+    public int GetActionBehaviorIndex(string actionName)
+    {
+        return actionName switch
+        {
+            "Listen" => BehaviorListenIndex,
+            "Practice" => BehaviorPracticeIndex,
+            "Performance" => BehaviorPerformanceIndex,
+            "TogglePlay" => BehaviorTogglePlayIndex,
+            "Restart" => BehaviorRestartIndex,
+            "PrevMeasure" => BehaviorPrevMeasureIndex,
+            "NextMeasure" => BehaviorNextMeasureIndex,
+            "PrevPage" => BehaviorPrevPageIndex,
+            "NextPage" => BehaviorNextPageIndex,
+            "Dismiss" => BehaviorDismissIndex,
+            "Repeat" => BehaviorRepeatIndex,
+            _ => 1
+        };
+    }
+
+    public bool IsActiveSessionRunning => IsLessonActive || IsPreviewPlaying;
+
+    public string GetActionDisplayName(string actionName)
+    {
+        var isRunning = IsActiveSessionRunning;
+        return actionName switch
+        {
+            "Listen" => "Listen to Score",
+            "Practice" => "Begin Practice",
+            "Performance" => "Begin Performance",
+            "TogglePlay" => isRunning ? "Pause Session" : (SelectedLessonMode switch
+            {
+                LessonMode.Listen => "Listen to Score",
+                LessonMode.TimedPlay => "Begin Performance",
+                _ => "Begin Practice"
+            }),
+            "Restart" => isRunning ? "Restart Session" : (SelectedLessonMode switch
+            {
+                LessonMode.Listen => "Listen to Score",
+                LessonMode.TimedPlay => "Begin Performance",
+                _ => "Begin Practice"
+            }),
+            "PrevMeasure" => "Previous Measure",
+            "NextMeasure" => "Next Measure",
+            "PrevPage" => "Previous Page",
+            "NextPage" => "Next Page",
+            "Dismiss" => "Dismiss Results",
+            "Repeat" => "Repeat Session",
+            _ => actionName
+        };
+    }
+
+    public string FindConflictingMidiAction(string targetAction, int midiNoteNumber)
+    {
+        if (midiNoteNumber <= 0) return string.Empty;
+
+        if (targetAction != "Listen" && MidiShortcutListenNote == midiNoteNumber) return "Listen Mode";
+        if (targetAction != "TogglePlay" && MidiShortcutTogglePlayNote == midiNoteNumber) return "Play / Pause";
+        if (targetAction != "Restart" && MidiShortcutRestartNote == midiNoteNumber) return "Restart Session";
+        if (targetAction != "PrevMeasure" && MidiShortcutPreviousMeasureNote == midiNoteNumber) return "Previous Measure";
+        if (targetAction != "NextMeasure" && MidiShortcutNextMeasureNote == midiNoteNumber) return "Next Measure";
+        if (targetAction != "PrevPage" && MidiShortcutPreviousPageNote == midiNoteNumber) return "Previous Page";
+        if (targetAction != "NextPage" && MidiShortcutNextPageNote == midiNoteNumber) return "Next Page";
+        if (targetAction != "Dismiss" && MidiShortcutDismissResultsNote == midiNoteNumber) return "Dismiss Results";
+        if (targetAction != "Repeat" && MidiShortcutRepeatResultsNote == midiNoteNumber) return "Repeat Session";
+
+        return string.Empty;
+    }
+
+    public string FindConflictingKeyAction(string targetAction, string keyString)
+    {
+        if (string.IsNullOrWhiteSpace(keyString)) return string.Empty;
+
+        if (targetAction != "Listen" && string.Equals(KeyShortcutListen, keyString, StringComparison.OrdinalIgnoreCase)) return "Listen Mode";
+        if (targetAction != "Practice" && string.Equals(KeyShortcutStartPractice, keyString, StringComparison.OrdinalIgnoreCase)) return "Practice Mode";
+        if (targetAction != "Performance" && string.Equals(KeyShortcutStartPerformance, keyString, StringComparison.OrdinalIgnoreCase)) return "Performance Mode";
+        if (targetAction != "TogglePlay" && string.Equals(KeyShortcutTogglePlay, keyString, StringComparison.OrdinalIgnoreCase)) return "Play / Pause";
+        if (targetAction != "Restart" && string.Equals(KeyShortcutRestartSession, keyString, StringComparison.OrdinalIgnoreCase)) return "Restart Session";
+        if (targetAction != "PrevMeasure" && string.Equals(KeyShortcutPreviousMeasure, keyString, StringComparison.OrdinalIgnoreCase)) return "Previous Measure";
+        if (targetAction != "NextMeasure" && string.Equals(KeyShortcutNextMeasure, keyString, StringComparison.OrdinalIgnoreCase)) return "Next Measure";
+        if (targetAction != "PrevPage" && string.Equals(KeyShortcutPreviousPage, keyString, StringComparison.OrdinalIgnoreCase)) return "Previous Page";
+        if (targetAction != "NextPage" && string.Equals(KeyShortcutNextPage, keyString, StringComparison.OrdinalIgnoreCase)) return "Next Page";
+        if (targetAction != "Dismiss" && string.Equals(KeyShortcutDismissResults, keyString, StringComparison.OrdinalIgnoreCase)) return "Dismiss Results";
+        if (targetAction != "Repeat" && string.Equals(KeyShortcutRepeatResults, keyString, StringComparison.OrdinalIgnoreCase)) return "Repeat Session";
+
+        return string.Empty;
+    }
+
+    public void UnbindMidiNoteFromAll(int midiNoteNumber, string exceptAction = "")
+    {
+        if (midiNoteNumber <= 0) return;
+
+        if (exceptAction != "Listen" && MidiShortcutListenNote == midiNoteNumber) MidiShortcutListenNote = -1;
+        if (exceptAction != "TogglePlay" && MidiShortcutTogglePlayNote == midiNoteNumber) MidiShortcutTogglePlayNote = -1;
+        if (exceptAction != "Restart" && MidiShortcutRestartNote == midiNoteNumber) MidiShortcutRestartNote = -1;
+        if (exceptAction != "PrevMeasure" && MidiShortcutPreviousMeasureNote == midiNoteNumber) MidiShortcutPreviousMeasureNote = -1;
+        if (exceptAction != "NextMeasure" && MidiShortcutNextMeasureNote == midiNoteNumber) MidiShortcutNextMeasureNote = -1;
+        if (exceptAction != "PrevPage" && MidiShortcutPreviousPageNote == midiNoteNumber) MidiShortcutPreviousPageNote = -1;
+        if (exceptAction != "NextPage" && MidiShortcutNextPageNote == midiNoteNumber) MidiShortcutNextPageNote = -1;
+        if (exceptAction != "Dismiss" && MidiShortcutDismissResultsNote == midiNoteNumber) MidiShortcutDismissResultsNote = -1;
+        if (exceptAction != "Repeat" && MidiShortcutRepeatResultsNote == midiNoteNumber) MidiShortcutRepeatResultsNote = -1;
+    }
+
+    public void UnbindKeyStringFromAll(string keyString, string exceptAction = "")
+    {
+        if (string.IsNullOrWhiteSpace(keyString)) return;
+
+        if (exceptAction != "Listen" && string.Equals(KeyShortcutListen, keyString, StringComparison.OrdinalIgnoreCase)) KeyShortcutListen = string.Empty;
+        if (exceptAction != "Practice" && string.Equals(KeyShortcutStartPractice, keyString, StringComparison.OrdinalIgnoreCase)) KeyShortcutStartPractice = string.Empty;
+        if (exceptAction != "Performance" && string.Equals(KeyShortcutStartPerformance, keyString, StringComparison.OrdinalIgnoreCase)) KeyShortcutStartPerformance = string.Empty;
+        if (exceptAction != "TogglePlay" && string.Equals(KeyShortcutTogglePlay, keyString, StringComparison.OrdinalIgnoreCase)) KeyShortcutTogglePlay = string.Empty;
+        if (exceptAction != "Restart" && string.Equals(KeyShortcutRestartSession, keyString, StringComparison.OrdinalIgnoreCase)) KeyShortcutRestartSession = string.Empty;
+        if (exceptAction != "PrevMeasure" && string.Equals(KeyShortcutPreviousMeasure, keyString, StringComparison.OrdinalIgnoreCase)) KeyShortcutPreviousMeasure = string.Empty;
+        if (exceptAction != "NextMeasure" && string.Equals(KeyShortcutNextMeasure, keyString, StringComparison.OrdinalIgnoreCase)) KeyShortcutNextMeasure = string.Empty;
+        if (exceptAction != "PrevPage" && string.Equals(KeyShortcutPreviousPage, keyString, StringComparison.OrdinalIgnoreCase)) KeyShortcutPreviousPage = string.Empty;
+        if (exceptAction != "NextPage" && string.Equals(KeyShortcutNextPage, keyString, StringComparison.OrdinalIgnoreCase)) KeyShortcutNextPage = string.Empty;
+        if (exceptAction != "Dismiss" && string.Equals(KeyShortcutDismissResults, keyString, StringComparison.OrdinalIgnoreCase)) KeyShortcutDismissResults = string.Empty;
+        if (exceptAction != "Repeat" && string.Equals(KeyShortcutRepeatResults, keyString, StringComparison.OrdinalIgnoreCase)) KeyShortcutRepeatResults = string.Empty;
+    }
+
+    public void UnbindAction(string action)
+    {
+        if (string.IsNullOrEmpty(action)) action = LearningActionName;
+        if (string.IsNullOrEmpty(action)) return;
+
+        if (IsMidiLearningActive)
+        {
+            ExecuteApplyMidiBinding(action, -1);
+        }
+        else if (IsKeyLearningActive)
+        {
+            ExecuteApplyKeyBinding(action, string.Empty);
+        }
+        else
+        {
+            ExecuteApplyMidiBinding(action, -1);
+            ExecuteApplyKeyBinding(action, string.Empty);
+        }
+
+        CancelLearning();
+    }
+
+    public void ApplyLearnedKey(string keyString)
+    {
+        if (!IsKeyLearningActive || string.IsNullOrWhiteSpace(keyString)) return;
+        var action = LearningActionName;
+
+        if (string.Equals(keyString, "Escape", StringComparison.OrdinalIgnoreCase) || string.Equals(keyString, "Esc", StringComparison.OrdinalIgnoreCase))
+        {
+            UnbindAction(action);
+            return;
+        }
+
+        CancelLearning();
+
+        var conflictingAction = FindConflictingKeyAction(action, keyString);
+        if (!string.IsNullOrEmpty(conflictingAction))
+        {
+            var msg = $"Note/Key '{keyString}' is also bound to '{conflictingAction}'.\n\nConfirming will assign it to '{GetActionDisplayName(action)}' while keeping its existing binding.\n\nDo you want to proceed?";
+            PendingConflictActionName = action;
+            PendingConflictMidiNote = null;
+            PendingConflictKeyString = keyString;
+            ConflictMessageText = msg;
+            IsConflictOverlayVisible = true;
+            return;
+        }
+
+        ExecuteApplyKeyBinding(action, keyString);
+    }
+
+    public void ExecuteApplyKeyBinding(string action, string keyString)
+    {
+        if (action == "Listen") KeyShortcutListen = keyString;
+        else if (action == "Practice") KeyShortcutStartPractice = keyString;
+        else if (action == "Performance") KeyShortcutStartPerformance = keyString;
+        else if (action == "TogglePlay") KeyShortcutTogglePlay = keyString;
+        else if (action == "Restart") KeyShortcutRestartSession = keyString;
+        else if (action == "PrevMeasure") KeyShortcutPreviousMeasure = keyString;
+        else if (action == "NextMeasure") KeyShortcutNextMeasure = keyString;
+        else if (action == "PrevPage") KeyShortcutPreviousPage = keyString;
+        else if (action == "NextPage") KeyShortcutNextPage = keyString;
+        else if (action == "Dismiss") KeyShortcutDismissResults = keyString;
+        else if (action == "Repeat") KeyShortcutRepeatResults = keyString;
+
+        SaveProfileSettings();
+    }
+
+    public void ApplyLearnedMidiNote(int midiNoteNumber)
+    {
+        if (!IsMidiLearningActive) return;
+        var action = LearningActionName;
+        CancelLearning();
+
+        var noteName = MidiNoteFormatter.Format(midiNoteNumber);
+        var conflictingAction = FindConflictingMidiAction(action, midiNoteNumber);
+        var isSingleTapPianoNote = (midiNoteNumber >= 21 && midiNoteNumber <= 108) && GetActionBehaviorIndex(action) == 1;
+
+        if (!string.IsNullOrEmpty(conflictingAction) || isSingleTapPianoNote)
+        {
+            var msg = new StringBuilder();
+            if (!string.IsNullOrEmpty(conflictingAction))
+            {
+                msg.AppendLine($"Note {noteName} (MIDI {midiNoteNumber}) is currently bound to '{conflictingAction}'.");
+                msg.AppendLine("Choose 'Bind Anyway' to share this note, or 'Unbind Other' to replace the existing binding.");
+            }
+            if (isSingleTapPianoNote)
+            {
+                if (msg.Length > 0) msg.AppendLine();
+                msg.AppendLine($"Warning: Note {noteName} is a single-press note in the standard piano playing range. Playing pieces containing {noteName} will trigger '{GetActionDisplayName(action)}'.");
+            }
+            msg.AppendLine();
+            msg.AppendLine("How would you like to proceed?");
+
+            PendingConflictActionName = action;
+            PendingConflictMidiNote = midiNoteNumber;
+            PendingConflictKeyString = null;
+            ConflictMessageText = msg.ToString().TrimEnd();
+            IsConflictOverlayVisible = true;
+            return;
+        }
+
+        ExecuteApplyMidiBinding(action, midiNoteNumber);
+    }
+
+    public void ExecuteApplyMidiBinding(string action, int midiNoteNumber)
+    {
+        if (action == "Listen") MidiShortcutListenNote = midiNoteNumber;
+        else if (action == "TogglePlay") MidiShortcutTogglePlayNote = midiNoteNumber;
+        else if (action == "Restart") MidiShortcutRestartNote = midiNoteNumber;
+        else if (action == "PrevMeasure") MidiShortcutPreviousMeasureNote = midiNoteNumber;
+        else if (action == "NextMeasure") MidiShortcutNextMeasureNote = midiNoteNumber;
+        else if (action == "PrevPage") MidiShortcutPreviousPageNote = midiNoteNumber;
+        else if (action == "NextPage") MidiShortcutNextPageNote = midiNoteNumber;
+        else if (action == "Dismiss") MidiShortcutDismissResultsNote = midiNoteNumber;
+        else if (action == "Repeat") MidiShortcutRepeatResultsNote = midiNoteNumber;
+
+        SaveProfileSettings();
+    }
+
+    public void ConfirmConflict(bool unbindExisting = false)
+    {
+        IsConflictOverlayVisible = false;
+        var action = PendingConflictActionName;
+        if (string.IsNullOrEmpty(action)) return;
+
+        if (PendingConflictMidiNote.HasValue)
+        {
+            if (unbindExisting) UnbindMidiNoteFromAll(PendingConflictMidiNote.Value, action);
+            ExecuteApplyMidiBinding(action, PendingConflictMidiNote.Value);
+        }
+        else if (!string.IsNullOrEmpty(PendingConflictKeyString))
+        {
+            if (unbindExisting) UnbindKeyStringFromAll(PendingConflictKeyString, action);
+            ExecuteApplyKeyBinding(action, PendingConflictKeyString);
+        }
+
+        PendingConflictActionName = string.Empty;
+        PendingConflictMidiNote = null;
+        PendingConflictKeyString = null;
+    }
+
+    public void CancelConflict()
+    {
+        IsConflictOverlayVisible = false;
+        PendingConflictActionName = string.Empty;
+        PendingConflictMidiNote = null;
+        PendingConflictKeyString = null;
+    }
+
+    public void SanitizeShortcutBindings()
+    {
+        var settings = _profile.Settings;
+        if (settings is null) return;
+        if (settings.MidiShortcutListenNote <= 0) settings.MidiShortcutListenNote = 48; // C3
+        if (settings.MidiShortcutTogglePlayNote <= 0) settings.MidiShortcutTogglePlayNote = 60; // C4
+        if (settings.MidiShortcutRestartNote <= 0) settings.MidiShortcutRestartNote = 60; // C4
+        if (settings.MidiShortcutHoldSeconds <= 0) settings.MidiShortcutHoldSeconds = 3.0;
+        if (settings.MidiShortcutPreviousMeasureNote <= 0) settings.MidiShortcutPreviousMeasureNote = 57; // A3
+        if (settings.MidiShortcutNextMeasureNote <= 0) settings.MidiShortcutNextMeasureNote = 59; // B3
+        if (settings.MidiShortcutPreviousPageNote <= 0) settings.MidiShortcutPreviousPageNote = 53; // F3
+        if (settings.MidiShortcutNextPageNote <= 0) settings.MidiShortcutNextPageNote = 55; // G3
+        if (settings.MidiShortcutDismissResultsNote <= 0) settings.MidiShortcutDismissResultsNote = 62; // D4
+        if (settings.MidiShortcutRepeatResultsNote <= 0) settings.MidiShortcutRepeatResultsNote = 67; // G4
+
+        var midiBinds = new List<(string action, int note)>
+        {
+            ("Listen", MidiShortcutListenNote),
+            ("TogglePlay", MidiShortcutTogglePlayNote),
+            ("Restart", MidiShortcutRestartNote),
+            ("PrevMeasure", MidiShortcutPreviousMeasureNote),
+            ("NextMeasure", MidiShortcutNextMeasureNote),
+            ("PrevPage", MidiShortcutPreviousPageNote),
+            ("NextPage", MidiShortcutNextPageNote),
+            ("Dismiss", MidiShortcutDismissResultsNote),
+            ("Repeat", MidiShortcutRepeatResultsNote)
+        };
+
+        var seenMidi = new HashSet<int>();
+        foreach (var (action, note) in midiBinds)
+        {
+            if (note <= 0) continue;
+            if (seenMidi.Contains(note))
+            {
+                UnbindMidiNoteFromAll(note, action);
+            }
+            else
+            {
+                seenMidi.Add(note);
+            }
+        }
+
+        SaveProfileSettings();
+    }
+
     public void StartAutoRepeatCountdown()
     {
         StopAutoRepeatCountdown();
-        _autoRepeatTotalSeconds = IsLoopEnabled ? 3.0 : 5.0;
+        if (!AutoDismissResultsEnabled)
+        {
+            AutoRepeatProgress = 1.0;
+            AutoRepeatStatusText = "Press Space, Esc, or MIDI key to continue.";
+            AutoRepeatUpdated?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        _autoRepeatTotalSeconds = IsLoopEnabled ? 5.0 : 10.0;
         _autoRepeatStartTime = DateTime.UtcNow;
         AutoRepeatProgress = 1.0;
         UpdateAutoRepeatLabel(_autoRepeatTotalSeconds);
@@ -624,7 +1744,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             }
             if (_score?.PartialRepeatReason(FocusStartMeasure, FocusEndMeasure) is { } partialRepeat) return partialRepeat;
             if (_lessonGroups.Count == 0) return $"No playable notes were found for {SelectedModeLabel}.";
-            if (!HasAcceptedInput) return "Open Piano setup and connect a MIDI keyboard or enable computer piano keys.";
+            if (!HasAcceptedInput) return "Open Settings and connect a MIDI keyboard or enable computer piano keys.";
             if (blockingWarning is not null && SelectedLessonMode == LessonMode.WaitForYou)
             {
                 return "Ready for guided Practice. Explicit repeat barlines are followed; ambiguous volta endings remain unscored and are not saved as an assessed result.";
@@ -662,6 +1782,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             if (SetField(ref _selectedLessonMode, value))
             {
                 OnPropertyChanged(nameof(SelectedLessonModeLabel));
+                OnPropertyChanged(nameof(ModeTitleLabel));
                 ResetLessonStats();
                 SaveProfileSettings();
             }
@@ -2280,23 +3401,28 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task RunPerformanceCountdownAsync(CancellationToken cancellationToken)
     {
-        var beatMs = Math.Clamp((int)Math.Round(60_000d / EffectiveLessonTempoBpm), 150, 2000);
-        var steps = new[] { "4", "3", "2", "1" };
-
-        for (int i = 0; i < steps.Length; i++)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var stepText = steps[i];
+            var beatMs = Math.Clamp((int)Math.Round(60_000d / EffectiveLessonTempoBpm), 150, 2000);
+            var steps = new[] { "4", "3", "2", "1" };
 
-            // Metronome clicks: accent on 4, regular on 3, 2, 1
-            var isAccent = i == 0;
-            _audioService.PlayMetronomeClick(isAccent, 85);
-            CountdownStepRequested?.Invoke(this, stepText);
+            for (int i = 0; i < steps.Length; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var stepText = steps[i];
 
-            await Task.Delay(beatMs, cancellationToken);
+                // Metronome clicks: accent on 4, regular on 3, 2, 1
+                var isAccent = i == 0;
+                _audioService.PlayMetronomeClick(isAccent, 85);
+                CountdownStepRequested?.Invoke(this, stepText);
+
+                await Task.Delay(beatMs, cancellationToken);
+            }
         }
-
-        HideCountdownRequested?.Invoke(this, EventArgs.Empty);
+        finally
+        {
+            HideCountdownRequested?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     private async Task PreparePerformanceAudioAsync(CancellationToken cancellationToken)
@@ -2366,6 +3492,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public void SimulateNoteOff(int midiNoteNumber)
     {
         if (!UseKeyboardSimulation) return;
+        if (midiNoteNumber == _remoteHoldMidiNote) CancelRemoteHold();
         CompleteHold(midiNoteNumber);
         if (MidiMonitorEnabled) _liveSynth.NoteOff(midiNoteNumber);
         InputActivityLabel = $"Simulation note-off: {MidiNoteFormatter.Format(midiNoteNumber)}";
@@ -2485,7 +3612,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         .OrderBy(occurrence => occurrence.PerformanceStartBeat)
         .ToArray() ?? [];
 
-    private double SelectedPreviewStartBeat => SelectedPerformanceOccurrences
+    public double SelectedPreviewStartBeat => SelectedPerformanceOccurrences
         .Select(occurrence => occurrence.PerformanceStartBeat)
         .DefaultIfEmpty(0)
         .Min();
@@ -2624,11 +3751,287 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private bool _isRemoteHoldVisible;
+    private string _remoteHoldActionText = string.Empty;
+    private string _remoteHoldTimeText = string.Empty;
+    private double _remoteHoldProgress;
+    private DispatcherTimer? _remoteHoldTimer;
+    private DateTime _remoteHoldStartTime;
+    private double _remoteHoldTargetSeconds = 3.0;
+    private int _remoteHoldMidiNote = -1;
+    private string _remoteHoldAction = string.Empty;
+    private int _activeMeasureCountInIndex;
+
+    public List<int> GetNotesAtBeat(double beat)
+    {
+        if (_score is null) return new List<int>();
+        var groups = _score.GetPracticeGroups(SelectedMode);
+        if (groups.Count > 0)
+        {
+            var matchingGroup = groups.FirstOrDefault(g => Math.Abs(g.OnsetBeats - beat) <= 0.25);
+            if (matchingGroup is not null)
+            {
+                return matchingGroup.Notes.Select(n => n.MidiNoteNumber).Distinct().ToList();
+            }
+
+            var nearestGroup = groups.OrderBy(g => Math.Abs(g.OnsetBeats - beat)).FirstOrDefault();
+            if (nearestGroup is not null && Math.Abs(nearestGroup.OnsetBeats - beat) <= 0.5)
+            {
+                return nearestGroup.Notes.Select(n => n.MidiNoteNumber).Distinct().ToList();
+            }
+        }
+
+        var notesAtBeat = _score.Notes
+            .Where(n => Math.Abs(n.OnsetBeats - beat) <= 0.25)
+            .Select(n => n.MidiNoteNumber)
+            .Distinct()
+            .ToList();
+
+        if (notesAtBeat.Count > 0) return notesAtBeat;
+
+        var nearestNote = _score.Notes
+            .OrderBy(n => Math.Abs(n.OnsetBeats - beat))
+            .FirstOrDefault();
+        if (nearestNote is null) return new List<int>();
+        return _score.Notes
+            .Where(n => Math.Abs(n.OnsetBeats - nearestNote.OnsetBeats) <= 0.05)
+            .Select(n => n.MidiNoteNumber)
+            .Distinct()
+            .ToList();
+    }
+
+    public double? GetNextNoteBeat(double currentBeat)
+    {
+        if (_score is null) return null;
+        var groups = _score.GetPracticeGroups(SelectedMode);
+        if (groups.Count > 0)
+        {
+            var nextGroup = groups
+                .Where(g => g.OnsetBeats > currentBeat + 0.05)
+                .OrderBy(g => g.OnsetBeats)
+                .FirstOrDefault();
+            if (nextGroup is not null) return nextGroup.OnsetBeats;
+        }
+
+        var nextNote = _score.Notes
+            .Where(n => n.OnsetBeats > currentBeat + 0.05)
+            .OrderBy(n => n.OnsetBeats)
+            .FirstOrDefault();
+        return nextNote?.OnsetBeats;
+    }
+
+    public List<int> GetActiveMeasureNoteSequence()
+    {
+        if (_score is null) return new List<int>();
+        var occ = _score.OccurrenceAtBeat(CursorBeat) ?? _score.PerformanceMeasures.FirstOrDefault();
+        if (occ is null) return new List<int>();
+        var startBeat = occ.SourceStartBeat;
+        var endBeat = occ.SourceStartBeat + occ.DurationBeats;
+        return _score.Notes
+            .Where(n => n.OnsetBeats >= startBeat - 0.001 && n.OnsetBeats < endBeat + 0.001)
+            .OrderBy(n => n.OnsetBeats)
+            .Select(n => n.MidiNoteNumber)
+            .ToList();
+    }
+
+    public List<(int midiNote, double beat)> GetPerformanceCountInNotes()
+    {
+        if (_score is null) return new List<(int, double)>();
+        var occ = _score.OccurrenceAtBeat(CursorBeat) ?? _score.PerformanceMeasures.FirstOrDefault();
+        if (occ is null) return new List<(int, double)>();
+        var startBeat = occ.SourceStartBeat;
+        var sequence = _score.Notes
+            .Where(n => n.OnsetBeats >= startBeat - 0.001)
+            .OrderBy(n => n.OnsetBeats)
+            .Select(n => (n.MidiNoteNumber, n.OnsetBeats))
+            .Take(6)
+            .ToList();
+        return sequence.Count >= 2 ? sequence : _score.Notes.Take(4).Select(n => (n.MidiNoteNumber, n.OnsetBeats)).ToList();
+    }
+
+    public List<int> GetPerformanceCountInSequence()
+    {
+        return GetPerformanceCountInNotes().Select(item => item.midiNote).ToList();
+    }
+
+    public bool IsRemoteHoldVisible
+    {
+        get => _isRemoteHoldVisible;
+        set => SetField(ref _isRemoteHoldVisible, value);
+    }
+
+    public string RemoteHoldActionText
+    {
+        get => _remoteHoldActionText;
+        set => SetField(ref _remoteHoldActionText, value);
+    }
+
+    public string RemoteHoldTimeText
+    {
+        get => _remoteHoldTimeText;
+        set => SetField(ref _remoteHoldTimeText, value);
+    }
+
+    public double RemoteHoldProgress
+    {
+        get => _remoteHoldProgress;
+        set => SetField(ref _remoteHoldProgress, value);
+    }
+
+    public int ActiveMeasureFirstMidiNote
+    {
+        get
+        {
+            if (_score is null) return 60;
+            var occ = _score.OccurrenceAtBeat(CursorBeat) ?? _score.PerformanceMeasures.FirstOrDefault();
+            if (occ is null) return 60;
+            var note = _score.Notes.FirstOrDefault(n => n.OnsetBeats >= occ.SourceStartBeat - 0.001);
+            return note?.MidiNoteNumber ?? 60;
+        }
+    }
+
+    public void ProcessActionShortcutTrigger(string actionName, int midiNoteNumber, int behaviorIndex, int staticMidiNote, int scoreDefaultNote = -1)
+    {
+        var targetNote = staticMidiNote > 0 ? staticMidiNote : scoreDefaultNote;
+        if (targetNote <= 0 || midiNoteNumber != targetNote) return;
+
+        var displayName = GetActionDisplayName(actionName);
+        var noteName = MidiNoteFormatter.Format(midiNoteNumber);
+        var holdSeconds = GetHoldSecondsForAction(actionName);
+
+        if (behaviorIndex == 0) // Hold Note
+        {
+            StartRemoteHold(midiNoteNumber, actionName, $"Keep holding {noteName} ({holdSeconds:0.0}s) to {displayName}...", holdSeconds);
+        }
+        else if (behaviorIndex == 1) // Single Tap
+        {
+            ExecuteRemoteHoldAction(actionName);
+        }
+        else if (behaviorIndex == 2) // Double Tap
+        {
+            if (CheckIsTapCount(midiNoteNumber, 2))
+            {
+                ExecuteRemoteHoldAction(actionName);
+            }
+        }
+        else if (behaviorIndex == 3) // Triple Tap
+        {
+            if (CheckIsTapCount(midiNoteNumber, 3))
+            {
+                ExecuteRemoteHoldAction(actionName);
+            }
+        }
+        else if (behaviorIndex == 4) // Multi Tap (Custom)
+        {
+            var targetCount = GetMultiTapCountForAction(actionName);
+            if (CheckIsTapCount(midiNoteNumber, targetCount))
+            {
+                ExecuteRemoteHoldAction(actionName);
+            }
+        }
+    }
+
+    public event EventHandler<(string actionText, string timeText, double progress)>? OnHoldProgressUpdated;
+    public event EventHandler? OnHoldProgressCancelled;
+
+    public void StartRemoteHold(int midiNote, string action, string labelText, double durationSeconds)
+    {
+        CancelRemoteHold();
+        _remoteHoldMidiNote = midiNote;
+        _remoteHoldAction = action;
+        _remoteHoldTargetSeconds = durationSeconds > 0 ? durationSeconds : 3.0;
+        _remoteHoldStartTime = DateTime.UtcNow;
+        RemoteHoldActionText = labelText;
+        RemoteHoldTimeText = $"{_remoteHoldTargetSeconds:0.0}s";
+        RemoteHoldProgress = 0.0;
+        IsRemoteHoldVisible = true;
+
+        OnHoldProgressUpdated?.Invoke(this, (RemoteHoldActionText, RemoteHoldTimeText, 0.0));
+
+        _remoteHoldTimer = new DispatcherTimer(DispatcherPriority.Normal)
+        {
+            Interval = TimeSpan.FromMilliseconds(30)
+        };
+        _remoteHoldTimer.Tick += (s, e) =>
+        {
+            var elapsed = (DateTime.UtcNow - _remoteHoldStartTime).TotalSeconds;
+            var remaining = Math.Max(0, _remoteHoldTargetSeconds - elapsed);
+            RemoteHoldProgress = Math.Clamp(elapsed / _remoteHoldTargetSeconds, 0, 1);
+            RemoteHoldTimeText = $"{remaining:0.0}s";
+
+            OnHoldProgressUpdated?.Invoke(this, (RemoteHoldActionText, RemoteHoldTimeText, RemoteHoldProgress));
+
+            if (elapsed >= _remoteHoldTargetSeconds)
+            {
+                var actionToRun = _remoteHoldAction;
+                CancelRemoteHold();
+                ExecuteRemoteHoldAction(actionToRun);
+            }
+        };
+        _remoteHoldTimer.Start();
+    }
+
+    public void CancelRemoteHold()
+    {
+        _remoteHoldTimer?.Stop();
+        _remoteHoldTimer = null;
+        _remoteHoldMidiNote = -1;
+        _remoteHoldAction = string.Empty;
+        IsRemoteHoldVisible = false;
+        RemoteHoldProgress = 0.0;
+
+        OnHoldProgressCancelled?.Invoke(this, EventArgs.Empty);
+    }
+
+    private async void ExecuteRemoteHoldAction(string action)
+    {
+        if (action == "Listen")
+        {
+            SelectedLessonMode = LessonMode.Listen;
+            await SwitchLessonModeAsync(LessonMode.Listen);
+            await StartSelectedModeAsync();
+        }
+        else if (action == "Practice")
+        {
+            SelectedLessonMode = LessonMode.WaitForYou;
+            await SwitchLessonModeAsync(LessonMode.WaitForYou);
+            await StartSelectedModeAsync();
+        }
+        else if (action == "Performance")
+        {
+            SelectedLessonMode = LessonMode.TimedPlay;
+            await SwitchLessonModeAsync(LessonMode.TimedPlay);
+            await StartSelectedModeAsync();
+        }
+        else if (action == "TogglePlay")
+        {
+            if (IsLessonActive) StopLesson();
+            else await StartSelectedModeAsync();
+        }
+        else if (action == "Restart")
+        {
+            _isStartingLesson = false;
+            _prePracticeMatchedNotes.Clear();
+            if (IsLessonActive) EndLesson(false);
+            if (IsPreviewPlaying || IsPreviewBuilding) StopPreview();
+            CursorBeat = SelectedPreviewStartBeat;
+            await StartSelectedModeAsync();
+        }
+        else if (action == "PrevMeasure") await SeekDisplayMeasureAsync(-1);
+        else if (action == "NextMeasure") await SeekDisplayMeasureAsync(1);
+        else if (action == "PrevPage") await SeekDisplayPageAsync(-1);
+        else if (action == "NextPage") await SeekDisplayPageAsync(1);
+    }
+
     private void MidiDeviceService_NoteOff(object? sender, MidiNoteOffEvent note)
     {
         if (Application.Current is null) return;
         _ = Application.Current.Dispatcher.InvokeAsync(() =>
         {
+            if (note.NoteNumber == _remoteHoldMidiNote)
+            {
+                CancelRemoteHold();
+            }
             CompleteHold(note.NoteNumber);
             InputActivityLabel = $"MIDI note-off from {SelectedMidiDevice?.Name ?? "selected input"}: {MidiNoteFormatter.Format(note.NoteNumber)}";
             if (!MidiMonitorEnabled) return;
@@ -2663,12 +4066,177 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         });
     }
 
+    private int _lastMidiTapNote = -1;
+    private int _lastMidiTapCount = 0;
+    private DateTime _lastMidiTapTime = DateTime.MinValue;
+    private readonly HashSet<int> _prePracticeMatchedNotes = new();
+
+    private bool CheckIsTapCount(int midiNote, int requiredCount)
+    {
+        var now = DateTime.UtcNow;
+        if (_lastMidiTapNote == midiNote && (now - _lastMidiTapTime).TotalMilliseconds <= 600)
+        {
+            _lastMidiTapCount++;
+        }
+        else
+        {
+            _lastMidiTapNote = midiNote;
+            _lastMidiTapCount = 1;
+        }
+
+        _lastMidiTapTime = now;
+
+        if (_lastMidiTapCount >= requiredCount)
+        {
+            _lastMidiTapNote = -1;
+            _lastMidiTapCount = 0;
+            _lastMidiTapTime = DateTime.MinValue;
+            return true;
+        }
+
+        return false;
+    }
+
     private void HandleNoteOn(int midiNoteNumber, int velocity, bool simulation)
     {
+        if (IsMidiLearningActive)
+        {
+            ApplyLearnedMidiNote(midiNoteNumber);
+            return;
+        }
+
         if (ResultsVisible)
         {
-            _ = TriggerAutoRepeatAsync();
-            return;
+            if (BehaviorDismissIndex == 1 || (BehaviorDismissIndex == 2 && CheckIsTapCount(midiNoteNumber, 2)) || (BehaviorDismissIndex == 3 && CheckIsTapCount(midiNoteNumber, 3)))
+            {
+                _ = TriggerAutoRepeatAsync();
+                return;
+            }
+        }
+
+        // Temporary Live Key Feedback during active Listen Mode playback
+        if (IsLessonActive && SelectedLessonMode == LessonMode.Listen)
+        {
+            if (AlwaysShowLiveNoteFeedback)
+            {
+                var currentBeat = CursorBeat;
+                var notesAtCurrentBeat = _score is not null ? GetNotesAtBeat(currentBeat) : new List<int>();
+                var isCorrect = notesAtCurrentBeat.Contains(midiNoteNumber);
+
+                OnLiveNoteFeedbackTriggered?.Invoke(this, (isCorrect ? "correct" : "wrong", currentBeat, midiNoteNumber));
+            }
+        }
+
+        // Global Action Shortcuts (Contextual dispatching)
+        if (!IsActiveSessionRunning)
+        {
+            // Before starting a lesson/playback, TogglePlay (Begin Practice / Listen / Performance) takes priority
+            ProcessActionShortcutTrigger("TogglePlay", midiNoteNumber, BehaviorTogglePlayIndex, _profile.Settings.MidiShortcutTogglePlayNote);
+            if (_profile.Settings.MidiShortcutRestartNote != _profile.Settings.MidiShortcutTogglePlayNote)
+            {
+                ProcessActionShortcutTrigger("Restart", midiNoteNumber, BehaviorRestartIndex, _profile.Settings.MidiShortcutRestartNote);
+            }
+        }
+        else
+        {
+            // While a lesson or playback is running, Restart (Restart Session) takes priority
+            ProcessActionShortcutTrigger("Restart", midiNoteNumber, BehaviorRestartIndex, _profile.Settings.MidiShortcutRestartNote);
+            if (_profile.Settings.MidiShortcutTogglePlayNote != _profile.Settings.MidiShortcutRestartNote)
+            {
+                ProcessActionShortcutTrigger("TogglePlay", midiNoteNumber, BehaviorTogglePlayIndex, _profile.Settings.MidiShortcutTogglePlayNote);
+            }
+        }
+        ProcessActionShortcutTrigger("Listen", midiNoteNumber, BehaviorListenIndex, _profile.Settings.MidiShortcutListenNote);
+        ProcessActionShortcutTrigger("PrevMeasure", midiNoteNumber, BehaviorPrevMeasureIndex, _profile.Settings.MidiShortcutPreviousMeasureNote);
+        ProcessActionShortcutTrigger("NextMeasure", midiNoteNumber, BehaviorNextMeasureIndex, _profile.Settings.MidiShortcutNextMeasureNote);
+        ProcessActionShortcutTrigger("PrevPage", midiNoteNumber, BehaviorPrevPageIndex, _profile.Settings.MidiShortcutPreviousPageNote);
+        ProcessActionShortcutTrigger("NextPage", midiNoteNumber, BehaviorNextPageIndex, _profile.Settings.MidiShortcutNextPageNote);
+        ProcessActionShortcutTrigger("Dismiss", midiNoteNumber, BehaviorDismissIndex, _profile.Settings.MidiShortcutDismissResultsNote);
+        ProcessActionShortcutTrigger("Repeat", midiNoteNumber, BehaviorRepeatIndex, _profile.Settings.MidiShortcutRepeatResultsNote);
+
+        if (!IsLessonActive)
+        {
+            var currentBeat = CursorBeat;
+            var sectionStartBeat = SelectedPreviewStartBeat;
+            var occ = _score?.OccurrenceAtBeat(currentBeat) ?? _score?.PerformanceMeasures.FirstOrDefault();
+            var measureStartBeat = occ?.SourceStartBeat ?? sectionStartBeat;
+            
+            double targetEndBeat = measureStartBeat + 4.0;
+            if (occ != null)
+            {
+                if (BehaviorPerformanceIndex == 6) // 2-Bar Sequence
+                {
+                    targetEndBeat = occ.SourceStartBeat + (occ.DurationBeats * 2);
+                }
+                else if (BehaviorPerformanceIndex == 7) // Visible Page / System Sequence
+                {
+                    targetEndBeat = SelectedPreviewEndBeat;
+                }
+                else // 1-Bar Sequence (5) or First & Last Note Sequence (8)
+                {
+                    targetEndBeat = occ.SourceStartBeat + occ.DurationBeats;
+                }
+            }
+
+            var notesAtCurrentBeat = _score is not null ? GetNotesAtBeat(currentBeat) : new List<int>();
+            var isCorrectNote = notesAtCurrentBeat.Count == 0 || notesAtCurrentBeat.Contains(midiNoteNumber);
+
+            if (AlwaysShowLiveNoteFeedback)
+            {
+                OnLiveNoteFeedbackTriggered?.Invoke(this, (isCorrectNote ? "correct" : "wrong", currentBeat, midiNoteNumber));
+            }
+
+            if (isCorrectNote)
+            {
+                if (notesAtCurrentBeat.Contains(midiNoteNumber))
+                {
+                    _prePracticeMatchedNotes.Add(midiNoteNumber);
+                }
+
+                // Complete beat/chord when all expected notes at currentBeat are matched
+                if (notesAtCurrentBeat.Count == 0 || _prePracticeMatchedNotes.Count >= notesAtCurrentBeat.Count)
+                {
+                    _prePracticeMatchedNotes.Clear();
+                    _activeMeasureCountInIndex++;
+
+                    var nextBeat = GetNextNoteBeat(currentBeat);
+                    var isSequenceCompleted = !nextBeat.HasValue || nextBeat.Value >= targetEndBeat - 0.05;
+
+                    // If a Sequence Count-In mode (Behavior >= 5) is active AND sequence target is reached:
+                    if (BehaviorPerformanceIndex >= 5 && isSequenceCompleted)
+                    {
+                        _activeMeasureCountInIndex = 0;
+                        CursorBeat = sectionStartBeat;
+                        ExecuteRemoteHoldAction("Performance");
+                        return;
+                    }
+
+                    if (nextBeat.HasValue && !isSequenceCompleted)
+                    {
+                        CursorBeat = nextBeat.Value;
+                    }
+                    else
+                    {
+                        // End of measure / section reached: reset playhead back to start
+                        _activeMeasureCountInIndex = 0;
+                        CursorBeat = sectionStartBeat;
+                    }
+                }
+            }
+            else
+            {
+                // Wrong note/chord tone: reset matched notes & count-in index, and reset playhead immediately back to beginning
+                _prePracticeMatchedNotes.Clear();
+                _activeMeasureCountInIndex = 0;
+                CursorBeat = sectionStartBeat;
+            }
+
+            var activeFirstNote = ActiveMeasureFirstMidiNote;
+            ProcessActionShortcutTrigger("Practice", midiNoteNumber, BehaviorPracticeIndex, 0, activeFirstNote);
+            if (BehaviorPerformanceIndex < 5)
+            {
+                ProcessActionShortcutTrigger("Performance", midiNoteNumber, BehaviorPerformanceIndex, _profile.Settings.MidiShortcutPerformanceNote, activeFirstNote);
+            }
         }
 
         var source = simulation ? "Simulation" : SelectedMidiDevice?.Name ?? "MIDI";
@@ -2941,7 +4509,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         if (advanced) UpdateExpectedGuideForCursor();
     }
 
-    private void EndLesson(bool completed)
+    public void EndLesson(bool completed)
     {
         if (!IsLessonActive) return;
         foreach (var note in _activeHolds.Keys.ToArray()) CompleteHold(note);

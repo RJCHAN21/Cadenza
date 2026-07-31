@@ -146,10 +146,11 @@ public sealed class MusicXmlImporter
                 measureSummaries.AddRange(parsedMeasures.Select(measure => measure.Summary));
                 ValidateNavigationDirectives(root, validationWarnings, parsedMeasures.Count);
                 ValidateSlurs(part, validationWarnings, out slurPairCount);
-                var tiedNotes = MergeTiedNotes(partNotes, validationWarnings, out tiePairCount);
                 var occurrences = BuildPerformanceOccurrences(parsedMeasures, validationWarnings, out repeatPairCount);
                 performanceMeasures.AddRange(occurrences);
-                playableNotes.AddRange(ExpandNotes(tiedNotes, occurrences));
+                var expandedNotes = ExpandNotes(partNotes, occurrences);
+                var tiedNotes = MergeTiedNotes(expandedNotes, validationWarnings, out tiePairCount);
+                playableNotes.AddRange(tiedNotes);
                 playableRests.AddRange(ExpandRests(partRests, occurrences));
                 scoreMarks.AddRange(ExpandMarks(partMarks, occurrences));
                 totalBeats = occurrences.Sum(occurrence => occurrence.DurationBeats);
@@ -275,8 +276,10 @@ public sealed class MusicXmlImporter
                             isChord,
                             Descendants(element, "beam").Select(beam => beam.Value.Trim().ToLowerInvariant()).ToArray(),
                             Descendants(element, "lyric").Select(lyric => Value(Descendant(lyric, "text"))).FirstOrDefault(text => !string.IsNullOrWhiteSpace(text)),
-                            Descendants(element, "tie").Any(tie => string.Equals((string?)tie.Attribute("type"), "start", StringComparison.OrdinalIgnoreCase)),
-                            Descendants(element, "tie").Any(tie => string.Equals((string?)tie.Attribute("type"), "stop", StringComparison.OrdinalIgnoreCase)),
+                            Descendants(element, "tie").Any(tie => string.Equals((string?)tie.Attribute("type"), "start", StringComparison.OrdinalIgnoreCase)) ||
+                            Descendants(element, "tied").Any(tied => string.Equals((string?)tied.Attribute("type"), "start", StringComparison.OrdinalIgnoreCase)),
+                            Descendants(element, "tie").Any(tie => string.Equals((string?)tie.Attribute("type"), "stop", StringComparison.OrdinalIgnoreCase)) ||
+                            Descendants(element, "tied").Any(tied => string.Equals((string?)tied.Attribute("type"), "stop", StringComparison.OrdinalIgnoreCase)),
                             0,
                             isStaccato,
                             isAccent,
@@ -387,23 +390,40 @@ public sealed class MusicXmlImporter
         var performanceBeat = 0d;
         var safety = Math.Max(64, measures.Count * 16);
 
+        // Pre-process active Volta ending numbers across multi-measure brackets
+        var measureEndingNumbers = new string[measures.Count];
+        var currentEndingContext = string.Empty;
+        for (var i = 0; i < measures.Count; i++)
+        {
+            var m = measures[i];
+            var startEnding = m.Endings.FirstOrDefault(e => string.Equals(e.Type, "start", StringComparison.OrdinalIgnoreCase));
+            if (startEnding is not null && !string.IsNullOrWhiteSpace(startEnding.Number))
+            {
+                currentEndingContext = startEnding.Number;
+            }
+            measureEndingNumbers[i] = currentEndingContext;
+            var stopEnding = m.Endings.FirstOrDefault(e =>
+                string.Equals(e.Type, "stop", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(e.Type, "discontinue", StringComparison.OrdinalIgnoreCase));
+            if (stopEnding is not null)
+            {
+                currentEndingContext = string.Empty;
+            }
+        }
+
         while (index >= 0 && index < measures.Count && safety-- > 0)
         {
             var measure = measures[index];
             var pass = measureVisits.GetValueOrDefault(index) + 1;
+            var endingNums = measureEndingNumbers[index].Split(',', ' ').Select(s => s.Trim()).Where(s => s.Length > 0).ToArray();
 
-            var isEndingOne = measure.Endings.Any(e =>
-                e.Number.Split(',', ' ').Select(s => s.Trim()).Contains("1"));
-            var isEndingTwoOnly = measure.Endings.Any(e => {
-                var nums = e.Number.Split(',', ' ').Select(s => s.Trim()).ToArray();
-                return nums.Contains("2") && !nums.Contains("1");
-            });
+            var isEndingOne = endingNums.Contains("1");
+            var isEndingTwoOnly = endingNums.Contains("2") && !isEndingOne;
 
             if (pass > 1 && isEndingOne && !isEndingTwoOnly)
             {
                 var endingTwoIndex = Enumerable.Range(index + 1, measures.Count - (index + 1))
-                    .FirstOrDefault(candidate => measures[candidate].Endings.Any(e =>
-                        e.Number.Split(',', ' ').Select(s => s.Trim()).Contains("2")), -1);
+                    .FirstOrDefault(candidate => measureEndingNumbers[candidate].Split(',', ' ').Select(s => s.Trim()).Contains("2"), -1);
                 if (endingTwoIndex > index)
                 {
                     index = endingTwoIndex;
@@ -413,8 +433,7 @@ public sealed class MusicXmlImporter
             else if (pass == 1 && isEndingTwoOnly)
             {
                 var postEndingIndex = Enumerable.Range(index + 1, measures.Count - (index + 1))
-                    .FirstOrDefault(candidate => !measures[candidate].Endings.Any(e =>
-                        e.Number.Split(',', ' ').Select(s => s.Trim()).Contains("2")), measures.Count);
+                    .FirstOrDefault(candidate => !measureEndingNumbers[candidate].Split(',', ' ').Select(s => s.Trim()).Contains("2"), measures.Count);
                 index = postEndingIndex;
                 continue;
             }

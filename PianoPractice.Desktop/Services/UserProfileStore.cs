@@ -101,6 +101,10 @@ public sealed class CadenzaUserSettings
     public ScoreReadingMode ScoreReadingMode { get; set; } = ScoreReadingMode.Page;
     public bool HintModeEnabled { get; set; }
     public int NotationZoomPercent { get; set; } = 100;
+    public int CustomScoreScale { get; set; } = 75;
+    public int CustomScoreMargin { get; set; } = 80;
+    public int CustomNoteSpacing { get; set; } = 100;
+    public int CustomBarDensity { get; set; } = 4;
     public int FocusStartMeasure { get; set; } = 1;
     public int FocusEndMeasure { get; set; }
     public bool PedalEnabled { get; set; }
@@ -113,6 +117,68 @@ public sealed class CadenzaUserSettings
     public bool MatchPlaybackSynthEnabled { get; set; }
     public bool OnlyShowFeedbackOnPerformanceEnd { get; set; }
     public string? LastOpenedScorePath { get; set; }
+    public bool AutoDismissResultsEnabled { get; set; } = true;
+    public double AutoDismissResultsSeconds { get; set; } = 10.0;
+    public string KeyShortcutListen { get; set; } = "F4";
+    public string KeyShortcutStartPractice { get; set; } = "F5";
+    public string KeyShortcutStartPerformance { get; set; } = "F6";
+    public string KeyShortcutTogglePlay { get; set; } = "Space";
+    public string KeyShortcutRestartSession { get; set; } = "R";
+    public string KeyShortcutPreviousMeasure { get; set; } = "Left";
+    public string KeyShortcutNextMeasure { get; set; } = "Right";
+    public string KeyShortcutPreviousPage { get; set; } = "PageUp";
+    public string KeyShortcutNextPage { get; set; } = "PageDown";
+    public string KeyShortcutDismissResults { get; set; } = "Escape";
+    public string KeyShortcutRepeatResults { get; set; } = "Enter";
+
+    public int MidiShortcutListenNote { get; set; } = 48; // C3
+    public int MidiShortcutPracticeNote { get; set; } = -1;
+    public int MidiShortcutPerformanceNote { get; set; } = -2;
+    public int MidiShortcutTogglePlayNote { get; set; } = 60; // C4
+    public int MidiShortcutRestartNote { get; set; } = -1; // Unassigned to prevent C4 collision
+    public int MidiShortcutPreviousMeasureNote { get; set; } = 57; // A3
+    public int MidiShortcutNextMeasureNote { get; set; } = 59; // B3
+    public int MidiShortcutPreviousPageNote { get; set; } = 53; // F3
+    public int MidiShortcutNextPageNote { get; set; } = 55; // G3
+    public int MidiShortcutDismissResultsNote { get; set; } = 62; // D4
+    public int MidiShortcutRepeatResultsNote { get; set; } = 67; // G4
+    public double MidiShortcutHoldSeconds { get; set; } = 3.0;
+    public double HoldSecondsListen { get; set; } = 3.0;
+    public double HoldSecondsPractice { get; set; } = 3.0;
+    public double HoldSecondsPerformance { get; set; } = 3.0;
+    public double HoldSecondsTogglePlay { get; set; } = 3.0;
+    public double HoldSecondsRestart { get; set; } = 3.0;
+    public double HoldSecondsPrevMeasure { get; set; } = 3.0;
+    public double HoldSecondsNextMeasure { get; set; } = 3.0;
+    public double HoldSecondsPrevPage { get; set; } = 3.0;
+    public double HoldSecondsNextPage { get; set; } = 3.0;
+    public double HoldSecondsDismiss { get; set; } = 3.0;
+    public double HoldSecondsRepeat { get; set; } = 3.0;
+
+    public int MultiTapCountListen { get; set; } = 4;
+    public int MultiTapCountPractice { get; set; } = 4;
+    public int MultiTapCountPerformance { get; set; } = 4;
+    public int MultiTapCountTogglePlay { get; set; } = 4;
+    public int MultiTapCountRestart { get; set; } = 4;
+    public int MultiTapCountPrevMeasure { get; set; } = 4;
+    public int MultiTapCountNextMeasure { get; set; } = 4;
+    public int MultiTapCountPrevPage { get; set; } = 4;
+    public int MultiTapCountNextPage { get; set; } = 4;
+    public int MultiTapCountDismiss { get; set; } = 4;
+    public int MultiTapCountRepeat { get; set; } = 4;
+
+    public int BehaviorListenIndex { get; set; } = 1; // Single Tap
+    public int BehaviorPracticeIndex { get; set; } = 0; // Hold Note
+    public int BehaviorPerformanceIndex { get; set; } = 3; // 1-Bar Sequence
+    public int BehaviorTogglePlayIndex { get; set; } = 0; // Hold Note
+    public int BehaviorRestartIndex { get; set; } = 0; // Hold Note
+    public int BehaviorPrevMeasureIndex { get; set; } = 1; // Single Tap
+    public int BehaviorNextMeasureIndex { get; set; } = 1; // Single Tap
+    public int BehaviorPrevPageIndex { get; set; } = 1; // Single Tap
+    public int BehaviorNextPageIndex { get; set; } = 1; // Single Tap
+    public int BehaviorDismissIndex { get; set; } = 1; // Single Tap
+    public int BehaviorRepeatIndex { get; set; } = 0; // Hold Note
+    public bool AlwaysShowLiveNoteFeedback { get; set; } = true;
 }
 
 public sealed class SongProgressRecord

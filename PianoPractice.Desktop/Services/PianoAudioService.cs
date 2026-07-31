@@ -13,7 +13,7 @@ public sealed class PianoAudioService : IDisposable
     private MemoryStream? _clickStream;
 
     public Task<byte[]> BuildPreviewAsync(ScoreDocument score, bool includeMetronome, CancellationToken cancellationToken) =>
-        BuildPreviewAsync(score, includeMetronome, 0, score.TotalBeats, cancellationToken);
+        BuildPreviewAsync(score, includeMetronome, 0, score.TotalPerformanceBeats, cancellationToken);
 
     public Task<byte[]> BuildPreviewAsync(
         ScoreDocument score,
@@ -130,6 +130,7 @@ public sealed class PianoAudioService : IDisposable
 
     public void PlayMetronomeClick(bool accent, int volumePercent = 70)
     {
+        if (_previewPlayer is not null) return;
         _clickPlayer?.Stop();
         _clickPlayer?.Dispose();
         _clickStream?.Dispose();
@@ -141,7 +142,7 @@ public sealed class PianoAudioService : IDisposable
 
     public void PlayLiveNote(int midiNote, int velocity, int volumePercent, string presetId)
     {
-        if (volumePercent <= 0) return;
+        if (volumePercent <= 0 || _previewPlayer is not null) return;
         Task.Run(() =>
         {
             try
@@ -188,8 +189,9 @@ public sealed class PianoAudioService : IDisposable
         string presetId,
         CancellationToken cancellationToken)
     {
-        startBeat = Math.Clamp(startBeat, 0, score.TotalBeats);
-        endBeat = Math.Clamp(endBeat, startBeat + 0.01, Math.Max(startBeat + 0.01, score.TotalBeats));
+        var maxBeats = score.TotalPerformanceBeats;
+        startBeat = Math.Clamp(startBeat, 0, maxBeats);
+        endBeat = Math.Clamp(endBeat, startBeat + 0.01, Math.Max(startBeat + 0.01, maxBeats));
         var beats = endBeat - startBeat;
         var secondsPerBeat = 60d / Math.Max(1d, tempoBpm);
         var totalSamples = Math.Clamp((int)Math.Ceiling((beats + 1.5) * secondsPerBeat * SampleRate), SampleRate, SampleRate * 600);
@@ -198,47 +200,10 @@ public sealed class PianoAudioService : IDisposable
         var pianoGain = Math.Clamp(pianoVolumePercent, 0, 100) / 100d;
         var metronomeGain = Math.Clamp(metronomeVolumePercent, 0, 100) / 100d;
 
-        var performances = score.PerformanceMeasures;
-        if (performances.Count > 0)
+        foreach (var note in score.Notes)
         {
-            foreach (var occurrence in performances)
-            {
-                var occPerfStart = occurrence.PerformanceStartBeat;
-                var occPerfEnd = occPerfStart + occurrence.DurationBeats;
-                if (occPerfEnd <= startBeat || occPerfStart >= endBeat) continue;
-
-                var measureNotes = score.Notes.Where(note =>
-                    note.MeasureNumber == occurrence.MeasureNumber &&
-                    (!includedStaffNumber.HasValue || note.StaffNumber == includedStaffNumber.Value));
-
-                foreach (var note in measureNotes)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var offsetInMeasure = note.OnsetBeats - occurrence.SourceStartBeat;
-                    var notePerfOnset = occPerfStart + offsetInMeasure;
-
-                    if (notePerfOnset >= startBeat && notePerfOnset < endBeat)
-                    {
-                        AddPianoVoice(
-                            samples,
-                            note.MidiNoteNumber,
-                            96,
-                            notePerfOnset - startBeat,
-                            Math.Min(note.DurationBeats, endBeat - notePerfOnset),
-                            secondsPerBeat,
-                            pianoGain,
-                            presetId,
-                            cancellationToken);
-                    }
-                }
-            }
-        }
-        else
-        {
-            foreach (var note in score.Notes.Where(note =>
-                         note.OnsetBeats >= startBeat &&
-                         note.OnsetBeats < endBeat &&
-                         (!includedStaffNumber.HasValue || note.StaffNumber == includedStaffNumber.Value)))
+            if (includedStaffNumber.HasValue && note.StaffNumber != includedStaffNumber.Value) continue;
+            if (note.OnsetBeats >= startBeat && note.OnsetBeats < endBeat)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 AddPianoVoice(
@@ -256,10 +221,11 @@ public sealed class PianoAudioService : IDisposable
 
         if (includeMetronome)
         {
+            var beatsPerMeasure = Math.Max(1, score.BeatsPerMeasure);
             for (var beat = Math.Ceiling(startBeat); beat <= endBeat; beat += 1d)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                AddClick(samples, (int)((beat - startBeat) * secondsPerBeat * SampleRate), beat % 4 == 0, metronomeGain);
+                AddClick(samples, (int)((beat - startBeat) * secondsPerBeat * SampleRate), (int)beat % beatsPerMeasure == 0, metronomeGain);
             }
         }
 
@@ -477,7 +443,8 @@ public sealed class PianoAudioService : IDisposable
         writer.Write(samples.Length * 2);
         foreach (var sample in samples)
         {
-            writer.Write((short)(Math.Clamp(sample, -1f, 1f) * short.MaxValue));
+            var softSample = (float)Math.Tanh(sample);
+            writer.Write((short)(softSample * short.MaxValue));
         }
 
         return stream.ToArray();

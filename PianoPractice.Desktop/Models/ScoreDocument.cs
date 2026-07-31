@@ -19,6 +19,7 @@ public sealed class ScoreDocument
     public int TotalRestCount { get; init; }
     public int TotalLyricCount { get; init; }
     public double TotalBeats { get; init; }
+    public double TotalPerformanceBeats => PerformanceMeasures.Count > 0 ? PerformanceMeasures.Sum(m => m.DurationBeats) : TotalBeats;
     public IReadOnlyList<ScorePart> Parts { get; init; } = [];
     public IReadOnlyList<MeasureSummary> Measures { get; init; } = [];
     public IReadOnlyList<ScoreNote> Notes { get; init; } = [];

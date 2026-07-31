@@ -156,11 +156,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "D:\\Apps\\Cadenza-development\\PianoPractice.ParserSmoke\\PianoPractice.ParserSmoke.csproj",
+      "projectUniqueName": "d:\\Apps\\Cadenza-development\\PianoPractice.ParserSmoke\\PianoPractice.ParserSmoke.csproj",
       "projectName": "PianoPractice.ParserSmoke",
-      "projectPath": "D:\\Apps\\Cadenza-development\\PianoPractice.ParserSmoke\\PianoPractice.ParserSmoke.csproj",
+      "projectPath": "d:\\Apps\\Cadenza-development\\PianoPractice.ParserSmoke\\PianoPractice.ParserSmoke.csproj",
       "packagesPath": "C:\\Users\\RJ Chan\\.nuget\\packages\\",
-      "outputPath": "D:\\Apps\\Cadenza-development\\PianoPractice.ParserSmoke\\obj\\",
+      "outputPath": "d:\\Apps\\Cadenza-development\\PianoPractice.ParserSmoke\\obj\\",
       "projectStyle": "PackageReference",
       "fallbackFolders": [
         "D:\\Visual Studio Tools\\NuGetPackages"
@@ -182,8 +182,8 @@
         "net8.0-windows7.0": {
           "targetAlias": "net8.0-windows",
           "projectReferences": {
-            "D:\\Apps\\Cadenza-development\\PianoPractice.Desktop\\PianoPractice.Desktop.csproj": {
-              "projectPath": "D:\\Apps\\Cadenza-development\\PianoPractice.Desktop\\PianoPractice.Desktop.csproj"
+            "d:\\Apps\\Cadenza-development\\PianoPractice.Desktop\\PianoPractice.Desktop.csproj": {
+              "projectPath": "d:\\Apps\\Cadenza-development\\PianoPractice.Desktop\\PianoPractice.Desktop.csproj"
             }
           }
         }

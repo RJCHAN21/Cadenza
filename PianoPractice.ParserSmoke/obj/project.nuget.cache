@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "TjuwVEZNeYI=",
+  "dgSpecHash": "7ot7dYGuZA4=",
   "success": true,
-  "projectFilePath": "D:\\Apps\\Cadenza-development\\PianoPractice.ParserSmoke\\PianoPractice.ParserSmoke.csproj",
+  "projectFilePath": "d:\\Apps\\Cadenza-development\\PianoPractice.ParserSmoke\\PianoPractice.ParserSmoke.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\RJ Chan\\.nuget\\packages\\microsoft.web.webview2\\1.0.3537.50\\microsoft.web.webview2.1.0.3537.50.nupkg.sha512"
   ],

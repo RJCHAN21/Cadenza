@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "D:\\Apps\\Cadenza-development\\PianoPractice.Desktop\\PianoPractice.Desktop.csproj": {}
+    "d:\\Apps\\Cadenza-development\\PianoPractice.Desktop\\PianoPractice.Desktop.csproj": {}
   },
   "projects": {
-    "D:\\Apps\\Cadenza-development\\PianoPractice.Desktop\\PianoPractice.Desktop.csproj": {
+    "d:\\Apps\\Cadenza-development\\PianoPractice.Desktop\\PianoPractice.Desktop.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\Apps\\Cadenza-development\\PianoPractice.Desktop\\PianoPractice.Desktop.csproj",
+        "projectUniqueName": "d:\\Apps\\Cadenza-development\\PianoPractice.Desktop\\PianoPractice.Desktop.csproj",
         "projectName": "PianoPractice.Desktop",
-        "projectPath": "D:\\Apps\\Cadenza-development\\PianoPractice.Desktop\\PianoPractice.Desktop.csproj",
+        "projectPath": "d:\\Apps\\Cadenza-development\\PianoPractice.Desktop\\PianoPractice.Desktop.csproj",
         "packagesPath": "C:\\Users\\RJ Chan\\.nuget\\packages\\",
-        "outputPath": "D:\\Apps\\Cadenza-development\\PianoPractice.Desktop\\obj\\",
+        "outputPath": "d:\\Apps\\Cadenza-development\\PianoPractice.Desktop\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "D:\\Visual Studio Tools\\NuGetPackages"
