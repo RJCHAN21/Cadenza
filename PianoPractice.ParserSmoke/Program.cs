@@ -12,7 +12,8 @@ Run("first and second endings", TestAlternateEndings);
 Run("multiple parts", TestMultipleParts);
 Run("ties remain occurrence-aware", TestTies);
 Run("tempo and meter map", TestTempoAndMeter);
-Run("unsafe XML is rejected", TestUnsafeXml);
+Run("standard MusicXML DOCTYPE is accepted", TestStandardMusicXmlDoctype);
+Run("DTD entity references remain blocked", TestDtdEntityIsRejected);
 Run("unsafe MXL path is rejected", TestUnsafeMxlPath);
 
 if (args.Length > 0)
@@ -169,16 +170,33 @@ void TestTempoAndMeter()
         $"Expected a 3.5 second performance, got {score.SecondsAtPerformanceBeat(score.TotalPerformanceBeats):0.###}.");
 }
 
-void TestUnsafeXml()
+void TestStandardMusicXmlDoctype()
+{
+    var scoreXml = Score(Part("P1", Measure(1, Note("C", 4))));
+    var withDoctype = scoreXml.Replace(
+        "<score-partwise version=\"4.0\">",
+        "<!DOCTYPE score-partwise PUBLIC \"-//Recordare//DTD MusicXML 4.0 Partwise//EN\" \"http://www.musicxml.org/dtds/partwise.dtd\">\n<score-partwise version=\"4.0\">",
+        StringComparison.Ordinal);
+
+    var score = ImportXml(withDoctype);
+    Assert(score.MeasureCount == 1, "A standard MusicXML DOCTYPE prevented score import.");
+    Assert(score.Notes.Count == 1, "The DOCTYPE-compatible score lost its playable note.");
+}
+
+void TestDtdEntityIsRejected()
 {
     var xml = """
+              <?xml version="1.0" encoding="UTF-8"?>
               <!DOCTYPE score-partwise [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
               <score-partwise version="4.0">
+                <work><work-title>&xxe;</work-title></work>
                 <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
                 <part id="P1"><measure number="1"><note><rest/><duration>1</duration></note></measure></part>
               </score-partwise>
               """;
-    AssertThrows<XmlException>(() => ImportXml(xml), "DTD-bearing XML was accepted.");
+    AssertThrows<XmlException>(
+        () => ImportXml(xml),
+        "XML that depends on a DTD entity was accepted.");
 }
 
 void TestUnsafeMxlPath()
