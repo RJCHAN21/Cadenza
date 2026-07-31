@@ -5,6 +5,11 @@
   let clockTempoChanges = [{ performanceBeat: 0, bpm: 120 }];
   let clockTotalBeats = 0;
   let clockInitialBpm = 120;
+  let playingNodes = new Set();
+  let expectedNodes = new Set();
+  let lastHintKey = "";
+  let lastPlayingKey = "";
+  let lastExpectedKey = "";
 
   function install() {
     if (!window.CadenzaNotation?.setPerformanceClock ||
@@ -61,11 +66,10 @@
     }
 
     const originalSetPerformanceClock = window.CadenzaNotation.setPerformanceClock;
-    function setPerformanceClock(changes, totalBeats, initialBpm) {
+    window.CadenzaNotation.setPerformanceClock = function setPerformanceClock(changes, totalBeats, initialBpm) {
       normalizeClock(changes, totalBeats, initialBpm);
       return originalSetPerformanceClock(changes, totalBeats, initialBpm);
-    }
-    window.CadenzaNotation.setPerformanceClock = setPerformanceClock;
+    };
 
     function tempoScale() {
       return Math.max(0.01, Number(bpm || clockInitialBpm) / clockInitialBpm);
@@ -129,9 +133,6 @@
       const qstamp = Number(event?.qstamp);
       if (!Number.isFinite(qstamp)) return false;
       const bounds = occurrenceSourceBounds(occurrence);
-      // The end boundary belongs to the next written measure/occurrence. Keeping
-      // this interval half-open prevents the playhead from crossing a repeat or
-      // volta branch before the authoritative performance occurrence changes.
       return qstamp >= bounds.start - epsilon && qstamp < bounds.end - epsilon;
     }
 
@@ -149,10 +150,8 @@
     function eventAfterSourceBeat(sourceBeat, occurrence) {
       return timemap.find(event => {
         const qstamp = Number(event.qstamp);
-        return positioned(event) &&
-          Number.isFinite(qstamp) &&
-          qstamp > sourceBeat + epsilon &&
-          eventBelongsToOccurrence(event, occurrence);
+        return positioned(event) && Number.isFinite(qstamp) &&
+          qstamp > sourceBeat + epsilon && eventBelongsToOccurrence(event, occurrence);
       }) || null;
     }
 
@@ -161,8 +160,7 @@
       const sourceStart = Number(occurrence.sourceStartBeat) || 0;
       return timemap.find(event =>
         eventBelongsToOccurrence(event, occurrence) &&
-        Math.abs(Number(event.qstamp) - sourceStart) < epsilon &&
-        event.measureOn) ||
+        Math.abs(Number(event.qstamp) - sourceStart) < epsilon && event.measureOn) ||
         eventAtOrBeforeSourceBeat(sourceStart, occurrence) ||
         eventAfterSourceBeat(sourceStart - epsilon, occurrence);
     }
@@ -173,9 +171,7 @@
       if (!previous) return next;
       if (!next) return previous;
       return Math.abs(Number(previous.qstamp) - sourceBeat) <=
-        Math.abs(Number(next.qstamp) - sourceBeat)
-        ? previous
-        : next;
+        Math.abs(Number(next.qstamp) - sourceBeat) ? previous : next;
     }
 
     function measureForOccurrence(occurrence) {
@@ -188,8 +184,7 @@
     function measureStartX(measure) {
       if (!measure) return null;
       const stageRect = stage.getBoundingClientRect();
-      const rect = measure.getBoundingClientRect();
-      return rect.left - stageRect.left;
+      return measure.getBoundingClientRect().left - stageRect.left;
     }
 
     function measureEndX(measure) {
@@ -200,14 +195,75 @@
         .filter(rect => rect.width > 0 || rect.height > 0);
       if (barlines.length)
         return Math.max(...barlines.map(rect => rect.right)) - stageRect.left;
-      const rect = measure.getBoundingClientRect();
-      return rect.right - stageRect.left;
+      return measure.getBoundingClientRect().right - stageRect.left;
+    }
+
+    function nodeSetForIds(ids) {
+      const result = new Set();
+      for (const id of ids || []) {
+        const element = elementForVerovioId(id);
+        if (element) result.add(element);
+      }
+      return result;
+    }
+
+    function replaceClassSet(current, next, className) {
+      for (const node of current) {
+        if (!next.has(node) || !node.isConnected)
+          node.classList.remove(className);
+      }
+      for (const node of next) {
+        if (!current.has(node))
+          node.classList.add(className);
+      }
+      return next;
+    }
+
+    function stableKey(ids) {
+      return [...new Set((ids || []).map(String))].sort().join("|");
+    }
+
+    function updatePlaying(ids) {
+      const key = stableKey(ids);
+      if (key === lastPlayingKey && [...playingNodes].every(node => node.isConnected)) return;
+      lastPlayingKey = key;
+      playingNodes = replaceClassSet(playingNodes, nodeSetForIds(ids), "playing");
+    }
+
+    function clearHintDecorations() {
+      document.querySelectorAll(".hint-svg-badge").forEach(node => node.remove());
+      document.querySelectorAll(".active-measure-glow").forEach(node => node.classList.remove("active-measure-glow"));
+    }
+
+    function updateExpected(ids, beat) {
+      const key = stableKey(ids);
+      if (key !== lastExpectedKey || ![...expectedNodes].every(node => node.isConnected)) {
+        lastExpectedKey = key;
+        expectedNodes = replaceClassSet(expectedNodes, nodeSetForIds(ids), "expected");
+      }
+      if (!hintMode) {
+        if (lastHintKey) {
+          lastHintKey = "";
+          clearHintDecorations();
+        }
+        return;
+      }
+      if (key === lastHintKey) return;
+      lastHintKey = key;
+      clearHintDecorations();
+      updateHintLane({ notes: ids || [], elements: [] }, beat);
+    }
+
+    function setPixelStyle(element, property, value) {
+      const next = `${value.toFixed(2)}px`;
+      if (element.style[property] !== next)
+        element.style[property] = next;
     }
 
     function updateCursorAtBeat(performanceBeat, immediate) {
-      if (!toolkit || !timemap.length) return;
+      if (!toolkit || !timemap.length) return null;
       const occurrence = occurrenceAtPerformanceBeat(performanceBeat);
-      if (!occurrence) return;
+      if (!occurrence) return null;
       const sourceBeat = sourceBeatForOccurrence(performanceBeat, occurrence);
       const startEvent = occurrenceStartEvent(occurrence);
       const previous = eventAtOrBeforeSourceBeat(sourceBeat, occurrence) || startEvent;
@@ -216,11 +272,14 @@
       if (desiredPage !== currentPage) {
         if (!pendingPage || pendingPage !== desiredPage) {
           const direction = desiredPage > currentPage ? 1 : -1;
+          lastPlayingKey = "";
+          lastExpectedKey = "";
+          lastHintKey = "";
           renderPage(desiredPage, !immediate, direction, renderLatestCursor);
         }
-        return;
+        return null;
       }
-      if (pendingPage) return;
+      if (pendingPage) return null;
 
       const measure = measureForOccurrence(occurrence);
       const previousSystem = systemForEvent(previous || startEvent);
@@ -229,19 +288,14 @@
       let x2 = next && (!previousSystem || !nextSystem || previousSystem === nextSystem)
         ? eventViewportCenter(next)
         : null;
-
       const bounds = occurrenceSourceBounds(occurrence);
       if (x2 == null)
         x2 = measureEndX(measure) ?? (previousSystem ? systemEndBarLineX(previousSystem) : x1);
       if (x1 == null) x1 = x2;
-      if (x1 == null || x2 == null) return;
+      if (x1 == null || x2 == null) return null;
 
-      const previousBeat = Number.isFinite(Number(previous?.qstamp))
-        ? Number(previous.qstamp)
-        : bounds.start;
-      const nextBeat = next && Number.isFinite(Number(next.qstamp))
-        ? Number(next.qstamp)
-        : bounds.end;
+      const previousBeat = Number.isFinite(Number(previous?.qstamp)) ? Number(previous.qstamp) : bounds.start;
+      const nextBeat = next && Number.isFinite(Number(next.qstamp)) ? Number(next.qstamp) : bounds.end;
       const span = Math.max(epsilon, nextBeat - previousBeat);
       const progress = Math.max(0, Math.min(1, (sourceBeat - previousBeat) / span));
       let visibleX = x1 + (x2 - x1) * progress;
@@ -260,15 +314,14 @@
         }
         window.lastPlayheadX = visibleX;
         applyContinuousTransform();
-
         const transformedX1 = eventViewportCenter(previous || startEvent) ?? measureStartX(measure);
         const transformedX2 = next ? eventViewportCenter(next) : measureEndX(measure);
         if (transformedX1 != null && transformedX2 != null)
           visibleX = transformedX1 + (transformedX2 - transformedX1) * progress;
       }
 
-      playhead.style.left = `${visibleX}px`;
-      playhead.style.opacity = "1";
+      setPixelStyle(playhead, "left", visibleX);
+      if (playhead.style.opacity !== "1") playhead.style.opacity = "1";
       const system = previousSystem || nextSystem || measure?.closest?.("g.system");
       if (system) {
         const stageRect = stage.getBoundingClientRect();
@@ -291,24 +344,17 @@
           top = Math.max(6, systemRect.top - stageRect.top - 36);
           bottom = Math.min(stageRect.height - 6, systemRect.bottom - stageRect.top + 12);
         }
-        playhead.style.top = `${top}px`;
-        playhead.style.height = `${Math.max(24, bottom - top)}px`;
+        setPixelStyle(playhead, "top", top);
+        setPixelStyle(playhead, "height", Math.max(24, bottom - top));
       }
 
-      document.querySelectorAll(".playing").forEach(node => node.classList.remove("playing"));
-      for (const id of previous?.on || []) {
-        const element = elementForVerovioId(id);
-        if (element) {
-          element.classList.add("playing");
-          element.querySelectorAll(".syl, text, tspan").forEach(child => child.classList.add("playing"));
-        }
-      }
+      updatePlaying(previous?.on || []);
+      return { occurrence, event: previous || startEvent, sourceBeat };
     }
 
     eventAtBeat = function cadenzaBoundarySafeEventAtBeat(performanceBeat) {
       const occurrence = occurrenceAtPerformanceBeat(performanceBeat);
-      const sourceBeat = sourceBeatForOccurrence(performanceBeat, occurrence);
-      return eventNearestSourceBeat(sourceBeat, occurrence);
+      return eventNearestSourceBeat(sourceBeatForOccurrence(performanceBeat, occurrence), occurrence);
     };
 
     elementsAtBeat = function cadenzaBoundarySafeElementsAtBeat(performanceBeat) {
@@ -330,32 +376,9 @@
 
     renderLatestCursor = function cadenzaBoundarySafeRenderLatestCursor() {
       const beat = Math.max(0, Number(latestRequestedBeat) || 0);
-      const occurrence = occurrenceAtPerformanceBeat(beat);
-      if (!occurrence) return;
-      const sourceBeat = sourceBeatForOccurrence(beat, occurrence);
-      const event = eventNearestSourceBeat(sourceBeat, occurrence) || occurrenceStartEvent(occurrence);
-      const desiredPage = pageForEvent(event);
-      if (desiredPage !== currentPage) {
-        if (!pendingPage || pendingPage !== desiredPage) {
-          const direction = desiredPage > currentPage ? 1 : -1;
-          renderPage(desiredPage, true, direction, renderLatestCursor);
-        }
-        return;
-      }
-      if (pendingPage) return;
-
-      updateCursorAtBeat(beat, true);
-      document.querySelectorAll(".expected").forEach(node => node.classList.remove("expected"));
-      document.querySelectorAll(".active-measure-glow").forEach(node => node.classList.remove("active-measure-glow"));
-      document.querySelectorAll(".hint-svg-badge").forEach(node => node.remove());
-      for (const id of event?.on || []) {
-        const element = elementForVerovioId(id);
-        if (element) {
-          element.classList.add("expected");
-          element.querySelectorAll(".syl, text, tspan").forEach(child => child.classList.add("expected"));
-        }
-      }
-      updateHintLane({ notes: event?.on || [], elements: [] }, beat);
+      const result = updateCursorAtBeat(beat, true);
+      if (!result) return;
+      updateExpected(result.event?.on || [], beat);
     };
 
     window.CadenzaNotation.elementsAtBeat = elementsAtBeat;
