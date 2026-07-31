@@ -132,7 +132,8 @@ public partial class MainWindow
         if (e.PropertyName is nameof(MainWindowViewModel.IsPreviewBuilding)
             or nameof(MainWindowViewModel.PreviewButtonLabel)
             or nameof(MainWindowViewModel.LessonButtonLabel)
-            or nameof(MainWindowViewModel.SelectedLessonMode))
+            or nameof(MainWindowViewModel.SelectedLessonMode)
+            or nameof(MainWindowViewModel.IsPlayerVisible))
         {
             UpdatePlaybackStartupFeedback();
         }
@@ -148,18 +149,18 @@ public partial class MainWindow
     private void ViewModel_PlaybackCountdownEnded(object? sender, EventArgs e)
     {
         Dispatcher.BeginInvoke(
-            () =>
+            DispatcherPriority.ContextIdle,
+            new Action(() =>
             {
                 _performanceCountdownActive = false;
                 UpdatePlaybackStartupFeedback();
                 RefreshPlaybackTransportLabel();
-            },
-            DispatcherPriority.ContextIdle);
+            }));
     }
 
     private bool IsPlaybackPreparing()
     {
-        if (_performanceCountdownActive) return false;
+        if (!_viewModel.IsPlayerVisible || _performanceCountdownActive) return false;
         return _viewModel.IsPreviewBuilding ||
                _viewModel.LessonButtonLabel.StartsWith(
                    "Preparing",
