@@ -1,13 +1,12 @@
 (() => {
   "use strict";
 
-  const epsilon = 0.0001;
-  const beatSmoothingTimeConstantMs = 48;
-  const maximumVisualLagBeats = 0.18;
-  const largeSeekThresholdBeats = 0.9;
-  const geometrySmoothingTimeConstantMs = 44;
-  const maximumPlayheadLagPx = 18;
-  const maximumTransformLagPx = 22;
+  const playheadResponseSeconds = 0.11;
+  const playheadMaximumSpeedPxPerSecond = 1100;
+  const playheadMaximumAccelerationPxPerSecondSquared = 8200;
+  const transformResponseSeconds = 0.13;
+  const transformMaximumSpeedPxPerSecond = 1350;
+  const transformMaximumAccelerationPxPerSecondSquared = 9200;
   const verticalSystemJumpThresholdPx = 34;
   const backwardGeometrySnapThresholdPx = 72;
 
@@ -37,38 +36,39 @@
     const originalSetPixelStyle = setPixelStyle;
     const originalApplyContinuousTransform = applyContinuousTransform;
 
-    let targetBeat = 0;
-    let renderedBeat = 0;
-    let beatInitialized = false;
-    let beatFrameHandle = 0;
-    let beatLastFrameTimestamp = 0;
-
     let visualFrameHandle = 0;
     let visualLastFrameTimestamp = 0;
     let visualInitialized = false;
     let transformInitialized = false;
+
     let transformTargetX = 0;
     let transformTargetY = 0;
     let transformRenderedX = 0;
     let transformRenderedY = 0;
+    let transformVelocityX = 0;
+    let transformVelocityY = 0;
+
     let playheadTargetLeft = 0;
     let playheadTargetTop = 0;
     let playheadTargetHeight = 0;
     let playheadRenderedLeft = 0;
     let playheadRenderedTop = 0;
     let playheadRenderedHeight = 0;
+    let playheadVelocityLeft = 0;
+    let playheadVelocityTop = 0;
+    let playheadVelocityHeight = 0;
     let playheadSnapPending = false;
 
-    let beatFrameSamples = 0;
     let visualFrameSamples = 0;
     let continuousTransformFrames = 0;
     let pageModeVisualFrames = 0;
     let smoothedPlayheadTargets = 0;
     let geometrySnapCount = 0;
-    let immediateBeatSnapCount = 0;
-    let maximumObservedBeatLag = 0;
-    let maximumObservedPlayheadLagPx = 0;
-    let maximumObservedTransformLagPx = 0;
+    let maximumObservedPlayheadStepPx = 0;
+    let maximumObservedTransformStepPx = 0;
+    let previousAppliedPlayheadLeft = null;
+    let previousAppliedTransformX = null;
+    let visualSnapAppliedThisFrame = false;
 
     function isContinuousMode() {
       return stageElement.classList.contains("continuous-mode");
@@ -83,21 +83,48 @@
       return Number.isFinite(parsed) ? parsed : fallback;
     }
 
-    function cancelBeatFrame() {
-      if (beatFrameHandle) cancelAnimationFrame(beatFrameHandle);
-      beatFrameHandle = 0;
-      beatLastFrameTimestamp = 0;
-    }
-
     function cancelVisualFrame() {
       if (visualFrameHandle) cancelAnimationFrame(visualFrameHandle);
       visualFrameHandle = 0;
       visualLastFrameTimestamp = 0;
     }
 
-    function cancelAllMotion() {
-      cancelBeatFrame();
-      cancelVisualFrame();
+    function scheduleVisualFrame() {
+      if (!visualFrameHandle) visualFrameHandle = requestAnimationFrame(renderVisualFrame);
+    }
+
+    function moveTowards(current, target, maximumDelta) {
+      const delta = target - current;
+      if (Math.abs(delta) <= maximumDelta) return target;
+      return current + Math.sign(delta) * maximumDelta;
+    }
+
+    function advanceAxis(
+      current,
+      target,
+      velocity,
+      deltaSeconds,
+      responseSeconds,
+      maximumSpeed,
+      maximumAcceleration,
+      positionEpsilon = 0.02) {
+      const error = target - current;
+      if (Math.abs(error) <= positionEpsilon && Math.abs(velocity) <= 0.5)
+        return { position: target, velocity: 0 };
+
+      const desiredVelocity = Math.max(
+        -maximumSpeed,
+        Math.min(maximumSpeed, error / Math.max(0.01, responseSeconds)));
+      const nextVelocity = moveTowards(
+        velocity,
+        desiredVelocity,
+        maximumAcceleration * deltaSeconds);
+      const nextPosition = current + nextVelocity * deltaSeconds;
+
+      if ((target - current) * (target - nextPosition) <= 0)
+        return { position: target, velocity: 0 };
+
+      return { position: nextPosition, velocity: nextVelocity };
     }
 
     function applyRenderedTransform() {
@@ -108,6 +135,24 @@
       if (typeof practiceWrongNote !== "undefined" && practiceWrongNote) {
         practiceWrongNote.style.transform = isContinuousMode() ? transform : "";
       }
+      if (previousAppliedTransformX != null) {
+        maximumObservedTransformStepPx = Math.max(
+          maximumObservedTransformStepPx,
+          Math.abs(transformRenderedX - previousAppliedTransformX));
+      }
+      previousAppliedTransformX = transformRenderedX;
+    }
+
+    function applyRenderedPlayhead() {
+      originalSetPixelStyle(playhead, "left", playheadRenderedLeft);
+      originalSetPixelStyle(playhead, "top", playheadRenderedTop);
+      originalSetPixelStyle(playhead, "height", playheadRenderedHeight);
+      if (!visualSnapAppliedThisFrame && previousAppliedPlayheadLeft != null) {
+        maximumObservedPlayheadStepPx = Math.max(
+          maximumObservedPlayheadStepPx,
+          Math.abs(playheadRenderedLeft - previousAppliedPlayheadLeft));
+      }
+      previousAppliedPlayheadLeft = playheadRenderedLeft;
     }
 
     function initializeTransformState() {
@@ -115,7 +160,10 @@
       transformTargetY = Number(continuousOffsetY) || 0;
       transformRenderedX = transformTargetX;
       transformRenderedY = transformTargetY;
+      transformVelocityX = 0;
+      transformVelocityY = 0;
       transformInitialized = true;
+      previousAppliedTransformX = transformRenderedX;
     }
 
     function initializePlayheadState() {
@@ -125,8 +173,12 @@
       playheadRenderedLeft = playheadTargetLeft;
       playheadRenderedTop = playheadTargetTop;
       playheadRenderedHeight = playheadTargetHeight;
+      playheadVelocityLeft = 0;
+      playheadVelocityTop = 0;
+      playheadVelocityHeight = 0;
       playheadSnapPending = false;
       visualInitialized = true;
+      previousAppliedPlayheadLeft = playheadRenderedLeft;
     }
 
     function snapVisualState() {
@@ -134,71 +186,7 @@
       initializeTransformState();
       initializePlayheadState();
       if (isContinuousMode()) applyRenderedTransform();
-      originalSetPixelStyle(playhead, "left", playheadRenderedLeft);
-      originalSetPixelStyle(playhead, "top", playheadRenderedTop);
-      originalSetPixelStyle(playhead, "height", playheadRenderedHeight);
-    }
-
-    function scheduleBeatFrame() {
-      if (!beatFrameHandle) beatFrameHandle = requestAnimationFrame(renderBeatFrame);
-    }
-
-    function scheduleVisualFrame() {
-      if (!visualFrameHandle) visualFrameHandle = requestAnimationFrame(renderVisualFrame);
-    }
-
-    function boundedInterpolate(current, target, alpha, maximumLag) {
-      let next = current + (target - current) * alpha;
-      const remaining = target - next;
-      if (Math.abs(remaining) > maximumLag)
-        next = target - Math.sign(remaining) * maximumLag;
-      if (Math.abs(target - next) < 0.02) next = target;
-      return next;
-    }
-
-    function renderBeatImmediately(beat, reset) {
-      cancelBeatFrame();
-      targetBeat = beat;
-      renderedBeat = beat;
-      beatInitialized = true;
-      immediateBeatSnapCount++;
-      return originalSetCursorBeat(beat, reset);
-    }
-
-    function renderBeatFrame(timestamp) {
-      beatFrameHandle = 0;
-      if (!beatInitialized || !isContinuousMode()) return;
-
-      const frameGap = beatLastFrameTimestamp > 0
-        ? Math.max(1, Math.min(50, timestamp - beatLastFrameTimestamp))
-        : 16.667;
-      beatLastFrameTimestamp = timestamp;
-      beatFrameSamples++;
-
-      const error = targetBeat - renderedBeat;
-      maximumObservedBeatLag = Math.max(maximumObservedBeatLag, Math.abs(error));
-      if (error < -epsilon) {
-        renderBeatImmediately(targetBeat, true);
-        return;
-      }
-
-      if (Math.abs(error) <= epsilon) {
-        renderedBeat = targetBeat;
-        originalSetCursorBeat(renderedBeat, false);
-        return;
-      }
-
-      const interpolation = 1 - Math.exp(-frameGap / beatSmoothingTimeConstantMs);
-      let nextBeat = renderedBeat + error * interpolation;
-      if (targetBeat - nextBeat > maximumVisualLagBeats)
-        nextBeat = targetBeat - maximumVisualLagBeats;
-      nextBeat = Math.max(renderedBeat, Math.min(targetBeat, nextBeat));
-
-      renderedBeat = nextBeat;
-      originalSetCursorBeat(renderedBeat, false);
-
-      if (targetBeat - renderedBeat > epsilon)
-        scheduleBeatFrame();
+      applyRenderedPlayhead();
     }
 
     function renderVisualFrame(timestamp) {
@@ -206,30 +194,38 @@
       if (!visualInitialized) initializePlayheadState();
       if (isContinuousMode() && !transformInitialized) initializeTransformState();
 
-      const frameGap = visualLastFrameTimestamp > 0
-        ? Math.max(1, Math.min(50, timestamp - visualLastFrameTimestamp))
+      const frameGapMilliseconds = visualLastFrameTimestamp > 0
+        ? Math.max(1, Math.min(34, timestamp - visualLastFrameTimestamp))
         : 16.667;
       visualLastFrameTimestamp = timestamp;
+      const deltaSeconds = frameGapMilliseconds / 1000;
       visualFrameSamples++;
+      visualSnapAppliedThisFrame = false;
       if (isContinuousMode()) continuousTransformFrames++;
       else pageModeVisualFrames++;
 
-      const interpolation = 1 - Math.exp(-frameGap / geometrySmoothingTimeConstantMs);
-
       if (isContinuousMode() && transformInitialized) {
-        maximumObservedTransformLagPx = Math.max(
-          maximumObservedTransformLagPx,
-          Math.abs(transformTargetX - transformRenderedX));
-        transformRenderedX = boundedInterpolate(
+        const x = advanceAxis(
           transformRenderedX,
           transformTargetX,
-          interpolation,
-          maximumTransformLagPx);
-        transformRenderedY = boundedInterpolate(
+          transformVelocityX,
+          deltaSeconds,
+          transformResponseSeconds,
+          transformMaximumSpeedPxPerSecond,
+          transformMaximumAccelerationPxPerSecondSquared);
+        transformRenderedX = x.position;
+        transformVelocityX = x.velocity;
+
+        const y = advanceAxis(
           transformRenderedY,
           transformTargetY,
-          interpolation,
-          10);
+          transformVelocityY,
+          deltaSeconds,
+          0.09,
+          700,
+          6400);
+        transformRenderedY = y.position;
+        transformVelocityY = y.velocity;
         applyRenderedTransform();
       }
 
@@ -237,56 +233,72 @@
         playheadRenderedLeft = playheadTargetLeft;
         playheadRenderedTop = playheadTargetTop;
         playheadRenderedHeight = playheadTargetHeight;
+        playheadVelocityLeft = 0;
+        playheadVelocityTop = 0;
+        playheadVelocityHeight = 0;
         playheadSnapPending = false;
+        visualSnapAppliedThisFrame = true;
       } else {
-        maximumObservedPlayheadLagPx = Math.max(
-          maximumObservedPlayheadLagPx,
-          Math.abs(playheadTargetLeft - playheadRenderedLeft));
-        playheadRenderedLeft = boundedInterpolate(
+        const left = advanceAxis(
           playheadRenderedLeft,
           playheadTargetLeft,
-          interpolation,
-          maximumPlayheadLagPx);
-        playheadRenderedTop = boundedInterpolate(
+          playheadVelocityLeft,
+          deltaSeconds,
+          playheadResponseSeconds,
+          playheadMaximumSpeedPxPerSecond,
+          playheadMaximumAccelerationPxPerSecondSquared);
+        playheadRenderedLeft = left.position;
+        playheadVelocityLeft = left.velocity;
+
+        const top = advanceAxis(
           playheadRenderedTop,
           playheadTargetTop,
-          interpolation,
-          8);
-        playheadRenderedHeight = boundedInterpolate(
+          playheadVelocityTop,
+          deltaSeconds,
+          0.085,
+          650,
+          6200);
+        playheadRenderedTop = top.position;
+        playheadVelocityTop = top.velocity;
+
+        const height = advanceAxis(
           playheadRenderedHeight,
           playheadTargetHeight,
-          interpolation,
-          12);
+          playheadVelocityHeight,
+          deltaSeconds,
+          0.09,
+          720,
+          6600);
+        playheadRenderedHeight = height.position;
+        playheadVelocityHeight = height.velocity;
       }
 
-      originalSetPixelStyle(playhead, "left", playheadRenderedLeft);
-      originalSetPixelStyle(playhead, "top", playheadRenderedTop);
-      originalSetPixelStyle(playhead, "height", playheadRenderedHeight);
+      applyRenderedPlayhead();
 
       const transformPending = isContinuousMode() &&
         (Math.abs(transformTargetX - transformRenderedX) > 0.02 ||
-         Math.abs(transformTargetY - transformRenderedY) > 0.02);
+         Math.abs(transformTargetY - transformRenderedY) > 0.02 ||
+         Math.abs(transformVelocityX) > 0.5 ||
+         Math.abs(transformVelocityY) > 0.5);
       const playheadPending =
         Math.abs(playheadTargetLeft - playheadRenderedLeft) > 0.02 ||
         Math.abs(playheadTargetTop - playheadRenderedTop) > 0.02 ||
-        Math.abs(playheadTargetHeight - playheadRenderedHeight) > 0.02;
+        Math.abs(playheadTargetHeight - playheadRenderedHeight) > 0.02 ||
+        Math.abs(playheadVelocityLeft) > 0.5 ||
+        Math.abs(playheadVelocityTop) > 0.5 ||
+        Math.abs(playheadVelocityHeight) > 0.5;
       if (transformPending || playheadPending)
         scheduleVisualFrame();
     }
 
     api.setCursorBeat = function comfortSetCursorBeat(beat, reset = false) {
       const requestedBeat = Math.max(0, Number(beat) || 0);
-      const jump = beatInitialized ? Math.abs(requestedBeat - renderedBeat) : 0;
-
-      if (reset || !isContinuousMode() || !beatInitialized ||
-          requestedBeat + epsilon < renderedBeat ||
-          jump >= largeSeekThresholdBeats) {
-        return renderBeatImmediately(requestedBeat, reset);
+      if (reset) {
+        playheadSnapPending = true;
+        transformVelocityX = 0;
+        transformVelocityY = 0;
       }
-
-      targetBeat = requestedBeat;
-      scheduleBeatFrame();
-      return undefined;
+      return originalSetCursorBeat(requestedBeat, reset);
     };
 
     setPixelStyle = function comfortSetPixelStyle(element, property, value) {
@@ -331,6 +343,8 @@
     applyContinuousTransform = function comfortApplyContinuousTransform() {
       if (!isContinuousMode()) {
         transformInitialized = false;
+        transformVelocityX = 0;
+        transformVelocityY = 0;
         return originalApplyContinuousTransform();
       }
 
@@ -341,6 +355,8 @@
         transformTargetY = nextY;
         transformRenderedX = nextX;
         transformRenderedY = nextY;
+        transformVelocityX = 0;
+        transformVelocityY = 0;
         transformInitialized = true;
         applyRenderedTransform();
         return;
@@ -354,6 +370,8 @@
       if (!timelineIsRunning() || backwardReposition || hugeReposition) {
         transformRenderedX = transformTargetX;
         transformRenderedY = transformTargetY;
+        transformVelocityX = 0;
+        transformVelocityY = 0;
         geometrySnapCount++;
         applyRenderedTransform();
         return;
@@ -363,11 +381,15 @@
     };
 
     function resetMotionState() {
-      cancelAllMotion();
-      beatInitialized = false;
+      cancelVisualFrame();
       visualInitialized = false;
       transformInitialized = false;
       playheadSnapPending = false;
+      playheadVelocityLeft = 0;
+      playheadVelocityTop = 0;
+      playheadVelocityHeight = 0;
+      transformVelocityX = 0;
+      transformVelocityY = 0;
     }
 
     if (originalSetReadingMode) {
@@ -382,8 +404,6 @@
     if (originalLoadScore) {
       api.loadScore = function comfortLoadScore(...args) {
         resetMotionState();
-        targetBeat = 0;
-        renderedBeat = 0;
         return originalLoadScore(...args);
       };
     }
@@ -397,23 +417,15 @@
 
     if (originalEndTimeline) {
       api.endTimeline = function comfortEndTimeline(...args) {
-        if (beatInitialized && isContinuousMode() && targetBeat > renderedBeat + epsilon)
-          renderBeatImmediately(targetBeat, false);
-        else
-          cancelBeatFrame();
-        if (visualInitialized) {
-          playheadSnapPending = true;
-          scheduleVisualFrame();
-        } else {
-          cancelVisualFrame();
-        }
+        playheadSnapPending = true;
+        scheduleVisualFrame();
         return originalEndTimeline(...args);
       };
     }
 
     if (originalStopPlayback) {
       api.stopPlayback = function comfortStopPlayback(...args) {
-        cancelAllMotion();
+        cancelVisualFrame();
         return originalStopPlayback(...args);
       };
     }
@@ -426,26 +438,19 @@
           comfortMotion: {
             installed: true,
             continuous: isContinuousMode(),
-            beatInitialized,
-            targetBeat,
-            renderedBeat,
-            beatLag: Math.max(0, targetBeat - renderedBeat),
-            beatFrameSamples,
             visualFrameSamples,
             continuousTransformFrames,
             pageModeVisualFrames,
             smoothedPlayheadTargets,
             geometrySnapCount,
-            immediateBeatSnapCount,
-            maximumObservedBeatLag,
-            maximumObservedPlayheadLagPx,
-            maximumObservedTransformLagPx,
-            beatSmoothingTimeConstantMs,
-            geometrySmoothingTimeConstantMs,
-            maximumVisualLagBeats,
-            maximumPlayheadLagPx,
-            maximumTransformLagPx,
-            largeSeekThresholdBeats,
+            maximumObservedPlayheadStepPx,
+            maximumObservedTransformStepPx,
+            playheadResponseSeconds,
+            playheadMaximumSpeedPxPerSecond,
+            playheadMaximumAccelerationPxPerSecondSquared,
+            transformResponseSeconds,
+            transformMaximumSpeedPxPerSecond,
+            transformMaximumAccelerationPxPerSecondSquared,
             verticalSystemJumpThresholdPx,
             backwardGeometrySnapThresholdPx
           }
