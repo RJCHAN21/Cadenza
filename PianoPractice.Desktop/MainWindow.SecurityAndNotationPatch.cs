@@ -82,6 +82,7 @@ public partial class MainWindow
             Path.Combine(patchDirectory, "cadenza-runtime-patch.js"),
             Path.Combine(patchDirectory, "cadenza-runtime-edge-patch.js"),
             Path.Combine(patchDirectory, "cadenza-bar-boundary-bridge-patch.js"),
+            Path.Combine(patchDirectory, "cadenza-listen-highlight-patch.js"),
             Path.Combine(patchDirectory, "cadenza-continuous-motion-patch.js")
         };
         var patchScripts = new List<string>();
