@@ -181,11 +181,11 @@
       return rect ? rect.right - stageRect.left : null;
     }
 
-    function uniqueSorted(values) {
+    function uniqueSorted(values, tolerance) {
       const sorted = values.filter(Number.isFinite).sort((left, right) => left - right);
       const result = [];
       for (const value of sorted) {
-        if (!result.length || Math.abs(value - result.at(-1)) > X_TOLERANCE)
+        if (!result.length || Math.abs(value - result.at(-1)) > tolerance)
           result.push(value);
       }
       return result;
@@ -198,13 +198,13 @@
         const root = candidate.closest?.("g.rest") || candidate;
         roots.add(root);
       }
-      return uniqueSorted([...roots].map(centerX));
+      return uniqueSorted([...roots].map(centerX), X_TOLERANCE);
     }
 
     function restStamps(occurrence) {
       return uniqueSorted(eventsForOccurrence(occurrence)
         .filter(event => event?.restsOn?.length)
-        .map(event => number(event.qstamp, Number.NaN)));
+        .map(event => number(event.qstamp, Number.NaN)), EPSILON);
     }
 
     function restXAt(stamp, occurrence, measure) {
@@ -302,6 +302,19 @@
 
       const occurrence = occurrenceAt(performanceBeat);
       if (!occurrence) return;
+      const continuous = typeof readingMode !== "undefined" && readingMode === "Continuous";
+      const zoom = continuous && typeof userZoom !== "undefined"
+        ? Math.max(0.01, number(userZoom, 1))
+        : 1;
+
+      // The underlying legacy resolver can briefly mutate the Continuous offset
+      // using an invalid structural target. Restore the last accepted transform
+      // before reading any DOM geometry so the replacement calculation is clean.
+      if (continuous) {
+        continuousOffsetX = previousOffsetX;
+        applyContinuousTransform();
+      }
+
       const occurrenceIndex = performanceTimeline.indexOf(occurrence);
       const sourceBeat = sourceBeatFor(performanceBeat, occurrence);
       const measure = measureFor(occurrence);
@@ -330,11 +343,6 @@
       const span = Math.max(EPSILON, nextStamp - previousStamp);
       const progress = Math.max(0, Math.min(1, (sourceBeat - previousStamp) / span));
       let visibleX = x1 + (x2 - x1) * progress;
-
-      const continuous = typeof readingMode !== "undefined" && readingMode === "Continuous";
-      const zoom = continuous && typeof userZoom !== "undefined"
-        ? Math.max(0.01, number(userZoom, 1))
-        : 1;
       let scoreX = continuous ? (visibleX - previousOffsetX) / zoom : visibleX;
       const ordinaryForward = !reset &&
         isOrdinaryForwardContinuation(occurrence, occurrenceIndex, performanceBeat);
@@ -347,8 +355,6 @@
       }
 
       if (continuous) {
-        continuousOffsetX = previousOffsetX;
-        applyContinuousTransform();
         visibleX = scoreX * zoom + previousOffsetX;
         const stageRect = stage.getBoundingClientRect();
         const anchorX = Math.max(180, number(stageRect?.width) * 0.32);
