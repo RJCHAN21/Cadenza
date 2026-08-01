@@ -206,6 +206,7 @@
       velocityX = velocityY = velocityHeight = velocityOpacity = 0;
       relocationPhase = "none";
       initialized = true;
+      previousVisibleX = null;
       applyVisualPlayhead();
     }
 
