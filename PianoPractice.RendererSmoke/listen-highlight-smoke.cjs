@@ -55,15 +55,33 @@ function createClassList(initial = []) {
       }
       values.add(name);
       return true;
+    },
+    values() {
+      return [...values];
     }
   };
 }
 
-function createNote(id) {
+function createParent() {
   return {
+    children: [],
+    insertBefore(node, reference) {
+      const index = this.children.indexOf(reference);
+      if (index < 0) this.children.push(node);
+      else this.children.splice(index, 0, node);
+      node.parentNode = this;
+      return node;
+    }
+  };
+}
+
+function createNote(id, parent = createParent()) {
+  const node = {
     id,
+    parentNode: parent,
     style: createStyle(),
     classList: createClassList(),
+    attributes: new Map([["data-id", id]]),
     matches(selector) {
       return selector === "g.note";
     },
@@ -71,12 +89,37 @@ function createNote(id) {
       return selector === "g.note" ? this : null;
     },
     getAttribute(name) {
-      return name === "data-id" ? id : null;
+      if (name === "id") return this.id || null;
+      return this.attributes.get(name) || null;
+    },
+    setAttribute(name, value) {
+      if (name === "id") this.id = String(value);
+      else this.attributes.set(name, String(value));
+    },
+    removeAttribute(name) {
+      if (name === "id") this.id = "";
+      else this.attributes.delete(name);
+    },
+    querySelectorAll() {
+      return [];
     },
     getBoundingClientRect() {
       return { left: 0, top: 0, width: 12, height: 12 };
+    },
+    cloneNode() {
+      const clone = createNote(this.id, createParent());
+      clone.attributes = new Map(this.attributes);
+      clone.classList = createClassList(this.classList.values());
+      return clone;
+    },
+    remove() {
+      const index = this.parentNode?.children.indexOf(this) ?? -1;
+      if (index >= 0) this.parentNode.children.splice(index, 1);
+      this.parentNode = null;
     }
   };
+  if (!parent.children.includes(node)) parent.children.push(node);
+  return node;
 }
 
 const note1 = createNote("n1");
@@ -185,10 +228,12 @@ const style = headChildren.find(node => node.id === "cadenza-listen-highlight-st
 assert(style, "The Listen highlight stylesheet was not installed.");
 assert(style.textContent.includes("@keyframes cadenzaListenNoteGlow"),
   "The tune-synced glow keyframes are missing.");
-assert(style.textContent.includes("prefers-reduced-motion: reduce"),
-  "The reduced-motion fallback is missing.");
-assert(style.textContent.includes("drop-shadow(0 0 27px"),
-  "The stronger peak glow is missing.");
+assert(/@media\s*\(\s*prefers-reduced-motion\s*:\s*reduce\s*\)/.test(style.textContent),
+  "The reduced-motion media query is missing.");
+assert(/\.cadenza-listen-halo\s*\{\s*animation\s*:\s*none\s*!important\s*\}/.test(style.textContent),
+  "Reduced motion does not disable the halo animations.");
+assert(style.textContent.includes("drop-shadow(0 0 86px"),
+  "The intensified peak glow is missing.");
 
 api.setCursorBeat(0.1, false);
 let state = api.getState();
@@ -198,6 +243,8 @@ assert(note1.classList.contains("cadenza-listen-glow-active"),
   "The first sounding note did not receive the animated glow.");
 assert(Math.abs(duration(note1) - 500) < 0.2,
   `A one-beat note at 120 BPM should glow for 500ms; got ${duration(note1)}ms.`);
+assert(state.listenHighlight.haloNodeCount === 2,
+  `The first note should receive two halo layers; got ${state.listenHighlight.haloNodeCount}.`);
 assert(state.listenHighlight.pulseCount === 1,
   `The first note should create one pulse; got ${state.listenHighlight.pulseCount}.`);
 
@@ -205,6 +252,8 @@ api.setCursorBeat(0.45, false);
 state = api.getState();
 assert(state.listenHighlight.pulseCount === 1,
   "Repeated cursor updates retriggered the same sounding note.");
+assert(state.listenHighlight.haloNodeCount === 2,
+  "Repeated cursor updates duplicated or removed the active halos.");
 
 api.setCursorBeat(1.05, false);
 state = api.getState();
@@ -221,6 +270,8 @@ api.setCursorBeat(2.1, false);
 state = api.getState();
 assert(state.listenHighlight.activeNodeCount === 0,
   "A rest did not clear the animated note glow.");
+assert(state.listenHighlight.haloNodeCount === 0,
+  "A rest did not remove the halo layers.");
 assert(!note2.classList.contains("cadenza-listen-glow-active"),
   "The note before a rest retained its animation class.");
 
@@ -240,6 +291,8 @@ api.setCursorBeat(3.2, false);
 state = api.getState();
 assert(state.listenHighlight.activeNodeCount === 0,
   "Pausing Listen mode did not stop the animation.");
+assert(state.listenHighlight.haloNodeCount === 0,
+  "Pausing Listen mode did not remove the halo layers.");
 assert(!note3.classList.contains("cadenza-listen-glow-active"),
   "The paused note retained its animation class.");
 
@@ -259,9 +312,11 @@ assert(!stage.classList.contains("cadenza-listen-feedback"),
   "Listen-only styling leaked into Timed Play.");
 assert(state.listenHighlight.activeNodeCount === 0,
   "Listen animation state leaked into Timed Play.");
+assert(state.listenHighlight.haloNodeCount === 0,
+  "Listen halo nodes leaked into Timed Play.");
 
 console.log(
   `Listen highlight smoke passed: pulses=${state.listenHighlight.pulseCount}, ` +
-  `normalDuration=500ms, halfTempoDuration=1000ms, restCleared=true, ` +
-  `modeIsolation=true.`
+  `normalDuration=500ms, halfTempoDuration=1000ms, halos=2, ` +
+  `restCleared=true, modeIsolation=true.`
 );
