@@ -165,15 +165,15 @@ const context = {
   },
   setPixelStyle(element, property, value) {
     element.style.setProperty(property, `${Number(value).toFixed(2)}px`);
-    this.pixelWrites.push({ element, property, value: Number(value) });
+    context.pixelWrites.push({ element, property, value: Number(value) });
   },
   applyContinuousTransform() {
     const transform =
-      `translate3d(${this.continuousOffsetX}px, ${this.continuousOffsetY}px, 0) scale(${this.userZoom})`;
-    this.notation.style.setProperty("transform", transform);
-    this.practiceWrongNote.style.setProperty(
+      `translate3d(${context.continuousOffsetX}px, ${context.continuousOffsetY}px, 0) scale(${context.userZoom})`;
+    context.notation.style.setProperty("transform", transform);
+    context.practiceWrongNote.style.setProperty(
       "transform",
-      this.readingMode === "Continuous" ? transform : "");
+      context.readingMode === "Continuous" ? transform : "");
   }
 };
 
