@@ -24,8 +24,10 @@ jobs:
         run: |
           node --check PianoPractice.Desktop/Assets/Verovio/cadenza-runtime-patch.js
           node --check PianoPractice.Desktop/Assets/Verovio/cadenza-runtime-edge-patch.js
+          node --check PianoPractice.Desktop/Assets/Verovio/cadenza-playable-position-patch.js
           node --check PianoPractice.Desktop/Assets/Verovio/cadenza-bar-boundary-bridge-patch.js
           node --check PianoPractice.Desktop/Assets/Verovio/cadenza-continuous-motion-patch.js
+          node PianoPractice.RendererSmoke/playable-position-smoke.cjs
           node PianoPractice.RendererSmoke/bar-boundary-bridge-smoke.cjs
           node PianoPractice.RendererSmoke/continuous-motion-smoke.cjs
 
