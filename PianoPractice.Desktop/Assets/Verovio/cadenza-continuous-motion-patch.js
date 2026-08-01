@@ -1,15 +1,23 @@
 (() => {
   "use strict";
 
-  const playheadSmoothTimeSeconds = 0.085;
-  const playheadMaximumSpeedPxPerSecond = 2200;
-  const playheadMaximumAccelerationPxPerSecondSquared = 18000;
-  const playheadOpacitySmoothTimeSeconds = 0.045;
-  const sheetSmoothTimeSeconds = 0.12;
-  const sheetMaximumSpeedPxPerSecond = 1500;
-  const sheetMaximumAccelerationPxPerSecondSquared = 10000;
+  const playheadResponseSeconds = 0.09;
+  const playheadMaximumSpeedPxPerSecond = 900;
+  const playheadMaximumAccelerationPxPerSecondSquared = 5600;
+  const playheadMaximumVisibleStepPx = 7.5;
+  const playheadVerticalMaximumVisibleStepPx = 6;
+  const playheadHeightMaximumVisibleStepPx = 6;
+  const opacitySpeedPerSecond = 16;
+
+  const sheetResponseSeconds = 0.12;
+  const sheetMaximumSpeedPxPerSecond = 1200;
+  const sheetMaximumAccelerationPxPerSecondSquared = 7600;
+  const sheetMaximumVisibleStepPx = 10;
+
   const verticalRelocationThresholdPx = 36;
   const backwardRelocationThresholdPx = 72;
+  const settledPositionEpsilon = 0.015;
+  const settledVelocityEpsilon = 0.3;
 
   function install() {
     const api = window.CadenzaNotation;
@@ -47,16 +55,15 @@
 
     let targetX = 0;
     let targetY = 0;
-    let targetHeight = 0;
+    let targetHeight = 1;
     let targetOpacity = 0;
     let currentX = 0;
     let currentY = 0;
-    let currentHeight = 0;
+    let currentHeight = 1;
     let currentOpacity = 0;
     let velocityX = 0;
     let velocityY = 0;
     let velocityHeight = 0;
-    let velocityOpacity = 0;
 
     let sheetInitialized = false;
     let sheetTargetX = 0;
@@ -85,12 +92,11 @@
       visual.classList?.add?.("cadenza-comfort-playhead");
 
       const computed = typeof getComputedStyle === "function" ? getComputedStyle(source) : null;
-      const copiedProperties = [
+      for (const property of [
         "position", "width", "min-width", "max-width", "background",
         "background-color", "border", "border-radius", "box-shadow",
         "filter", "mix-blend-mode", "z-index"
-      ];
-      for (const property of copiedProperties) {
+      ]) {
         const value = computed?.getPropertyValue?.(property);
         if (value) visual.style.setProperty(property, value);
       }
@@ -119,6 +125,16 @@
       return typeof timelineRunning === "undefined" || Boolean(timelineRunning);
     }
 
+    function clamp(value, minimum, maximum) {
+      return Math.max(minimum, Math.min(maximum, value));
+    }
+
+    function moveTowards(current, target, maximumDelta) {
+      const delta = target - current;
+      if (Math.abs(delta) <= maximumDelta) return target;
+      return current + Math.sign(delta) * maximumDelta;
+    }
+
     function numericStyle(element, property, fallback = 0) {
       const inlineValue = Number.parseFloat(String(element.style?.[property] ?? ""));
       if (Number.isFinite(inlineValue)) return inlineValue;
@@ -140,36 +156,43 @@
         height: Math.max(1, numericStyle(playhead, "height", targetHeight || 1)),
         opacity: display === "none"
           ? 0
-          : Math.max(0, Math.min(1, Number.isFinite(inlineOpacity) ? inlineOpacity :
-              (Number.isFinite(computedOpacity) ? computedOpacity : 1)))
+          : clamp(Number.isFinite(inlineOpacity) ? inlineOpacity :
+              (Number.isFinite(computedOpacity) ? computedOpacity : 1), 0, 1)
       };
     }
 
-    function moveTowards(current, target, maximumDelta) {
-      const delta = target - current;
-      if (Math.abs(delta) <= maximumDelta) return target;
-      return current + Math.sign(delta) * maximumDelta;
-    }
-
-    function smoothDamp(current, target, velocity, smoothTime, maximumSpeed, deltaSeconds) {
-      const safeSmoothTime = Math.max(0.0001, smoothTime);
-      const omega = 2 / safeSmoothTime;
-      const x = omega * deltaSeconds;
-      const exponential = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
-      let change = current - target;
-      const originalTarget = target;
-      const maximumChange = maximumSpeed * safeSmoothTime;
-      change = Math.max(-maximumChange, Math.min(maximumChange, change));
-      target = current - change;
-      const temporary = (velocity + omega * change) * deltaSeconds;
-      let nextVelocity = (velocity - omega * temporary) * exponential;
-      let output = target + (change + temporary) * exponential;
-
-      if ((originalTarget - current > 0) === (output > originalTarget)) {
-        output = originalTarget;
-        nextVelocity = 0;
+    function advanceAxis(
+      current,
+      target,
+      velocity,
+      deltaSeconds,
+      responseSeconds,
+      maximumSpeed,
+      maximumAcceleration,
+      maximumVisibleStep) {
+      const error = target - current;
+      if (Math.abs(error) <= settledPositionEpsilon &&
+          Math.abs(velocity) <= settledVelocityEpsilon) {
+        return { position: target, velocity: 0 };
       }
-      return { position: output, velocity: nextVelocity };
+
+      const desiredVelocity = clamp(
+        error / Math.max(0.01, responseSeconds),
+        -maximumSpeed,
+        maximumSpeed);
+      let nextVelocity = moveTowards(
+        velocity,
+        desiredVelocity,
+        maximumAcceleration * deltaSeconds);
+      let displacement = nextVelocity * deltaSeconds;
+      displacement = clamp(displacement, -maximumVisibleStep, maximumVisibleStep);
+
+      if (Math.abs(displacement) >= Math.abs(error))
+        return { position: target, velocity: 0 };
+
+      if (deltaSeconds > 0)
+        nextVelocity = displacement / deltaSeconds;
+      return { position: current + displacement, velocity: nextVelocity };
     }
 
     function applyVisualPlayhead() {
@@ -180,12 +203,16 @@
       proxy.style.setProperty("height", `${currentHeight.toFixed(3)}px`, "important");
       proxy.style.setProperty("opacity", currentOpacity.toFixed(4), "important");
 
-      if (currentOpacity > 0.08 && previousVisibleX != null) {
+      if (currentOpacity <= 0.08) {
+        previousVisibleX = null;
+        return;
+      }
+      if (previousVisibleX != null) {
         maximumVisiblePlayheadStepPx = Math.max(
           maximumVisiblePlayheadStepPx,
           Math.abs(currentX - previousVisibleX));
       }
-      if (currentOpacity > 0.08) previousVisibleX = currentX;
+      previousVisibleX = currentX;
     }
 
     function applySheetTransform() {
@@ -203,7 +230,7 @@
       targetY = currentY = geometry.y;
       targetHeight = currentHeight = geometry.height;
       targetOpacity = currentOpacity = geometry.opacity;
-      velocityX = velocityY = velocityHeight = velocityOpacity = 0;
+      velocityX = velocityY = velocityHeight = 0;
       relocationPhase = "none";
       initialized = true;
       previousVisibleX = null;
@@ -225,6 +252,7 @@
         targetHeight = currentHeight = next.height;
         targetOpacity = currentOpacity = next.opacity;
         initialized = true;
+        previousVisibleX = null;
         applyVisualPlayhead();
         return;
       }
@@ -248,7 +276,7 @@
     function renderFrame(timestamp) {
       frameHandle = 0;
       const frameGapMilliseconds = lastFrameTimestamp > 0
-        ? Math.max(1, Math.min(34, timestamp - lastFrameTimestamp))
+        ? clamp(timestamp - lastFrameTimestamp, 1, 34)
         : 16.667;
       lastFrameTimestamp = timestamp;
       const deltaSeconds = frameGapMilliseconds / 1000;
@@ -259,115 +287,105 @@
       updateTargetFromAuthoritativeSource(true);
 
       if (isContinuousMode() && sheetInitialized) {
-        const sheetX = smoothDamp(
+        const x = advanceAxis(
           sheetCurrentX,
           sheetTargetX,
           sheetVelocityX,
-          sheetSmoothTimeSeconds,
+          deltaSeconds,
+          sheetResponseSeconds,
           sheetMaximumSpeedPxPerSecond,
-          deltaSeconds);
-        sheetCurrentX = sheetX.position;
-        sheetVelocityX = moveTowards(
-          sheetVelocityX,
-          sheetX.velocity,
-          sheetMaximumAccelerationPxPerSecondSquared * deltaSeconds);
+          sheetMaximumAccelerationPxPerSecondSquared,
+          sheetMaximumVisibleStepPx);
+        sheetCurrentX = x.position;
+        sheetVelocityX = x.velocity;
 
-        const sheetY = smoothDamp(
+        const y = advanceAxis(
           sheetCurrentY,
           sheetTargetY,
           sheetVelocityY,
+          deltaSeconds,
           0.09,
           900,
-          deltaSeconds);
-        sheetCurrentY = sheetY.position;
-        sheetVelocityY = sheetY.velocity;
+          6200,
+          8);
+        sheetCurrentY = y.position;
+        sheetVelocityY = y.velocity;
         applySheetTransform();
       }
 
       if (relocationPhase === "fadeOut") {
-        const opacity = smoothDamp(
-          currentOpacity,
-          0,
-          velocityOpacity,
-          0.035,
-          20,
-          deltaSeconds);
-        currentOpacity = opacity.position;
-        velocityOpacity = opacity.velocity;
+        currentOpacity = moveTowards(currentOpacity, 0, opacitySpeedPerSecond * deltaSeconds);
         if (currentOpacity <= 0.025) {
+          currentOpacity = 0;
           currentX = targetX;
           currentY = targetY;
           currentHeight = targetHeight;
           velocityX = velocityY = velocityHeight = 0;
-          relocationPhase = "fadeIn";
           previousVisibleX = null;
+          relocationPhase = "fadeIn";
         }
       } else {
-        const x = smoothDamp(
+        const x = advanceAxis(
           currentX,
           targetX,
           velocityX,
-          playheadSmoothTimeSeconds,
+          deltaSeconds,
+          playheadResponseSeconds,
           playheadMaximumSpeedPxPerSecond,
-          deltaSeconds);
+          playheadMaximumAccelerationPxPerSecondSquared,
+          playheadMaximumVisibleStepPx);
         currentX = x.position;
-        velocityX = moveTowards(
-          velocityX,
-          x.velocity,
-          playheadMaximumAccelerationPxPerSecondSquared * deltaSeconds);
+        velocityX = x.velocity;
 
-        const y = smoothDamp(
+        const y = advanceAxis(
           currentY,
           targetY,
           velocityY,
-          0.065,
-          1100,
-          deltaSeconds);
+          deltaSeconds,
+          0.075,
+          900,
+          6400,
+          playheadVerticalMaximumVisibleStepPx);
         currentY = y.position;
         velocityY = y.velocity;
 
-        const height = smoothDamp(
+        const height = advanceAxis(
           currentHeight,
           targetHeight,
           velocityHeight,
-          0.075,
-          1200,
-          deltaSeconds);
+          deltaSeconds,
+          0.08,
+          1000,
+          6800,
+          playheadHeightMaximumVisibleStepPx);
         currentHeight = height.position;
         velocityHeight = height.velocity;
 
-        const opacityTarget = relocationPhase === "fadeIn" ? targetOpacity : targetOpacity;
-        const opacity = smoothDamp(
+        currentOpacity = moveTowards(
           currentOpacity,
-          opacityTarget,
-          velocityOpacity,
-          playheadOpacitySmoothTimeSeconds,
-          20,
-          deltaSeconds);
-        currentOpacity = opacity.position;
-        velocityOpacity = opacity.velocity;
-
+          targetOpacity,
+          opacitySpeedPerSecond * deltaSeconds);
         if (relocationPhase === "fadeIn" &&
-            Math.abs(currentOpacity - targetOpacity) < 0.01)
+            Math.abs(currentOpacity - targetOpacity) <= 0.005)
           relocationPhase = "none";
       }
 
       applyVisualPlayhead();
 
       const playheadPending = relocationPhase !== "none" ||
-        Math.abs(targetX - currentX) > 0.015 ||
-        Math.abs(targetY - currentY) > 0.015 ||
-        Math.abs(targetHeight - currentHeight) > 0.015 ||
+        Math.abs(targetX - currentX) > settledPositionEpsilon ||
+        Math.abs(targetY - currentY) > settledPositionEpsilon ||
+        Math.abs(targetHeight - currentHeight) > settledPositionEpsilon ||
         Math.abs(targetOpacity - currentOpacity) > 0.005 ||
-        Math.abs(velocityX) > 0.3 ||
-        Math.abs(velocityY) > 0.3 ||
-        Math.abs(velocityHeight) > 0.3 ||
-        Math.abs(velocityOpacity) > 0.01;
+        Math.abs(velocityX) > settledVelocityEpsilon ||
+        Math.abs(velocityY) > settledVelocityEpsilon ||
+        Math.abs(velocityHeight) > settledVelocityEpsilon;
       const sheetPending = isContinuousMode() && sheetInitialized &&
-        (Math.abs(sheetTargetX - sheetCurrentX) > 0.015 ||
-         Math.abs(sheetTargetY - sheetCurrentY) > 0.015 ||
-         Math.abs(sheetVelocityX) > 0.3 ||
-         Math.abs(sheetVelocityY) > 0.3);
+        (Math.abs(sheetTargetX - sheetCurrentX) > settledPositionEpsilon ||
+         Math.abs(sheetTargetY - sheetCurrentY) > settledPositionEpsilon ||
+         Math.abs(sheetVelocityX) > settledVelocityEpsilon ||
+         Math.abs(sheetVelocityY) > settledVelocityEpsilon);
+
       if (playheadPending || sheetPending) scheduleFrame();
       else lastFrameTimestamp = 0;
     }
@@ -377,7 +395,8 @@
       if (element === playhead &&
           (property === "left" || property === "top" || property === "height")) {
         updateTargetFromAuthoritativeSource(true);
-        scheduleFrame();
+        if (!timelineIsRunning()) synchronizeImmediately();
+        else scheduleFrame();
       }
       return result;
     };
@@ -430,7 +449,7 @@
       initialized = false;
       sheetInitialized = false;
       relocationPhase = "none";
-      velocityX = velocityY = velocityHeight = velocityOpacity = 0;
+      velocityX = velocityY = velocityHeight = 0;
       sheetVelocityX = sheetVelocityY = 0;
       previousVisibleX = null;
     }
@@ -488,7 +507,8 @@
         }
         directWriteObservations++;
         updateTargetFromAuthoritativeSource(true);
-        scheduleFrame();
+        if (!timelineIsRunning()) synchronizeImmediately();
+        else scheduleFrame();
       });
       observer.observe(playhead, {
         attributes: true,
@@ -516,10 +536,11 @@
             currentX,
             targetY,
             currentY,
-            playheadSmoothTimeSeconds,
+            playheadResponseSeconds,
+            playheadMaximumVisibleStepPx,
             playheadMaximumSpeedPxPerSecond,
             playheadMaximumAccelerationPxPerSecondSquared,
-            sheetSmoothTimeSeconds
+            sheetResponseSeconds
           }
         };
       };
