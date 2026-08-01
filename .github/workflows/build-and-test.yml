@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - fix/**
+      - feat/**
   pull_request:
 
 permissions:
@@ -25,8 +26,10 @@ jobs:
           node --check PianoPractice.Desktop/Assets/Verovio/cadenza-runtime-patch.js
           node --check PianoPractice.Desktop/Assets/Verovio/cadenza-runtime-edge-patch.js
           node --check PianoPractice.Desktop/Assets/Verovio/cadenza-bar-boundary-bridge-patch.js
+          node --check PianoPractice.Desktop/Assets/Verovio/cadenza-listen-highlight-patch.js
           node --check PianoPractice.Desktop/Assets/Verovio/cadenza-continuous-motion-patch.js
           node PianoPractice.RendererSmoke/bar-boundary-bridge-smoke.cjs
+          node PianoPractice.RendererSmoke/listen-highlight-smoke.cjs
           node PianoPractice.RendererSmoke/continuous-motion-smoke.cjs
 
       - name: Set up .NET 8
