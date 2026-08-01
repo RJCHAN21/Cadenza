@@ -40,62 +40,24 @@ function createClassList(initial = []) {
   };
 }
 
-function createElement(tagName = "div") {
-  return {
-    tagName,
-    id: "",
-    textContent: "",
-    classList: createClassList(),
-    style: createStyle(),
-    children: [],
-    parentNode: null,
-    attributes: new Map(),
-    appendChild(child) {
-      this.children.push(child);
-      child.parentNode = this;
-      return child;
-    },
-    setAttribute(name, value) { this.attributes.set(name, String(value)); },
-    remove() {
-      const index = this.parentNode?.children.indexOf(this) ?? -1;
-      if (index >= 0) this.parentNode.children.splice(index, 1);
-      this.parentNode = null;
-    }
-  };
-}
-
-function createNote(id, initialRect) {
-  let rect = { ...initialRect };
-  const notehead = {
-    getBoundingClientRect() { return { ...rect }; }
-  };
+function createNote(id) {
   return {
     id,
-    isConnected: true,
-    style: createStyle(),
     classList: createClassList(),
-    setRect(next) { rect = { ...next }; },
+    style: createStyle(),
     matches(selector) { return selector === "g.note"; },
     closest(selector) { return selector === "g.note" ? this : null; },
     getAttribute(name) { return name === "data-id" ? id : null; },
-    querySelector(selector) {
-      return selector === ".notehead" || selector === "g.notehead" || selector === "use"
-        ? notehead
-        : null;
-    },
-    getBoundingClientRect() { return { ...rect }; }
+    getBoundingClientRect() { return { left: 0, top: 0, width: 12, height: 10 }; }
   };
 }
 
-const note1 = createNote("n1", { left: 100, top: 200, width: 12, height: 10 });
-const note2 = createNote("n2", { left: 300, top: 260, width: 14, height: 11 });
-const notes = [note1, note2];
-const stage = createElement("section");
-stage.id = "stage";
-stage.getBoundingClientRect = () => ({ left: 20, top: 40, width: 1000, height: 600 });
-const head = createElement("head");
-const frames = new Map();
-let frameId = 1;
+const note1 = createNote("n1");
+const note2 = createNote("n2");
+const note3 = createNote("n3");
+const notes = [note1, note2, note3];
+const stage = { classList: createClassList(), style: createStyle() };
+const styles = [];
 
 const context = {
   console,
@@ -107,7 +69,6 @@ const context = {
   Boolean,
   Set,
   Map,
-  Date,
   lessonMode: "Listen",
   lessonRunning: true,
   timelineRunning: true,
@@ -120,21 +81,19 @@ const context = {
     durationBeats: 3
   }],
   timemap: [
-    { qstamp: 0, on: ["n1"] },
-    { qstamp: 1, on: ["n2"] },
+    { qstamp: 0, on: ["n1", "n2"] },
+    { qstamp: 1, on: ["n3"] },
     { qstamp: 2, restsOn: ["r1"] },
     { qstamp: 3, measureOn: "m2" }
   ],
   setTimeout(callback) { callback(); return 1; },
-  clearTimeout() {},
   document: {
-    head,
-    documentElement: head,
-    createElement,
+    head: { appendChild(node) { styles.push(node); return node; } },
+    documentElement: { appendChild(node) { styles.push(node); return node; } },
+    createElement() { return { id: "", textContent: "" }; },
     getElementById(id) {
       if (id === "stage") return stage;
-      return head.children.find(node => node.id === id) ||
-        stage.children.find(node => node.id === id) || null;
+      return styles.find(node => node.id === id) || null;
     },
     querySelectorAll(selector) {
       if (selector !== "#notation .playing") return [];
@@ -145,17 +104,15 @@ const context = {
 
 function updateRawPlaying(beat) {
   notes.forEach(note => note.classList.remove("playing"));
-  if (beat >= 0 && beat < 1) note1.classList.add("playing");
-  else if (beat >= 1 && beat < 2) note2.classList.add("playing");
+  if (beat >= 0 && beat < 1) {
+    note1.classList.add("playing");
+    note2.classList.add("playing");
+  } else if (beat >= 1 && beat < 2) {
+    note3.classList.add("playing");
+  }
 }
 
 context.window = {
-  requestAnimationFrame(callback) {
-    const id = frameId++;
-    frames.set(id, callback);
-    return id;
-  },
-  cancelAnimationFrame(id) { frames.delete(id); },
   CadenzaNotation: {
     setPerformanceClock() {},
     setCursorBeat(beat) { updateRawPlaying(Number(beat)); },
@@ -170,82 +127,74 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function flushFrame() {
-  const pending = [...frames.entries()];
-  frames.clear();
-  pending.forEach(([, callback]) => callback(16.67));
-}
-
-function px(element, property) {
-  return Number.parseFloat(element.style[property]);
-}
-
 const api = context.window.CadenzaNotation;
 api.setPerformanceClock([{ performanceBeat: 0, bpm: 120 }], 3, 120);
+
+const style = styles.find(node => node.id === "cadenza-listen-highlight-style");
+assert(style, "The Listen highlight stylesheet was not installed.");
+const css = style.textContent;
+
+assert(css.includes("g.note.playing .notehead"),
+  "The visible glow is not targeted to noteheads.");
+assert(css.includes("drop-shadow(0 0 30px"),
+  "The notehead attack glow is not strong enough.");
+assert(css.includes("cadenzaListenLyricGlow"),
+  "The lyric glow animation is missing.");
+assert(css.includes("drop-shadow(0 0 21px"),
+  "The lyric attack glow is not visibly reinforced.");
+assert(!css.includes("cadenza-listen-halo-layer"),
+  "The ineffective screen-space halo overlay is still present.");
+assert(!patchSource.includes("cloneNode("),
+  "The patch still clones full SVG notes, which can reproduce glow artifacts.");
+assert(!/#stage\.[^\n]+#notation\s+g\.note\.playing\s*\{[^}]*filter\s*:/s.test(css),
+  "A filter is still applied to the entire note group.");
+assert(!/g\.note\.playing\s*>?\s*\.stem[^}]*filter\s*:/s.test(css),
+  "The glow leaks onto note stems.");
+assert(!/g\.note\.playing\s*>?\s*\.beam[^}]*filter\s*:/s.test(css),
+  "The glow leaks onto beams.");
+
 api.setCursorBeat(0.1, false);
-
-const layer = stage.children.find(node => node.id === "cadenza-listen-halo-layer");
 let state = api.getState().listenHighlight;
-assert(layer, "The screen-space halo layer was not created.");
-assert(state.renderMode === "screen-space-overlay",
-  `Expected screen-space overlay rendering; got ${state.renderMode}.`);
-assert(state.haloNodeCount === 3 && layer.children.length === 3,
-  `Expected three halo layers; state=${state.haloNodeCount}, DOM=${layer.children.length}.`);
-
-const outer = layer.children.find(node => node.classList.contains("cadenza-listen-screen-halo-outer"));
-const middle = layer.children.find(node => node.classList.contains("cadenza-listen-screen-halo-middle"));
-const core = layer.children.find(node => node.classList.contains("cadenza-listen-screen-halo-core"));
-assert(outer && middle && core, "The outer, middle, and core halo layers are incomplete.");
-assert(Math.abs(px(outer, "left") - 86) < 0.01,
-  `Outer halo X should track the note center relative to the stage; got ${px(outer, "left")}.`);
-assert(Math.abs(px(outer, "top") - 165) < 0.01,
-  `Outer halo Y should track the note center relative to the stage; got ${px(outer, "top")}.`);
-assert(px(outer, "width") >= 96 && px(outer, "height") >= 84,
-  `Outer halo is too small to be clearly visible: ${px(outer, "width")}x${px(outer, "height")}.`);
-assert(px(middle, "width") >= 62 && px(core, "width") >= 34,
-  "The middle or core glow lacks the required visible body.");
+assert(state.renderMode === "contained-svg-notehead-and-lyrics",
+  `Unexpected rendering approach: ${state.renderMode}.`);
+assert(state.artifactsContained === true && state.lyricsIncluded === true,
+  "The artifact containment or lyric guarantee is missing.");
+assert(state.activeNodeCount === 2,
+  `The chord should activate two note groups; got ${state.activeNodeCount}.`);
+assert(note1.classList.contains("cadenza-listen-glow-active") &&
+       note2.classList.contains("cadenza-listen-glow-active"),
+  "The chord notes were not activated together.");
+assert(state.haloNodeCount === 0,
+  "Contained SVG rendering should not create detached halo elements.");
+assert(state.pulseCount === 1,
+  `The chord should create one synchronized pulse; got ${state.pulseCount}.`);
 assert(Math.abs(Number.parseFloat(
-  outer.style.getPropertyValue("--cadenza-listen-glow-duration")) - 500) < 0.2,
-  "The screen-space halo duration is not synchronized to one beat at 120 BPM.");
-
-note1.setRect({ left: 180, top: 250, width: 12, height: 10 });
-flushFrame();
-assert(Math.abs(px(outer, "left") - 166) < 0.01,
-  `The halo did not follow horizontal sheet movement; got ${px(outer, "left")}.`);
-assert(Math.abs(px(outer, "top") - 215) < 0.01,
-  `The halo did not follow vertical sheet movement; got ${px(outer, "top")}.`);
+  stage.style.getPropertyValue("--cadenza-listen-glow-duration")) - 500) < 0.2,
+  "The chord glow duration is not synchronized to one beat at 120 BPM.");
 
 api.setCursorBeat(0.45, false);
 state = api.getState().listenHighlight;
 assert(state.pulseCount === 1,
-  "Repeated cursor frames retriggered the same halo pulse.");
-assert(layer.children.length === 3,
-  "Repeated cursor frames duplicated the screen-space halos.");
+  "Repeated cursor frames retriggered the active chord.");
 
 api.setCursorBeat(1.05, false);
 state = api.getState().listenHighlight;
-assert(state.haloNodeCount === 3 && layer.children.length === 3,
-  "The next note did not receive exactly three replacement halos.");
-const nextOuter = layer.children.find(node => node.classList.contains("cadenza-listen-screen-halo-outer"));
-assert(Math.abs(px(nextOuter, "left") - 287) < 0.01,
-  `The replacement halo did not center on note 2; got ${px(nextOuter, "left")}.`);
-assert(state.pulseCount === 2,
-  `The note change should create the second pulse; got ${state.pulseCount}.`);
+assert(!note1.classList.contains("cadenza-listen-glow-active") &&
+       !note2.classList.contains("cadenza-listen-glow-active"),
+  "The previous chord retained its glow class.");
+assert(note3.classList.contains("cadenza-listen-glow-active"),
+  "The next note did not receive the contained glow.");
+assert(state.activeNodeCount === 1 && state.pulseCount === 2,
+  "The note transition did not replace the active glow cleanly.");
 
 api.setCursorBeat(2.1, false);
 state = api.getState().listenHighlight;
-assert(state.haloNodeCount === 0 && layer.children.length === 0,
-  "The rest did not clear all screen-space halo layers.");
-
-const style = head.children.find(node => node.id === "cadenza-listen-highlight-style");
-assert(style.textContent.includes("0 0 108px 44px"),
-  "The 108px outer bloom is missing.");
-assert(style.textContent.includes("cadenzaListenOuterBloom"),
-  "The outer bloom animation is missing.");
-assert(style.textContent.includes("cadenzaListenCoreFlash"),
-  "The core flash animation is missing.");
+assert(state.activeNodeCount === 0,
+  "A rest did not clear the active glow.");
+assert(!note3.classList.contains("cadenza-listen-glow-active"),
+  "The note before the rest retained its glow class.");
 
 console.log(
-  "Listen highlight halo smoke passed: halos=3, outer=96x84 minimum, " +
-  "peakShadow=108px, tracking=true, cleanup=true, retrigger=false."
+  "Listen contained-glow smoke passed: noteheads=strong, lyrics=enabled, " +
+  "wholeNoteFilter=false, clonedHalos=false, chordSync=true, cleanup=true."
 );
