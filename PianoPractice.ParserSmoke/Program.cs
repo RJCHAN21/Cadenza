@@ -5,6 +5,10 @@ using PianoPractice.Desktop.Models;
 using PianoPractice.Desktop.Services;
 
 var failures = new List<string>();
+Run("committed MusicXML fixture contract", TestCommittedMusicXmlFixture);
+Run("committed MXL fixture contract", TestCommittedMxlFixture);
+Run("valid MIDI fixture", TestValidMidiFixture);
+Run("malformed MIDI fixtures", TestMalformedMidiFixtures);
 Run("simple repeat", TestSimpleRepeat);
 Run("implicit-start repeat", TestImplicitStartRepeat);
 Run("explicit repeat count", TestRepeatCount);
@@ -59,6 +63,89 @@ void Run(string name, Action test)
         failures.Add($"{name}: {exception.Message}");
         Console.Error.WriteLine($"FAIL {name}: {exception}");
     }
+}
+
+void TestCommittedMusicXmlFixture() => AssertCommittedTimeline(
+    Path.Combine(FixtureRoot(), "cadenza-timeline.musicxml"));
+
+void TestCommittedMxlFixture() => AssertCommittedTimeline(
+    Path.Combine(FixtureRoot(), "cadenza-timeline.mxl"));
+
+void AssertCommittedTimeline(string fixturePath)
+{
+    var score = new MusicXmlImporter().Import(fixturePath);
+    Assert(score.MeasureCount == 5, $"Expected five written measures, got {score.MeasureCount}.");
+    Assert(Math.Abs(score.TotalBeats - 18d) < 0.001,
+        $"Expected 18 written beats, got {score.TotalBeats:0.###}.");
+    Assert(Math.Abs(score.TotalPerformanceBeats - 26d) < 0.001,
+        $"Expected 26 performance beats, got {score.TotalPerformanceBeats:0.###}.");
+    AssertSequence(score, 1, 2, 3, 1, 2, 4, 5);
+    Assert(score.PerformanceMeasures.Select(item => item.PerformanceStartBeat)
+        .SequenceEqual([0d, 4d, 8d, 12d, 16d, 20d, 23d]),
+        "Performance occurrence start beats differ from the fixture contract.");
+    Assert(score.PerformanceMeasures.Select(item => item.SourceStartBeat)
+        .SequenceEqual([0d, 4d, 8d, 0d, 4d, 12d, 15d]),
+        "Source occurrence start beats differ from the fixture contract.");
+    Assert(score.GetPracticeGroups(PracticeMode.BothHands).Count == 15,
+        "Expected 15 chronological practice groups.");
+    Assert(score.Notes.Count == 21, $"Expected 21 expanded notes, got {score.Notes.Count}.");
+    Assert(score.RepeatPairCount == 1, "Expected one repeat pair.");
+    Assert(score.TiePairCount == 1, "Expected one tied note pair.");
+    Assert(score.ValidationWarnings.Count == 0,
+        $"The original fixture produced {score.ValidationWarnings.Count} validation warning(s).");
+}
+
+void TestValidMidiFixture()
+{
+    var midi = new MidiFileImporter().Import(Path.Combine(FixtureRoot(), "cadenza-reference.mid"));
+    Assert(midi.Format == 0, $"Expected MIDI format 0, got {midi.Format}.");
+    Assert(midi.TicksPerQuarter == 480,
+        $"Expected 480 PPQ, got {midi.TicksPerQuarter}.");
+    Assert(midi.Tracks.Count == 1 && midi.Notes.Count == 1,
+        $"Expected one track and one note, got {midi.Tracks.Count} and {midi.Notes.Count}.");
+    Assert(midi.Notes[0].NoteNumber == 60 && Math.Abs(midi.Notes[0].DurationBeats - 1d) < 0.001,
+        "The valid MIDI note contract was not preserved.");
+}
+
+void TestMalformedMidiFixtures()
+{
+    var names = new[]
+    {
+        "malformed-midi-oversized-track.mid",
+        "malformed-midi-overlong-vlq.mid",
+        "malformed-midi-running-status.mid",
+        "malformed-midi-truncated-meta.mid",
+        "malformed-midi-truncated-sysex.mid"
+    };
+
+    foreach (var name in names)
+    {
+        try
+        {
+            _ = new MidiFileImporter().Import(Path.Combine(FixtureRoot(), name));
+            throw new InvalidOperationException($"Malformed fixture '{name}' was accepted.");
+        }
+        catch (Exception exception) when (exception is InvalidDataException or EndOfStreamException)
+        {
+            // A bounded, deterministic parser rejection is the expected outcome.
+        }
+    }
+}
+
+string FixtureRoot()
+{
+    foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+    {
+        var directory = new DirectoryInfo(start);
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(directory.FullName, "TestData", "Fixtures");
+            if (File.Exists(Path.Combine(candidate, "cadenza-timeline.musicxml"))) return candidate;
+            directory = directory.Parent;
+        }
+    }
+
+    throw new DirectoryNotFoundException("Could not locate TestData/Fixtures from the current repository.");
 }
 
 void TestSimpleRepeat()
