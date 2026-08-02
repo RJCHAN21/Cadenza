@@ -1,0 +1,42 @@
+{
+  "submissionStatus": "blocked_pending_project_license",
+  "projectName": "Cadenza",
+  "repositoryUrl": "https://github.com/RJCHAN21/Cadenza-development",
+  "personalGitHubUrl": "https://github.com/RJCHAN21",
+  "repositoryDescription": "Early-stage, local-first Windows piano sight-reading practice for user-provided MusicXML/MXL scores, with optional MIDI-controller input.",
+  "preparedBranch": "release/oss-readiness",
+  "officialApplicationUrl": "https://openai.com/form/codex-open-source-fund/",
+  "responses": [
+    {
+      "id": "A",
+      "question": "Why is the repository eligible?",
+      "answer": "Cadenza is not yet eligible because the public repository has no project LICENSE. Once the maintainer approves and merges GPL-3.0, it will be an early-stage, local-first Windows piano sight-reading tool for user-owned MusicXML/MXL scores, with original fixtures, contributor governance, and clean-clone validation. The maintainer will review every AI-assisted change.",
+      "characterCount": 367
+    },
+    {
+      "id": "B",
+      "question": "How would API credits be used?",
+      "answer": "API credits would support maintainer-reviewed work on reduced MusicXML compatibility cases, repeat/volta regressions, Windows accessibility, documentation, and contributor issue/PR triage. Credits would also help generate and test bounded malformed-input cases. They would not fund a song catalogue or autonomous merges; the maintainer remains responsible for review, validation, and release decisions.",
+      "characterCount": 402
+    },
+    {
+      "id": "C",
+      "question": "Why does the project need Codex Security?",
+      "answer": "Cadenza processes untrusted MusicXML/MXL and MIDI files, stores local score/history data, bridges .NET to a WebView2 renderer, and accepts optional WinMM input. Codex Security could model these boundaries, validate archive, parser, path, and bridge flaws, and propose minimal regression-backed patches. Findings and patches would require maintainer review; no production-security claim is made.",
+      "characterCount": 394
+    },
+    {
+      "id": "D",
+      "question": "Is there anything else OpenAI should consider?",
+      "answer": "Cadenza is Windows-first, pre-release, incomplete, and not significantly adopted. Automated validation covers original fixtures without MIDI or audio hardware; real devices, WebView2 UI, audio, and accessibility still need manual checks. The application should not be submitted until GPL-3.0 is approved and merged. The maintainer remains responsible for human review and merge decisions.",
+      "characterCount": 388
+    }
+  ],
+  "maintainerSuppliedFieldsStillRequired": [
+    "first name",
+    "last name",
+    "contact email",
+    "LinkedIn URL if desired",
+    "other collaborators and roles if applicable"
+  ]
+}

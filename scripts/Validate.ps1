@@ -40,6 +40,19 @@ try {
         }
     }
 
+    Write-Host '==> Verify application response character counts'
+    $application = Get-Content -LiteralPath 'docs/CODEX-OSS-APPLICATION.json' -Raw | ConvertFrom-Json
+    foreach ($response in $application.responses) {
+        $actualCount = $response.answer.Length
+        if ($actualCount -ne $response.characterCount) {
+            throw "Application response $($response.id) count is $actualCount; recorded $($response.characterCount)."
+        }
+        if ($actualCount -ge 500) {
+            throw "Application response $($response.id) must remain under 500 characters."
+        }
+        Write-Host "Response $($response.id): $actualCount characters"
+    }
+
     Write-Host '==> Tool versions'
     & $DotnetCommand --version
     if ($LASTEXITCODE -ne 0) { throw '.NET SDK discovery failed.' }
