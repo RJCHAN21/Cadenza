@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 # Known limitations
 
 Cadenza is early-stage, pre-release software. The following limits are part of

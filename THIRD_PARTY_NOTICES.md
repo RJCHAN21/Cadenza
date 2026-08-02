@@ -1,8 +1,11 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 # Third-party notices
 
 This document is an inventory, not legal advice. Before distributing binaries,
 the releaser must review the versions actually shipped and comply with their
-licence terms. The Cadenza project licence is still awaiting maintainer approval.
+licence terms. Cadenza-authored project work is licensed under GPL-3.0-only;
+that project licence does not replace or relicense the components below.
 
 ## Bundled components
 
@@ -62,8 +65,8 @@ specific .NET distribution used to build or ship the application.
 
 The `TestData/Fixtures` MusicXML, MXL, and MIDI fixtures were created
 specifically for Cadenza. They are not transcriptions of third-party music.
-Their redistribution terms will follow the Cadenza project licence once that
-licence is approved and added at the repository root.
+They are distributed as Cadenza-authored project test material under
+GPL-3.0-only. This statement does not apply to scores imported by users.
 
 ## Release checklist
 
@@ -74,5 +77,5 @@ Before distributing a binary:
 3. Provide the Verovio corresponding-source/relinking materials required for
    the shipped artifact.
 4. Review WebView2 distribution terms for the chosen deployment method.
-5. Confirm the root project `LICENSE` exists and covers Cadenza-owned code and
-   fixtures.
+5. Include the root GPL-3.0-only `LICENSE` for Cadenza-authored project work
+   without replacing any component-specific notice.

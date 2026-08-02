@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 # Architecture
 
 This document describes the current pre-release implementation and its

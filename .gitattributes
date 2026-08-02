@@ -8,3 +8,4 @@ TestData/Fixtures/*.json text eol=lf
 *.mid binary
 *.mxl binary
 *.otf binary
+LICENSE text eol=lf

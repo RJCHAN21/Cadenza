@@ -1,7 +1,11 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 # Deterministic fixtures
 
 These fixtures were composed specifically for Cadenza and do not reproduce a
-copyrighted song or third-party score.
+copyrighted song or third-party score. They are Cadenza-authored project test
+material distributed under GPL-3.0-only; this does not license or describe any
+score imported by a user.
 
 `cadenza-timeline.musicxml` covers a two-staff chord, a forward/backward
 repeat, first and second endings, tempo and meter changes, a tie, a rest, and a

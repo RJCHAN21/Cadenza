@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 # Cadenza
 
 Cadenza is an early-stage, local-first Windows piano sight-reading practice
@@ -5,11 +7,14 @@ application. It imports user-provided MusicXML or MXL scores, engraves them
 locally, and supports computer-keyboard or optional MIDI-controller practice.
 It does not include a commercial song catalogue or upload scores to a service.
 
-> **Licence status:** the project licence is awaiting maintainer approval.
-> Until a root `LICENSE` is added, the repository is not yet open source and no
-> permission to copy, modify, or redistribute the project source should be
-> inferred. Bundled third-party assets retain their own licences; see
-> [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+## Licence
+
+Cadenza-authored source and repository documentation are free software under
+the GNU General Public License version 3.0 only
+(`SPDX-License-Identifier: GPL-3.0-only`). See [LICENSE](LICENSE). Bundled
+third-party components retain their own copyright and licence terms; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). User-provided scores remain
+the property and responsibility of their respective rights holders.
 
 ## Status
 

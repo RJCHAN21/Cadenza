@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 ## Summary
 
 <!-- What user/contributor problem does this solve? -->
@@ -28,7 +30,7 @@ Paste concise results here.
 
 - [ ] New test data is original, public-domain, or compatibly licensed and its provenance is documented.
 - [ ] Third-party changes are reflected in `THIRD_PARTY_NOTICES.md` and bundled notices where required.
-- [ ] The change is compatible with the root project licence; if `LICENSE` is absent, merge is blocked pending maintainer action.
+- [ ] Cadenza-authored changes are compatible with GPL-3.0-only; third-party material retains compatible terms and required notices.
 
 ## Risks and rollback
 

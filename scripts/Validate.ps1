@@ -18,6 +18,16 @@ try {
         throw "Tracked build output remains:`n$($trackedGenerated -join "`n")"
     }
 
+    if (-not (Test-Path -LiteralPath 'LICENSE' -PathType Leaf)) {
+        throw 'The root GPL-3.0-only LICENSE file is missing.'
+    }
+    $licenceText = Get-Content -LiteralPath 'LICENSE' -Raw
+    if ($licenceText -notmatch 'GNU GENERAL PUBLIC LICENSE' -or
+        $licenceText -notmatch 'Version 3, 29 June 2007' -or
+        $licenceText -notmatch 'END OF TERMS AND CONDITIONS') {
+        throw 'The root LICENSE does not contain the canonical GPL-3.0 text.'
+    }
+
     Write-Host '==> Verify deterministic generated fixtures'
     $generatedFiles = @(
         'TestData/Fixtures/cadenza-timeline.mxl',
@@ -42,13 +52,33 @@ try {
 
     Write-Host '==> Verify application response character counts'
     $application = Get-Content -LiteralPath 'docs/CODEX-OSS-APPLICATION.json' -Raw | ConvertFrom-Json
+    if ($application.submissionStatus -ne 'ready_to_submit') {
+        throw "Application submission status is '$($application.submissionStatus)', not ready_to_submit."
+    }
+    if ($application.licence -ne 'GPL-3.0-only') {
+        throw "Application licence is '$($application.licence)', not GPL-3.0-only."
+    }
+    if ($application.officialApplicationUrl -ne 'https://openai.com/form/codex-for-oss/') {
+        throw "Application URL is not the current Codex for Open Source form."
+    }
+    if ($application.responses.Count -ne 4 -or
+        (@($application.responses.id) -join ',') -ne 'A,B,C,D') {
+        throw 'Application responses must contain exactly A, B, C, and D in order.'
+    }
     foreach ($response in $application.responses) {
         $actualCount = $response.answer.Length
         if ($actualCount -ne $response.characterCount) {
             throw "Application response $($response.id) count is $actualCount; recorded $($response.characterCount)."
         }
-        if ($actualCount -ge 500) {
-            throw "Application response $($response.id) must remain under 500 characters."
+        if ($actualCount -gt 500) {
+            throw "Application response $($response.id) must be no more than 500 characters."
+        }
+        if ($response.answer -notmatch '(?i)early-stage' -or
+            $response.answer -notmatch '(?i)incomplete') {
+            throw "Application response $($response.id) must describe Cadenza as early-stage and incomplete."
+        }
+        if ($response.answer -notmatch [regex]::Escape('The maintainer reviews all AI-assisted changes.')) {
+            throw "Application response $($response.id) must preserve the human-review statement."
         }
         Write-Host "Response $($response.id): $actualCount characters"
     }

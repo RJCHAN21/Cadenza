@@ -1,9 +1,17 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 # Contributing to Cadenza
 
-Cadenza welcomes narrowly scoped, evidence-backed improvements once a project
-licence is present at the repository root. If `LICENSE` is absent, pause before
-submitting code: contribution and redistribution terms have not yet been
-established.
+Cadenza welcomes narrowly scoped, evidence-backed improvements. By submitting
+an original contribution for inclusion, you agree that it may be distributed
+under Cadenza's GNU General Public License version 3.0 only
+(`GPL-3.0-only`). See `LICENSE` before contributing.
+
+Use `SPDX-License-Identifier: GPL-3.0-only` in new Cadenza-authored source or
+documentation when its file format supports a concise comment. Do not apply
+Cadenza's SPDX declaration to third-party components, their licence texts, or
+user-provided scores. Any reused material must retain its own attribution and
+have terms compatible with its proposed use in this GPL-3.0-only project.
 
 ## Development environment
 
