@@ -12,7 +12,7 @@ Old commits, forks, and unpublished binaries are not supported release lines.
 
 Use the repository's **Security** tab to open a private vulnerability report:
 
-<https://github.com/RJCHAN21/Cadenza-development/security/advisories/new>
+<https://github.com/RJCHAN21/Cadenza/security/advisories/new>
 
 Do not open a public issue containing an active vulnerability, malicious test
 file, exploit steps, private score, local profile, or personal data. If GitHub

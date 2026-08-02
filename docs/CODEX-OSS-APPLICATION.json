@@ -1,7 +1,7 @@
 {
   "submissionStatus": "ready_to_submit",
   "projectName": "Cadenza",
-  "repositoryUrl": "https://github.com/RJCHAN21/Cadenza-development",
+  "repositoryUrl": "https://github.com/RJCHAN21/Cadenza",
   "personalGitHubUrl": "https://github.com/RJCHAN21",
   "repositoryDescription": "Early-stage, local-first Windows piano sight-reading practice for user-provided MusicXML/MXL scores, with optional MIDI-controller input.",
   "preparedBranch": "main",

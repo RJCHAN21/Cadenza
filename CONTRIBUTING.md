@@ -20,8 +20,8 @@ WebView2 Runtime. Visual Studio 2022 is optional. A MIDI controller is not
 required for build or automated validation.
 
 ```powershell
-git clone https://github.com/RJCHAN21/Cadenza-development.git
-cd Cadenza-development
+git clone https://github.com/RJCHAN21/Cadenza.git
+cd Cadenza
 ./scripts/Validate.ps1
 ```
 

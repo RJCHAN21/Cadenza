@@ -53,8 +53,8 @@ required by the automated validation.
 ## Build and run
 
 ```powershell
-git clone https://github.com/RJCHAN21/Cadenza-development.git
-cd Cadenza-development
+git clone https://github.com/RJCHAN21/Cadenza.git
+cd Cadenza
 dotnet restore Cadenza.sln
 dotnet build Cadenza.sln --configuration Release --no-restore
 dotnet run --project PianoPractice.Desktop --configuration Release --no-build
