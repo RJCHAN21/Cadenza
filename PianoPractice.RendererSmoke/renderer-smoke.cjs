@@ -3,13 +3,161 @@ const path = require("node:path");
 
 const projectRoot = path.resolve(__dirname, "..");
 const assetRoot = path.join(projectRoot, "PianoPractice.Desktop", "Assets", "Verovio");
+const fixtureRoot = path.join(projectRoot, "TestData", "Fixtures");
+const scorePath = path.resolve(process.argv[2] || path.join(fixtureRoot, "cadenza-timeline.musicxml"));
+const contractPath = path.resolve(process.argv[3] || path.join(fixtureRoot, "cadenza-timeline.expected.json"));
 const playerPath = path.join(assetRoot, "player.html");
+const runtimePatchPath = path.join(assetRoot, "cadenza-runtime-patch.js");
+const hostPath = path.join(projectRoot, "PianoPractice.Desktop", "MainWindow.SecurityAndNotationPatch.cs");
 const verovio = require(path.join(assetRoot, "verovio-toolkit-wasm.js"));
-const scorePath = process.argv[2];
-const expectedTotalBeats = Number(process.argv[3] || 306);
+const epsilon = 0.0001;
 
-if (!scorePath || !fs.existsSync(scorePath)) {
-  throw new Error("Pass the MusicXML/MXL score path as the first argument.");
+for (const requiredPath of [scorePath, contractPath, playerPath, runtimePatchPath, hostPath]) {
+  if (!fs.existsSync(requiredPath)) throw new Error(`Required renderer input is missing: ${requiredPath}`);
+}
+
+function optionsForMode(continuous) {
+  return {
+    pageWidth: 2200,
+    pageHeight: continuous ? 520 : 1050,
+    scale: 56,
+    unit: 8.4,
+    adjustPageHeight: continuous,
+    adjustPageWidth: continuous,
+    breaks: continuous ? "none" : "auto",
+    spacingLinear: 0.30,
+    spacingNonLinear: 0.68,
+    minLastJustification: 0,
+    footer: "none",
+    header: "none",
+    pageMarginTop: 70,
+    pageMarginBottom: 90,
+    pageMarginLeft: 35,
+    pageMarginRight: 20,
+    font: "Bravura",
+    expandNever: true,
+    svgViewBox: true,
+    svgHtml5: true,
+    svgAdditionalAttribute: [
+      "note@pname", "note@oct", "note@pnum", "note@accid", "note@accid.ges", "measure@n"
+    ]
+  };
+}
+
+function occurrenceAtPerformanceBeat(timeline, beat) {
+  const value = Math.max(0, Number(beat) || 0);
+  for (let index = 0; index < timeline.length; index++) {
+    const occurrence = timeline[index];
+    const end = occurrence.performanceStartBeat + occurrence.durationBeats;
+    const isLast = index === timeline.length - 1;
+    if (value >= occurrence.performanceStartBeat - epsilon &&
+        (value < end - epsilon || (isLast && value <= end + epsilon))) return occurrence;
+  }
+  return timeline.at(-1) || null;
+}
+
+function sourceBeatForOccurrence(performanceBeat, occurrence) {
+  if (!occurrence) return Math.max(0, Number(performanceBeat) || 0);
+  const offset = Math.max(0, Math.min(
+    occurrence.durationBeats,
+    Number(performanceBeat) - occurrence.performanceStartBeat));
+  return occurrence.sourceStartBeat + offset;
+}
+
+function validateOccurrenceContract(contract) {
+  const timeline = contract.occurrences;
+  if (!Array.isArray(timeline) || timeline.length === 0) throw new Error("The fixture has no occurrence contract.");
+  if (timeline.length !== contract.performanceMeasureNumbers.length) {
+    throw new Error("Occurrence and performance-measure contracts have different lengths.");
+  }
+
+  let nextPerformanceBeat = 0;
+  for (let index = 0; index < timeline.length; index++) {
+    const occurrence = timeline[index];
+    if (occurrence.occurrenceIndex !== index) throw new Error(`Occurrence index ${index} is not contiguous.`);
+    if (Math.abs(occurrence.performanceStartBeat - nextPerformanceBeat) > epsilon) {
+      throw new Error(`Occurrence ${index} does not begin at performance beat ${nextPerformanceBeat}.`);
+    }
+    if (occurrence.durationBeats <= 0 ||
+        occurrence.sourceStartBeat < -epsilon ||
+        occurrence.sourceStartBeat + occurrence.durationBeats > contract.writtenBeats + epsilon) {
+      throw new Error(`Occurrence ${index} lies outside the written score.`);
+    }
+    nextPerformanceBeat += occurrence.durationBeats;
+  }
+  if (Math.abs(nextPerformanceBeat - contract.performanceBeats) > epsilon) {
+    throw new Error(`Occurrence duration is ${nextPerformanceBeat}; expected ${contract.performanceBeats}.`);
+  }
+
+  for (const occurrence of timeline) {
+    for (const offset of [0, occurrence.durationBeats / 2, occurrence.durationBeats]) {
+      const performanceBeat = Math.min(contract.performanceBeats, occurrence.performanceStartBeat + offset);
+      const selected = occurrenceAtPerformanceBeat(timeline, performanceBeat);
+      if (!selected) throw new Error(`No occurrence resolves performance beat ${performanceBeat}.`);
+      const expected = sourceBeatForOccurrence(performanceBeat, selected);
+      if (expected < -epsilon || expected > contract.writtenBeats + epsilon) {
+        throw new Error(`Performance beat ${performanceBeat} maps outside the written score.`);
+      }
+    }
+  }
+
+  const firstPass = sourceBeatForOccurrence(0, occurrenceAtPerformanceBeat(timeline, 0));
+  const repeatPass = sourceBeatForOccurrence(12, occurrenceAtPerformanceBeat(timeline, 12));
+  if (Math.abs(firstPass) > epsilon || Math.abs(repeatPass) > epsilon) {
+    throw new Error("The second repeat pass does not map back to written beat zero.");
+  }
+}
+
+function loadScore(toolkit) {
+  const extension = path.extname(scorePath).toLowerCase();
+  const scoreBytes = fs.readFileSync(scorePath);
+  const loaded = extension === ".mxl"
+    ? toolkit.loadZipDataBase64(scoreBytes.toString("base64"))
+    : toolkit.loadData(scoreBytes.toString("utf8"));
+  if (!loaded) throw new Error(`Verovio could not load ${path.basename(scorePath)}.`);
+}
+
+function parseTimemap(toolkit) {
+  const rendered = toolkit.renderToTimemap({ includeMeasures: true, includeRests: true });
+  return typeof rendered === "string" ? JSON.parse(rendered) : rendered;
+}
+
+function renderAndIndex(toolkit) {
+  const pages = toolkit.getPageCount();
+  const elementPages = new Map();
+  const pageStaffCounts = [];
+  let systems = 0;
+  for (let page = 1; page <= pages; page++) {
+    const svg = toolkit.renderToSVG(page, {});
+    const staffCount = [...svg.matchAll(/<g[^>]*class="[^"]*\bstaff\b[^"]*"[^>]*>/g)].length;
+    const systemCount = [...svg.matchAll(/<g[^>]*class="[^"]*\bsystem\b[^"]*"/g)].length;
+    pageStaffCounts.push(staffCount);
+    systems += systemCount;
+    for (const match of svg.matchAll(/data-id="([^"]+)"/g)) elementPages.set(match[1], page);
+  }
+  return { pages, systems, elementPages, pageStaffCounts };
+}
+
+function assertRuntimeUsesAuthoritativeTimeline() {
+  const player = fs.readFileSync(playerPath, "utf8");
+  const patch = fs.readFileSync(runtimePatchPath, "utf8");
+  const host = fs.readFileSync(hostPath, "utf8");
+  const requiredContracts = [
+    [player, "expandAlways: false"],
+    [player, "function setPerformanceTimeline(timeline)"],
+    [patch, "options.expandNever = true"],
+    [patch, "function occurrenceAtPerformanceBeat(beat)"],
+    [patch, "function sourceBeatForOccurrence(performanceBeat, occurrence)"],
+    [patch, "const sourceBeat = sourceBeatForOccurrence(performanceBeat, occurrence);"],
+    [host, "score.PerformanceMeasures.Select(occurrence => new"],
+    [host, ".setPerformanceTimeline("]
+  ];
+  for (const [source, contract] of requiredContracts) {
+    if (!source.includes(contract)) throw new Error(`Authoritative renderer contract is missing: ${contract}`);
+  }
+  if (/expandAlways\s*:\s*true/.test(player) || /expandAlways\s*:\s*true/.test(patch)) {
+    throw new Error("The runtime still asks Verovio to create an independent expanded timeline.");
+  }
 }
 
 async function main() {
@@ -18,285 +166,53 @@ async function main() {
     else verovio.module.onRuntimeInitialized = resolve;
   });
 
+  const contract = JSON.parse(fs.readFileSync(contractPath, "utf8"));
+  validateOccurrenceContract(contract);
+  assertRuntimeUsesAuthoritativeTimeline();
+
   const toolkit = new verovio.toolkit();
-  toolkit.setOptions({
-    pageWidth: 2200,
-    pageHeight: 1050,
-    scale: 56,
-    unit: 8.4,
-    adjustPageHeight: false,
-    breaks: "auto",
-    spacingLinear: 0.30,
-    spacingNonLinear: 0.68,
-    minLastJustification: 0.0,
-    footer: "none",
-    header: "none",
-    pageMarginTop: 70,
-    pageMarginBottom: 90,
-    pageMarginLeft: 35,
-    pageMarginRight: 20,
-    font: "Bravura",
-    expandAlways: true,
-    svgViewBox: true,
-    svgHtml5: true,
-    svgAdditionalAttribute: [
-      "note@pname",
-      "note@oct",
-      "note@pnum",
-      "note@accid",
-      "note@accid.ges",
-      "measure@n"
-    ]
-  });
+  toolkit.setOptions(optionsForMode(false));
+  loadScore(toolkit);
 
-  const extension = path.extname(scorePath).toLowerCase();
-  const scoreBytes = fs.readFileSync(scorePath);
-  const loaded = extension === ".mxl"
-    ? toolkit.loadZipDataBase64(scoreBytes.toString("base64"))
-    : toolkit.loadData(scoreBytes.toString("utf8"));
-  if (!loaded) throw new Error("Verovio could not load the supplied score.");
-
-  const renderedTimemap = toolkit.renderToTimemap({ includeMeasures: true, includeRests: true });
-  const timemap = typeof renderedTimemap === "string"
-    ? JSON.parse(renderedTimemap)
-    : renderedTimemap;
-  const pageCount = toolkit.getPageCount();
-  const elementPage = new Map();
-  const elementSystem = new Map();
-  const pageStaffCounts = [];
-  for (let page = 1; page <= pageCount; page++) {
-    const svg = toolkit.renderToSVG(page, {});
-    pageStaffCounts.push([...svg.matchAll(/<g[^>]*class="[^"]*\bstaff\b[^"]*"[^>]*>/g)].length);
-    const systemStarts = [...svg.matchAll(/<g[^>]*class="[^"]*\bsystem\b[^"]*"/g)]
-      .map(match => match.index);
-    for (const match of svg.matchAll(/data-id="([^"]+)"/g)) {
-      elementPage.set(match[1], page);
-      const systemIndex = systemStarts.filter(index => index <= match.index).length;
-      if (systemIndex > 0) elementSystem.set(match[1], `${page}:${systemIndex}`);
-    }
-  }
-
-  const noteEvents = timemap.filter(event => event.on?.length);
-  const unresolved = [];
-  const backwards = [];
-  let previousQstamp = -Infinity;
+  const timemap = parseTimemap(toolkit);
+  let previousBeat = -Infinity;
   for (const event of timemap) {
-    if (event.qstamp + 0.0001 < previousQstamp) {
-      throw new Error(`Timemap moved backward from beat ${previousQstamp} to ${event.qstamp}.`);
+    if (event.qstamp + epsilon < previousBeat) {
+      throw new Error(`Written timemap moved backward from beat ${previousBeat} to ${event.qstamp}.`);
     }
-    previousQstamp = event.qstamp;
+    previousBeat = event.qstamp;
   }
-  previousQstamp = -Infinity;
-  let currentPage = 1;
-  let priorSystem = null;
-  let samePageSystemBoundaries = 0;
-  for (const event of noteEvents) {
-    if (event.qstamp + 0.0001 < previousQstamp) {
-      throw new Error(`Timemap moved backward from beat ${previousQstamp} to ${event.qstamp}.`);
-    }
-    previousQstamp = event.qstamp;
-
-    const page = event.on.map(id => elementPage.get(id)).find(Boolean) ??
-      (event.measureOn ? elementPage.get(event.measureOn) : null);
-    if (!page) {
-      unresolved.push({ qstamp: event.qstamp, ids: event.on, measureOn: event.measureOn });
-      continue;
-    }
-    if (page < currentPage) {
-      backwards.push({ qstamp: event.qstamp, from: currentPage, to: page });
-    }
-    const system = event.on.map(id => elementSystem.get(id)).find(Boolean) ?? null;
-    if (priorSystem && system && priorSystem !== system &&
-        priorSystem.split(":")[0] === system.split(":")[0]) {
-      samePageSystemBoundaries++;
-    }
-    priorSystem = system;
-    currentPage = page;
+  const maxBeat = timemap.at(-1)?.qstamp ?? 0;
+  if (Math.abs(maxBeat - contract.writtenBeats) > 0.01) {
+    throw new Error(`Verovio engraved ${maxBeat} written beats; expected ${contract.writtenBeats}.`);
   }
 
-  const maxQstamp = timemap.at(-1)?.qstamp ?? 0;
-  if (Math.abs(maxQstamp - expectedTotalBeats) > 0.01) {
-    throw new Error(`Renderer performance length is ${maxQstamp} beats; expected ${expectedTotalBeats}.`);
-  }
-  if (unresolved.length) {
-    throw new Error(`${unresolved.length} timemap events do not resolve to engraved SVG elements; first beat ${unresolved[0].qstamp}.`);
-  }
-  if (backwards.length) {
-    throw new Error(`Page mapping moved backward ${backwards.length} time(s); first at beat ${backwards[0].qstamp}.`);
-  }
-  if (!samePageSystemBoundaries) {
-    throw new Error(
-      `Page mode produced no same-page system boundary for the playhead handoff regression ` +
-      `(pages=${pageCount}, mappedSystems=${elementSystem.size}).`
-    );
-  }
-
-  toolkit.setOptions({
-    pageWidth: 2200,
-    pageHeight: 520,
-    scale: 56,
-    unit: 8.4,
-    adjustPageHeight: true,
-    adjustPageWidth: true,
-    breaks: "none",
-    spacingLinear: 0.30,
-    spacingNonLinear: 0.68,
-    minLastJustification: 0.0,
-    footer: "none",
-    header: "none",
-    pageMarginTop: 70,
-    pageMarginBottom: 90,
-    pageMarginLeft: 35,
-    pageMarginRight: 20,
-    font: "Bravura",
-    expandAlways: true,
-    svgViewBox: true,
-    svgHtml5: true
+  const pageLayout = renderAndIndex(toolkit);
+  const positionedEvents = timemap.filter(event => event.on?.length || event.restsOn?.length || event.measureOn);
+  const unresolved = positionedEvents.filter(event => {
+    const ids = [...(event.on || []), ...(event.restsOn || []), ...(event.measureOn ? [event.measureOn] : [])];
+    return ids.length > 0 && !ids.some(id => pageLayout.elementPages.has(id));
   });
-  toolkit.redoLayout();
-  const continuousPageCount = toolkit.getPageCount();
-  if (continuousPageCount !== 1) {
-    throw new Error(`Continuous mode must engrave one horizontal page; got ${continuousPageCount}.`);
-  }
-  const continuousElementPage = new Map();
-  let continuousSystemCount = 0;
-  for (let page = 1; page <= continuousPageCount; page++) {
-    const svg = toolkit.renderToSVG(page, {});
-    continuousSystemCount += [...svg.matchAll(/<g[^>]*class="[^"]*\bsystem\b[^"]*"/g)].length;
-    for (const match of svg.matchAll(/data-id="([^"]+)"/g)) continuousElementPage.set(match[1], page);
-  }
-  if (continuousSystemCount !== 1) {
-    throw new Error(`Continuous mode must engrave one horizontal system; got ${continuousSystemCount}.`);
-  }
-  const unresolvedContinuous = [];
-  for (const event of noteEvents) {
-    const page = event.on.map(id => continuousElementPage.get(id)).find(Boolean) ?? null;
-    if (!page) unresolvedContinuous.push(event);
-  }
-  if (unresolvedContinuous.length) {
-    throw new Error(`Continuous repeat expansion left ${unresolvedContinuous.length} note event(s) unresolved.`);
-  }
-  const restEvents = timemap.filter(event => event.restsOn?.length);
-  if (!restEvents.length || !timemap.at(-1)?.restsOff?.length) {
-    throw new Error("The repeat-aware timemap does not retain the final rest span through performance end.");
-  }
-
-  const playerSource = fs.readFileSync(playerPath, "utf8");
-  const requiredContracts = [
-    "expandAlways: true",
-    "latestRequestedBeat",
-    "pageTransitionGeneration",
-    "if (lessonMode === \"WaitForYou\") setCursorBeat(beat);",
-    "const crossesSystem = Boolean(previousSystem && nextSystem && previousSystem !== nextSystem);",
-    "const x = crossesSystem ? x1 : x1 + (x2 - x1) * progress;",
-    "const renderedSvg = toolkit.renderToSVG(page, {});",
-    "breaks: continuous ? \"none\" : \"auto\"",
-    "adjustPageWidth: continuous",
-    "function centerPageSystems()",
-    "function alignContinuousSystem()",
-    "function sizeContinuousSvg()",
-    "const pageViewBoxWidth = 2200 * 56 / 100",
-    "if (notation.querySelector(\"svg\")) alignContinuousSystem();",
-    "function eventWithPositionAtOrBefore(ms)",
-    "function eventWithPositionAfter(ms)",
-    "function elementScoreX(element, useLeftEdge = false)",
-    "function eventScoreCenter(event)",
-    "function createRuntimeTelemetry(startBeat)",
-    "function recordRuntimeTelemetry(beat, previous, next, scoreX, visibleX, highlightedX)",
-    "if (event.on?.length) return [...event.on]",
-    "maxHighlightedPlayheadError",
-    "function validateRendererLayout()",
-    "function pitchPoint(event, midiNote, staffNumber = 0)",
-    "function showPracticeWrongNote(event, midiNote, dispatchId = 0, preserveExpiry = false, staffNumber = 0)",
-    "function validateFeedbackGeometry(beat = latestRequestedBeat)",
-    "toolkit?.getElementAttr",
-    "staffKind: staff.classList.contains(\"cadenza-bass\") ? \"bass\" : \"treble\"",
-    "const persistentCorrectFeedback = new Map()",
-    "function reapplyLessonFeedback()",
-    "numericRunGeneration !== lessonGeneration",
-    "post(\"feedbackAck\"",
-    "post(\"feedbackReapplied\"",
-    "#practiceWrongNote .correct-notehead { fill: #19f47b; stroke: #19f47b; }",
-    "function expectedOverlayPoint(item)",
-    "function renderPracticeCorrectNote(key, item)",
-    "function clearPracticeCorrectNotes()",
-    "const persistentKey = `${lessonGeneration}:${Number(occurrenceIndex || 0)}:${noteIdentity}`",
-    "data-feedback-key",
-    "duplicateOverlayCount",
-    "renderedPracticeCorrectCount",
-    "feedbackTelemetry.renderedCorrect += renderedKeys.length",
-    "feedbackTelemetry.renderedWrong++",
-    "post(\"feedbackTelemetry\"",
-    "group.setAttribute(\"data-midi\", point.midi)",
-    "if (lessonMode === \"WaitForYou\" && (kind === \"wrong\" || kind === \"extra\"))",
-    "if (lessonMode === \"WaitForYou\" && kind === \"correct\") {",
-    "className = \"audit-pitch-note\"",
-    "runtimeTelemetry.backwardOffsetCount",
-    "runtimeTelemetry.futureVisibilityShortfallCount",
-    "runtimeTelemetry.completed = runtimeTelemetry.endBeat + .02 >= finalQstamp",
-    "cadenzaEnd: true",
-    "const anchorX = Math.max(180, stageRect.width * .32);",
-    "let nextOffsetX = Math.min(24, previousOffsetX + anchorX - x);",
-    "visibleX = x + continuousOffsetX - previousOffsetX;",
-    "if (timelineRunning) nextOffsetX = Math.min(continuousOffsetX, nextOffsetX);",
-    "notation.style.transition = \"none\";",
-    "#stage.hints #notation { width: 100%; }",
-    "const width = normalWidth;",
-    "spacingLinear: 0.30",
-    "spacingNonLinear: 0.68",
-    "function setHandMode(mode)",
-    "function applyHandFocus()",
-    "#stage.hand-right #notation g.staff.cadenza-bass",
-    "#stage.hand-left #notation g.staff.cadenza-treble",
-    "const centers = staves.map",
-    "const split = (Math.min(...centers) + Math.max(...centers)) / 2"
-  ];
-  for (const contract of requiredContracts) {
-    if (!playerSource.includes(contract)) throw new Error(`Renderer contract is missing: ${contract}`);
-  }
-  const waitCorrectStart = playerSource.indexOf(
-    "if (lessonMode === \"WaitForYou\" && kind === \"correct\") {");
-  const waitCorrectEnd = playerSource.indexOf("\n      if (kind === \"release\")", waitCorrectStart);
-  const waitCorrectBranch = playerSource.slice(waitCorrectStart, waitCorrectEnd);
-  if (waitCorrectStart < 0 || waitCorrectEnd < 0 ||
-      waitCorrectBranch.includes("classList.add(\"feedback-correct\")") ||
-      waitCorrectBranch.includes("paintNotehead(node, \"#19f47b\")")) {
-    throw new Error("Practice accepted feedback must use the visible persistent overlay, not tint an engraved SVG subtree.");
-  }
-  if (!playerSource.includes(
-      "practiceWrongNote.querySelector(`:scope > g.correct-feedback[data-feedback-key=\"${CSS.escape(key)}\"]`)")) {
-    throw new Error("Practice accepted overlays are not deduplicated by their run/occurrence/note identity key.");
-  }
-  if (playerSource.includes("setTimeout(() => updateCursor(ms") ||
-      playerSource.includes("setTimeout(() => setCursorBeat(beat)") ||
-      playerSource.includes("pageTransitionTimer = setTimeout")) {
-    throw new Error("A stale timestamp retry remains in the page-transition path.");
-  }
-  if (playerSource.includes("instanceof SVGGraphicsElement")) {
-    throw new Error("Renderer geometry must not depend on the optional SVGGraphicsElement WebView global.");
-  }
-  if (playerSource.includes("#stage.page-mode:not(.hints)") ||
-      playerSource.includes("#stage.hints #notation { width: 92%; transform:") ||
-      playerSource.includes("const width = hintMode ?") ||
-      playerSource.includes("spacingLinear: hintMode ?") ||
-      playerSource.includes("spacingNonLinear: hintMode ?") ||
-      playerSource.includes("cadenza-staff-dim") ||
-      playerSource.includes("system.appendChild(overlay)")) {
-    throw new Error("Hint Page no longer shares the normal Page centering contract.");
-  }
-
-  for (let page = 1; page <= pageCount; page++) {
-    const staffCount = pageStaffCounts[page - 1];
-    if (staffCount < 2 || staffCount % 2 !== 0) {
-      throw new Error(`Page ${page} cannot pair every visible grand staff for hand focus: ${staffCount} staff groups.`);
+  if (unresolved.length) throw new Error(`${unresolved.length} written timemap event(s) do not resolve to SVG elements.`);
+  for (let page = 0; page < pageLayout.pageStaffCounts.length; page++) {
+    const count = pageLayout.pageStaffCounts[page];
+    if (count < 2 || count % 2 !== 0) {
+      throw new Error(`Page ${page + 1} cannot pair every visible grand staff: ${count} staff groups.`);
     }
+  }
+
+  toolkit.setOptions(optionsForMode(true));
+  toolkit.redoLayout();
+  const continuousLayout = renderAndIndex(toolkit);
+  if (continuousLayout.pages !== 1 || continuousLayout.systems !== 1) {
+    throw new Error(`Continuous mode produced ${continuousLayout.pages} page(s) and ${continuousLayout.systems} system(s).`);
   }
 
   console.log(
-    `Renderer repeat/page regression passed: pages=${pageCount}, events=${noteEvents.length}, ` +
-    `maxBeat=${maxQstamp}, unresolved=0, backwardPages=0, ` +
-    `pageSystemHandoffs=${samePageSystemBoundaries}, continuousPages=1, ` +
-    `continuousSystems=1, restEvents=${restEvents.length}.`
+    `Renderer timeline regression passed for ${path.basename(scorePath)}: ` +
+    `writtenBeats=${maxBeat}, performanceBeats=${contract.performanceBeats}, ` +
+    `occurrences=${contract.occurrences.length}, pages=${pageLayout.pages}, unresolved=0, ` +
+    `continuousPages=1, continuousSystems=1.`
   );
 }
 
