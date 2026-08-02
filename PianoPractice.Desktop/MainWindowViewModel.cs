@@ -2461,7 +2461,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             _score = _importer.Import(path);
-            var initialTitle = NormalizeSampleTitle(_score.Title, path);
+            var initialTitle = _score.Title;
             ScoreByline = _score.ComposerOrCreator;
             SourceFileLabel = Path.GetFileName(_score.SourcePath);
             var libItem = _libraryStore.AddOrUpdateFile(path, initialTitle, ScoreByline, _score.MeasureCount);
@@ -2521,18 +2521,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             StatusMessage = $"Import failed: {exception.Message}";
             throw;
         }
-    }
-
-    private static string NormalizeSampleTitle(string importedTitle, string sourcePath)
-    {
-        var fileName = Path.GetFileNameWithoutExtension(sourcePath);
-        if (fileName.Contains("drivers-license", StringComparison.OrdinalIgnoreCase) ||
-            importedTitle.Replace("'", string.Empty, StringComparison.Ordinal).Contains("drivers licence", StringComparison.OrdinalIgnoreCase) ||
-            importedTitle.Replace("'", string.Empty, StringComparison.Ordinal).Contains("drivers license", StringComparison.OrdinalIgnoreCase))
-        {
-            return "drivers license";
-        }
-        return importedTitle;
     }
 
     public void RefreshMidiDevices() => RefreshMidiDevices(userInitiated: true);

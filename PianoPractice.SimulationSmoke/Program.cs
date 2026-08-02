@@ -3,9 +3,9 @@ using PianoPractice.Desktop.Models;
 using PianoPractice.Desktop.Services;
 using System.Windows.Input;
 
-var path = args.Length > 0
-    ? args[0]
-    : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "olivia-rodrigo-drivers-license.mxl");
+if (args.Length != 1)
+    throw new ArgumentException("Pass the MusicXML or MXL fixture path as the only argument.");
+var path = Path.GetFullPath(args[0]);
 
 var importer = new MusicXmlImporter();
 var score = importer.Import(path);
@@ -785,10 +785,6 @@ using (var continuousNavigation = new MainWindowViewModel(Path.Combine(transient
 }
 
 var midiPath = Path.ChangeExtension(path, ".mid");
-if (!File.Exists(midiPath))
-{
-    midiPath = Path.Combine(Path.GetDirectoryName(path) ?? string.Empty, "olivia-rodrigo-drivers-license.mid");
-}
 if (File.Exists(midiPath))
 {
     var midiReference = new MidiFileImporter().Import(midiPath);
@@ -817,7 +813,7 @@ if (File.Exists(midiPath))
         throw new InvalidOperationException("MIDI reference playback did not re-enable after selecting a track.");
     }
 
-    var pdfPath = Path.Combine(Path.GetDirectoryName(path) ?? string.Empty, "olivia-rodrigo-drivers-license.pdf");
+    var pdfPath = Path.ChangeExtension(path, ".pdf");
     if (File.Exists(pdfPath))
     {
         referenceViewModel.LoadPdfReference(pdfPath);

@@ -115,22 +115,7 @@ public partial class MainWindow : Window
     {
         await InitializeNotationAsync();
         _viewModel.RefreshMidiDevices();
-        var defaultScore = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "olivia-rodrigo-drivers-license.mxl");
-        if (!File.Exists(defaultScore))
-        {
-            _viewModel.SetStatusMessage("Step 1: import a MusicXML score.");
-            return;
-        }
-
-        try
-        {
-            _viewModel.LoadScore(defaultScore);
-            await LoadNotationAsync();
-        }
-        catch (Exception exception)
-        {
-            MessageBox.Show(this, exception.Message, "Score import failed", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
+        _viewModel.SetStatusMessage("Import a MusicXML or MXL score to begin.");
     }
 
     private async Task InitializeNotationAsync()
