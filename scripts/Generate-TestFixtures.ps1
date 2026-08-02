@@ -11,43 +11,114 @@ if (-not (Test-Path -LiteralPath $musicXmlPath -PathType Leaf)) {
     throw "Missing source fixture: $musicXmlPath"
 }
 
-Add-Type -AssemblyName System.IO.Compression
-$mxlStream = [System.IO.File]::Open($mxlPath, [System.IO.FileMode]::Create)
-try {
-    $archive = [System.IO.Compression.ZipArchive]::new(
-        $mxlStream,
-        [System.IO.Compression.ZipArchiveMode]::Create,
-        $false)
-    try {
-        $container = $archive.CreateEntry('META-INF/container.xml', [System.IO.Compression.CompressionLevel]::Optimal)
-        $container.LastWriteTime = [DateTimeOffset]::new(2026, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
-        $writer = [System.IO.StreamWriter]::new($container.Open(), [System.Text.UTF8Encoding]::new($false))
-        try {
-            $writer.Write('<?xml version="1.0" encoding="UTF-8"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="score.musicxml" media-type="application/vnd.recordare.musicxml+xml"/></rootfiles></container>')
-        }
-        finally {
-            $writer.Dispose()
-        }
+if (-not ('CadenzaFixtureArchive' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text;
 
-        $score = $archive.CreateEntry('score.musicxml', [System.IO.Compression.CompressionLevel]::Optimal)
-        $score.LastWriteTime = [DateTimeOffset]::new(2026, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
-        $source = [System.IO.File]::OpenRead($musicXmlPath)
-        try {
-            $target = $score.Open()
-            try { $source.CopyTo($target) }
-            finally { $target.Dispose() }
-        }
-        finally {
-            $source.Dispose()
+public static class CadenzaFixtureArchive
+{
+    private sealed class Entry
+    {
+        public byte[] Name;
+        public byte[] Data;
+        public uint Crc;
+        public uint Offset;
+    }
+
+    public static void Write(string outputPath, string scorePath)
+    {
+        const string containerXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"score.musicxml\" media-type=\"application/vnd.recordare.musicxml+xml\"/></rootfiles></container>";
+        var entries = new List<Entry>
+        {
+            CreateEntry("META-INF/container.xml", new UTF8Encoding(false).GetBytes(containerXml)),
+            CreateEntry("score.musicxml", File.ReadAllBytes(scorePath))
+        };
+
+        using (var stream = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None))
+        using (var writer = new BinaryWriter(stream, Encoding.UTF8, false))
+        {
+            foreach (var entry in entries)
+            {
+                entry.Offset = checked((uint)stream.Position);
+                writer.Write(0x04034b50u); // local file header
+                writer.Write((ushort)20);  // version needed
+                writer.Write((ushort)0);   // flags
+                writer.Write((ushort)0);   // stored, no runtime-dependent compression
+                writer.Write((ushort)0);   // DOS time: 00:00:00
+                writer.Write((ushort)0x5c21); // DOS date: 2026-01-01
+                writer.Write(entry.Crc);
+                writer.Write((uint)entry.Data.Length);
+                writer.Write((uint)entry.Data.Length);
+                writer.Write((ushort)entry.Name.Length);
+                writer.Write((ushort)0);
+                writer.Write(entry.Name);
+                writer.Write(entry.Data);
+            }
+
+            var centralOffset = checked((uint)stream.Position);
+            foreach (var entry in entries)
+            {
+                writer.Write(0x02014b50u); // central directory header
+                writer.Write((ushort)20);  // version made by
+                writer.Write((ushort)20);  // version needed
+                writer.Write((ushort)0);
+                writer.Write((ushort)0);
+                writer.Write((ushort)0);
+                writer.Write((ushort)0x5c21);
+                writer.Write(entry.Crc);
+                writer.Write((uint)entry.Data.Length);
+                writer.Write((uint)entry.Data.Length);
+                writer.Write((ushort)entry.Name.Length);
+                writer.Write((ushort)0); // extra length
+                writer.Write((ushort)0); // comment length
+                writer.Write((ushort)0); // disk number
+                writer.Write((ushort)0); // internal attributes
+                writer.Write(0u);        // external attributes
+                writer.Write(entry.Offset);
+                writer.Write(entry.Name);
+            }
+
+            var centralSize = checked((uint)stream.Position - centralOffset);
+            writer.Write(0x06054b50u); // end of central directory
+            writer.Write((ushort)0);
+            writer.Write((ushort)0);
+            writer.Write((ushort)entries.Count);
+            writer.Write((ushort)entries.Count);
+            writer.Write(centralSize);
+            writer.Write(centralOffset);
+            writer.Write((ushort)0);
         }
     }
-    finally {
-        $archive.Dispose()
+
+    private static Entry CreateEntry(string name, byte[] data)
+    {
+        return new Entry
+        {
+            Name = Encoding.UTF8.GetBytes(name),
+            Data = data,
+            Crc = Crc32(data)
+        };
+    }
+
+    private static uint Crc32(byte[] data)
+    {
+        uint crc = 0xffffffffu;
+        foreach (var value in data)
+        {
+            crc ^= value;
+            for (var bit = 0; bit < 8; bit++)
+                crc = (crc & 1u) != 0 ? (crc >> 1) ^ 0xedb88320u : crc >> 1;
+        }
+        return ~crc;
     }
 }
-finally {
-    $mxlStream.Dispose()
+'@
 }
+
+[CadenzaFixtureArchive]::Write($mxlPath, $musicXmlPath)
 
 function Write-Fixture([string] $Name, [byte[]] $Bytes) {
     [System.IO.File]::WriteAllBytes((Join-Path $fixtureRoot $Name), $Bytes)
