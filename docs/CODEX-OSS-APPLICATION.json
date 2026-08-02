@@ -28,8 +28,8 @@
     {
       "id": "D",
       "question": "Is there anything else OpenAI should consider?",
-      "answer": "Cadenza is Windows-first, pre-release, incomplete, and not significantly adopted. Automated validation covers original fixtures without MIDI or audio hardware; real devices, WebView2 UI, audio, and accessibility still need manual checks. The application should not be submitted until GPL-3.0 is approved and merged. The maintainer remains responsible for human review and merge decisions.",
-      "characterCount": 388
+      "answer": "Cadenza is Windows-first, pre-release, incomplete, and not significantly adopted. On release/oss-readiness, clean-clone validation and GitHub Actions pass with original fixtures and no MIDI/audio hardware; real devices, WebView2 UI, audio, and accessibility still need manual checks. Do not submit until GPL-3.0 is approved and merged. The maintainer remains responsible for human review and merge decisions.",
+      "characterCount": 408
     }
   ],
   "maintainerSuppliedFieldsStillRequired": [
