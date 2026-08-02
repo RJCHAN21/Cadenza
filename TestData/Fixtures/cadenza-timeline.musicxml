@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <work>
+    <work-title>Cadenza Timeline Fixture</work-title>
+  </work>
+  <identification>
+    <creator type="composer">Cadenza contributors</creator>
+    <encoding>
+      <software>Cadenza deterministic test fixture</software>
+    </encoding>
+  </identification>
+  <part-list>
+    <score-part id="P1">
+      <part-name>Piano</part-name>
+    </score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <staves>2</staves>
+        <clef number="1"><sign>G</sign><line>2</line></clef>
+        <clef number="2"><sign>F</sign><line>4</line></clef>
+      </attributes>
+      <direction placement="above">
+        <direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>120</per-minute></metronome></direction-type>
+        <sound tempo="120"/>
+      </direction>
+      <barline location="left"><repeat direction="forward"/></barline>
+      <note id="m1-c4">
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff>
+      </note>
+      <note id="m1-e4">
+        <chord/><pitch><step>E</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff>
+      </note>
+      <backup><duration>4</duration></backup>
+      <note id="m1-c3">
+        <pitch><step>C</step><octave>3</octave></pitch>
+        <duration>4</duration><voice>2</voice><type>whole</type><staff>2</staff>
+      </note>
+    </measure>
+    <measure number="2">
+      <note id="m2-c4"><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note id="m2-d4"><pitch><step>D</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note id="m2-e4"><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note id="m2-f4"><pitch><step>F</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <backup><duration>4</duration></backup>
+      <note id="m2-g2"><pitch><step>G</step><octave>2</octave></pitch><duration>4</duration><voice>2</voice><type>whole</type><staff>2</staff></note>
+    </measure>
+    <measure number="3">
+      <barline location="left"><ending number="1" type="start"/></barline>
+      <note id="m3-g4"><pitch><step>G</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff></note>
+      <barline location="right"><ending number="1" type="stop"/><repeat direction="backward"/></barline>
+    </measure>
+    <measure number="4">
+      <barline location="left"><ending number="2" type="start"/></barline>
+      <attributes><time><beats>3</beats><beat-type>4</beat-type></time></attributes>
+      <direction placement="above">
+        <direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>90</per-minute></metronome></direction-type>
+        <sound tempo="90"/>
+      </direction>
+      <note id="m4-a4"><pitch><step>A</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note id="m4-b4"><pitch><step>B</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note id="m4-c5"><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <barline location="right"><ending number="2" type="stop"/></barline>
+    </measure>
+    <measure number="5">
+      <note id="m5-d5-start">
+        <pitch><step>D</step><octave>5</octave></pitch><duration>1</duration><tie type="start"/><voice>1</voice><type>quarter</type><staff>1</staff>
+        <notations><tied type="start"/></notations>
+      </note>
+      <note id="m5-d5-stop">
+        <pitch><step>D</step><octave>5</octave></pitch><duration>1</duration><tie type="stop"/><voice>1</voice><type>quarter</type><staff>1</staff>
+        <notations><tied type="stop"/></notations>
+      </note>
+      <note id="m5-rest"><rest/><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <barline location="right"><bar-style>light-heavy</bar-style></barline>
+    </measure>
+  </part>
+</score-partwise>

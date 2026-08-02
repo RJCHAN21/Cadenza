@@ -1,0 +1,16 @@
+{
+  "fixture": "cadenza-timeline.musicxml",
+  "writtenMeasures": 5,
+  "writtenBeats": 18,
+  "performanceBeats": 26,
+  "performanceMeasureNumbers": ["1", "2", "3", "1", "2", "4", "5"],
+  "occurrences": [
+    { "occurrenceIndex": 0, "sourceMeasureIndex": 0, "sourceStartBeat": 0, "performanceStartBeat": 0, "durationBeats": 4 },
+    { "occurrenceIndex": 1, "sourceMeasureIndex": 1, "sourceStartBeat": 4, "performanceStartBeat": 4, "durationBeats": 4 },
+    { "occurrenceIndex": 2, "sourceMeasureIndex": 2, "sourceStartBeat": 8, "performanceStartBeat": 8, "durationBeats": 4 },
+    { "occurrenceIndex": 3, "sourceMeasureIndex": 0, "sourceStartBeat": 0, "performanceStartBeat": 12, "durationBeats": 4 },
+    { "occurrenceIndex": 4, "sourceMeasureIndex": 1, "sourceStartBeat": 4, "performanceStartBeat": 16, "durationBeats": 4 },
+    { "occurrenceIndex": 5, "sourceMeasureIndex": 3, "sourceStartBeat": 12, "performanceStartBeat": 20, "durationBeats": 3 },
+    { "occurrenceIndex": 6, "sourceMeasureIndex": 4, "sourceStartBeat": 15, "performanceStartBeat": 23, "durationBeats": 3 }
+  ]
+}
