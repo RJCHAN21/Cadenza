@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - release/**
       - fix/**
   pull_request:
 
@@ -13,28 +14,22 @@ permissions:
 jobs:
   build-and-test:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
-      - name: Validate notation runtime JavaScript
-        shell: pwsh
-        run: |
-          node --check PianoPractice.Desktop/Assets/Verovio/cadenza-runtime-patch.js
-          node --check PianoPractice.Desktop/Assets/Verovio/cadenza-runtime-edge-patch.js
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
 
-      - name: Restore desktop project
-        run: dotnet restore PianoPractice.Desktop/PianoPractice.Desktop.csproj
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
-      - name: Build desktop project
-        run: dotnet build PianoPractice.Desktop/PianoPractice.Desktop.csproj --configuration Release --no-restore
-
-      - name: Run deterministic MusicXML and audio tests
-        run: dotnet run --project PianoPractice.ParserSmoke/PianoPractice.ParserSmoke.csproj --configuration Release
+      - name: Run clean-clone validation
+        shell: pwsh
+        run: ./scripts/Validate.ps1
