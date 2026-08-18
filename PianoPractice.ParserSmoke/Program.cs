@@ -1,10 +1,15 @@
 using System.IO.Compression;
 using System.Text;
-using System.Xml;
 using PianoPractice.Desktop.Models;
 using PianoPractice.Desktop.Services;
 
 var failures = new List<string>();
+Run("audio render", AudioRenderSmoke.Run);
+Run("real-time playback plan", RealtimePlaybackPlanSmoke.Run);
+Run("fail-closed importer and capability policy", ImporterHardeningSmoke.Run);
+Run("seeded importer invariants and bounded mutations", ImporterPropertySmoke.Run);
+Run("authoritative performance clock, meter, and selection spans", TimelineConsistencySmoke.Run);
+Run("recoverable persistence and stable score identity", PersistenceHardeningSmoke.Run);
 Run("simple repeat", TestSimpleRepeat);
 Run("implicit-start repeat", TestImplicitStartRepeat);
 Run("explicit repeat count", TestRepeatCount);
@@ -194,7 +199,7 @@ void TestDtdEntityIsRejected()
                 <part id="P1"><measure number="1"><note><rest/><duration>1</duration></note></measure></part>
               </score-partwise>
               """;
-    AssertThrows<XmlException>(
+    AssertThrows<InvalidDataException>(
         () => ImportXml(xml),
         "XML that depends on a DTD entity was accepted.");
 }

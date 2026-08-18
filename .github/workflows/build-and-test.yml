@@ -32,6 +32,7 @@ jobs:
           node PianoPractice.RendererSmoke/listen-highlight-smoke.cjs
           node PianoPractice.RendererSmoke/listen-highlight-halo-smoke.cjs
           node PianoPractice.RendererSmoke/continuous-motion-smoke.cjs
+          node PianoPractice.RendererSmoke/renderer-smoke.cjs
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v4
@@ -41,8 +42,15 @@ jobs:
       - name: Restore desktop project
         run: dotnet restore PianoPractice.Desktop/PianoPractice.Desktop.csproj
 
-      - name: Build desktop project
-        run: dotnet build PianoPractice.Desktop/PianoPractice.Desktop.csproj --configuration Release --no-restore
+      - name: Build desktop project (Debug and Release)
+        run: |
+          dotnet build PianoPractice.Desktop/PianoPractice.Desktop.csproj --configuration Debug --no-restore
+          dotnet build PianoPractice.Desktop/PianoPractice.Desktop.csproj --configuration Release --no-restore
 
-      - name: Run deterministic MusicXML and audio tests
+      - name: Run deterministic MusicXML, timeline, persistence, and audio tests
         run: dotnet run --project PianoPractice.ParserSmoke/PianoPractice.ParserSmoke.csproj --configuration Release
+
+      - name: Run hardware-independent application simulations
+        run: |
+          dotnet run --project PianoPractice.ShortcutSmoke/PianoPractice.ShortcutSmoke.csproj --configuration Release
+          dotnet run --project PianoPractice.SimulationSmoke/PianoPractice.SimulationSmoke.csproj --configuration Release

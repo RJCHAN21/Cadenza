@@ -41,7 +41,9 @@ public sealed partial class MusicXmlImporter
                 "The expanded performance contains a negative note position.",
                 1,
                 1,
-                true));
+                true,
+                true,
+                ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
         return result;
     }
 
@@ -76,7 +78,9 @@ public sealed partial class MusicXmlImporter
                 "The expanded performance contains a negative rest position.",
                 1,
                 1,
-                true));
+                true,
+                true,
+                ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
         return result;
     }
 
@@ -162,7 +166,9 @@ public sealed partial class MusicXmlImporter
                     $"An unmatched tie stop was found in part {note.PartId} at measure {note.MeasureNumber}.",
                     measure,
                     measure,
-                    true));
+                    true,
+                    true,
+                    ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
             }
         }
 
@@ -175,7 +181,9 @@ public sealed partial class MusicXmlImporter
                 $"An unmatched tie start was found in part {note.PartId} at measure {note.MeasureNumber}.",
                 measure,
                 measure,
-                true));
+                true,
+                true,
+                ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
         }
         return merged;
     }
@@ -294,7 +302,9 @@ public sealed partial class MusicXmlImporter
                     $"A note in measure {note.MeasureNumber} lies outside its performance occurrence.",
                     MeasureNumberOf(note.MeasureNumber, note.SourceMeasureIndex + 1),
                     MeasureNumberOf(note.MeasureNumber, note.SourceMeasureIndex + 1),
-                    true));
+                    true,
+                    true,
+                    ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
             }
         }
     }

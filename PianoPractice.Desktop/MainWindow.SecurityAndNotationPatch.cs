@@ -48,7 +48,26 @@ public partial class MainWindow
         if (core is null || _runtimeHardeningInstalled)
             return;
 
-        _runtimeHardeningInstalled = true;
+        var patchDirectory = Path.Combine(AppContext.BaseDirectory, "Assets", "Verovio");
+        var patchPaths = new[]
+        {
+            Path.Combine(patchDirectory, "cadenza-runtime-patch.js"),
+            Path.Combine(patchDirectory, "cadenza-runtime-edge-patch.js"),
+            Path.Combine(patchDirectory, "cadenza-bar-boundary-bridge-patch.js"),
+            Path.Combine(patchDirectory, "cadenza-listen-highlight-patch.js"),
+            Path.Combine(patchDirectory, "cadenza-continuous-motion-patch.js")
+        };
+        var patchScripts = new List<string>();
+        foreach (var patchPath in patchPaths)
+        {
+            if (!File.Exists(patchPath))
+                throw new FileNotFoundException(
+                    $"The notation safety patch {Path.GetFileName(patchPath)} is missing from the application output.",
+                    patchPath);
+            patchScripts.Add(await File.ReadAllTextAsync(patchPath));
+        }
+
+        _runtimePatchScript = string.Join(Environment.NewLine, patchScripts);
         core.Settings.AreHostObjectsAllowed = false;
         core.Settings.AreDefaultContextMenusEnabled = false;
         core.Settings.AreDefaultScriptDialogsEnabled = false;
@@ -63,7 +82,6 @@ public partial class MainWindow
         core.PermissionRequested += HardenedPermissionRequested;
         core.DownloadStarting += HardenedDownloadStarting;
         core.NavigationCompleted += HardenedNavigationCompleted;
-        core.WebMessageReceived -= NotationWebView_WebMessageReceived;
         core.WebMessageReceived += TrustedNotationWebMessageReceived;
 
         // CursorBeat previously had two independent frame clocks: the original
@@ -76,29 +94,8 @@ public partial class MainWindow
         CompositionTarget.Rendering += RuntimeCorrectedRendering;
         Closed += RuntimeHardeningClosed;
 
-        var patchDirectory = Path.Combine(AppContext.BaseDirectory, "Assets", "Verovio");
-        var patchPaths = new[]
-        {
-            Path.Combine(patchDirectory, "cadenza-runtime-patch.js"),
-            Path.Combine(patchDirectory, "cadenza-runtime-edge-patch.js"),
-            Path.Combine(patchDirectory, "cadenza-bar-boundary-bridge-patch.js"),
-            Path.Combine(patchDirectory, "cadenza-listen-highlight-patch.js"),
-            Path.Combine(patchDirectory, "cadenza-continuous-motion-patch.js")
-        };
-        var patchScripts = new List<string>();
-        foreach (var patchPath in patchPaths)
-        {
-            if (!File.Exists(patchPath))
-            {
-                _viewModel.SetStatusMessage(
-                    $"The notation safety patch {Path.GetFileName(patchPath)} is missing from the application output.");
-                return;
-            }
-            patchScripts.Add(await File.ReadAllTextAsync(patchPath));
-        }
-
-        _runtimePatchScript = string.Join(Environment.NewLine, patchScripts);
         await core.AddScriptToExecuteOnDocumentCreatedAsync(_runtimePatchScript);
+        _runtimeHardeningInstalled = true;
         await ApplyRuntimePatchToCurrentDocumentAsync();
     }
 
@@ -107,6 +104,19 @@ public partial class MainWindow
         CompositionTarget.Rendering -= CompositionTarget_Rendering;
         CompositionTarget.Rendering -= RuntimeCorrectedRendering;
         _correctedPerformanceClock.Stop();
+    }
+
+    private void RemoveRuntimeHardeningHandlers(CoreWebView2 core)
+    {
+        core.NavigationStarting -= HardenedNavigationStarting;
+        core.FrameNavigationStarting -= HardenedNavigationStarting;
+        core.NewWindowRequested -= HardenedNewWindowRequested;
+        core.PermissionRequested -= HardenedPermissionRequested;
+        core.DownloadStarting -= HardenedDownloadStarting;
+        core.NavigationCompleted -= HardenedNavigationCompleted;
+        core.WebMessageReceived -= TrustedNotationWebMessageReceived;
+        Closed -= RuntimeHardeningClosed;
+        CompositionTarget.Rendering -= RuntimeCorrectedRendering;
     }
 
     private void RuntimeCorrectedRendering(object? sender, EventArgs args)
@@ -164,14 +174,15 @@ public partial class MainWindow
         var endMeasure = _viewModel.FocusEndMeasure <= 0
             ? score.MeasureCount
             : _viewModel.FocusEndMeasure;
-        return score.PerformanceMeasures
-            .Where(occurrence =>
-                int.TryParse(occurrence.MeasureNumber, out var measure) &&
-                measure >= _viewModel.FocusStartMeasure &&
-                measure <= endMeasure)
-            .Select(occurrence => occurrence.PerformanceStartBeat + occurrence.DurationBeats)
-            .DefaultIfEmpty(score.TotalPerformanceBeats)
-            .Max();
+        var spans = score.PerformanceSpansForMeasureRange(_viewModel.FocusStartMeasure, endMeasure);
+        if (spans.Count == 0)
+            return score.TotalPerformanceBeats;
+        return spans.FirstOrDefault(span =>
+                       _viewModel.CursorBeat >= span.StartBeat - 0.0001 &&
+                       _viewModel.CursorBeat <= span.EndBeat + 0.0001)
+                   ?.EndBeat
+               ?? spans.FirstOrDefault(span => span.StartBeat >= _viewModel.CursorBeat - 0.0001)?.EndBeat
+               ?? spans[^1].EndBeat;
     }
 
     private static void HardenedNavigationStarting(
@@ -210,8 +221,16 @@ public partial class MainWindow
         if (!args.IsSuccess)
             return;
 
-        await ApplyRuntimePatchToCurrentDocumentAsync();
-        await SynchronizePerformanceModelAsync();
+        try
+        {
+            await ApplyRuntimePatchToCurrentDocumentAsync();
+            await SynchronizePerformanceModelAsync();
+        }
+        catch (Exception exception) when (
+            exception is InvalidOperationException or ObjectDisposedException or System.Runtime.InteropServices.COMException)
+        {
+            // Closing or a replacement navigation invalidated this document.
+        }
     }
 
     private async void TrustedNotationWebMessageReceived(
@@ -221,7 +240,7 @@ public partial class MainWindow
         if (!IsTrustedRendererUri(args.Source))
             return;
 
-        NotationWebView_WebMessageReceived(sender, args);
+        await HandleNotationWebMessageAsync(sender, args);
 
         try
         {

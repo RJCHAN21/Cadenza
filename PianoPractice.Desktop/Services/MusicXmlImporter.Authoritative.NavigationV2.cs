@@ -60,7 +60,9 @@ public sealed partial class MusicXmlImporter
                     $"Part {part.Name} contains {part.Measures.Count} measures while navigation part {canonical.Name} contains {canonical.Measures.Count}.",
                     1,
                     Math.Max(part.Measures.Count, canonical.Measures.Count),
-                    true));
+                    true,
+                    true,
+                    ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
             }
 
             var shared = Math.Min(part.Measures.Count, canonical.Measures.Count);
@@ -75,7 +77,9 @@ public sealed partial class MusicXmlImporter
                         $"Part {part.Name} disagrees on the duration of measure {actual.Number}.",
                         MeasureNumberOf(actual.Number, index + 1),
                         MeasureNumberOf(actual.Number, index + 1),
-                        true));
+                        true,
+                        true,
+                        ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
                 }
 
                 if (!expected.NavigationSignature.SequenceEqual(actual.NavigationSignature))
@@ -85,7 +89,9 @@ public sealed partial class MusicXmlImporter
                         $"Part {part.Name} disagrees with navigation part {canonical.Name} at measure {actual.Number}.",
                         MeasureNumberOf(actual.Number, index + 1),
                         MeasureNumberOf(actual.Number, index + 1),
-                        true));
+                        true,
+                        true,
+                        ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
                 }
             }
         }
@@ -166,10 +172,12 @@ public sealed partial class MusicXmlImporter
                     var measureNumber = MeasureNumberOf(measures[sourceIndex].Number, sourceIndex + 1);
                     warnings.Add(new ScoreValidationWarning(
                         "volta-owner-state",
-                        $"The ending beginning near measure {measures[sourceIndex].Number} could not be matched to an active repeat pass. Assessment is disabled for this ending.",
+                        $"The ending beginning near measure {measures[sourceIndex].Number} could not be matched to an active repeat pass. Playback and assessment are disabled for this ending.",
                         measureNumber,
                         measureNumber,
-                        true));
+                        true,
+                        true,
+                        ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
                 }
 
                 if (!ending.Passes.Contains(1))
@@ -262,10 +270,12 @@ public sealed partial class MusicXmlImporter
                         var measureNumber = MeasureNumberOf(measures[index].Number, index + 1);
                         warnings.Add(new ScoreValidationWarning(
                             "overlapping-endings",
-                            $"Measure {measures[index].Number} belongs to overlapping alternate endings. Assessment is disabled for this measure.",
+                            $"Measure {measures[index].Number} belongs to overlapping alternate endings. Playback and assessment are disabled for this measure.",
                             measureNumber,
                             measureNumber,
-                            true));
+                            true,
+                            true,
+                            ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
                     }
                     continue;
                 }
@@ -325,7 +335,9 @@ public sealed partial class MusicXmlImporter
                                 $"Repeat near measure {measures[ending.SourceMeasureIndex].Number} has an empty or reversed range.",
                                 measureNumber,
                                 measureNumber,
-                                true));
+                                true,
+                                true,
+                                ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
                         }
                         continue;
                     }
@@ -335,10 +347,12 @@ public sealed partial class MusicXmlImporter
                     {
                         warnings.Add(new ScoreValidationWarning(
                             "repeat-times",
-                            $"Repeat at measure {measures[ending.SourceMeasureIndex].Number} uses unsupported times=\"{ending.Times}\"; two passes are used.",
+                            $"Repeat at measure {measures[ending.SourceMeasureIndex].Number} uses unsupported times=\"{ending.Times}\". The two-pass visual fallback is not available for playback or assessment.",
                             MeasureNumberOf(measures[startBoundary].Number, startBoundary + 1),
                             MeasureNumberOf(measures[ending.SourceMeasureIndex].Number, ending.SourceMeasureIndex + 1),
-                            true));
+                            true,
+                            true,
+                            ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
                     }
 
                     sections.Add(new NavigationRepeatSectionV2(
@@ -366,7 +380,9 @@ public sealed partial class MusicXmlImporter
                     $"A forward repeat near measure {measures[index].Number} has no backward repeat.",
                     MeasureNumberOf(measures[index].Number, index + 1),
                     MeasureNumberOf(measures[index].Number, index + 1),
-                    true));
+                    true,
+                    true,
+                    ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
             }
         }
 
@@ -420,7 +436,9 @@ public sealed partial class MusicXmlImporter
                             $"An ending closes near measure {measures[item.SourceMeasureIndex].Number} without a matching start.",
                             measureNumber,
                             measureNumber,
-                            true));
+                            true,
+                            true,
+                            ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
                     }
                     continue;
                 }
@@ -448,7 +466,9 @@ public sealed partial class MusicXmlImporter
                             $"Ending {active.Number} near measure {measures[startIndex].Number} is not associated with a repeat section.",
                             measureNumber,
                             measureNumber,
-                            true));
+                            true,
+                            true,
+                            ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
                     }
                 }
                 else
@@ -478,7 +498,9 @@ public sealed partial class MusicXmlImporter
                         $"Ending {active.Number} near measure {measures[previousIndex].Number} was not closed before another ending started.",
                         MeasureNumberOf(measures[previousIndex].Number, previousIndex + 1),
                         MeasureNumberOf(measures[item.SourceMeasureIndex].Number, item.SourceMeasureIndex + 1),
-                        true));
+                        true,
+                        true,
+                        ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
                 }
 
                 var passes = ParseEndingPasses(item.Directive.Number);
@@ -494,7 +516,9 @@ public sealed partial class MusicXmlImporter
                             $"Ending near measure {measures[item.SourceMeasureIndex].Number} has unsupported number \"{item.Directive.Number}\".",
                             measureNumber,
                             measureNumber,
-                            true));
+                            true,
+                            true,
+                            ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
                     }
                     active = null;
                     continue;
@@ -531,7 +555,9 @@ public sealed partial class MusicXmlImporter
                     $"Ending {active.Number} near measure {measures[startIndex].Number} was not explicitly closed.",
                     MeasureNumberOf(measures[startIndex].Number, startIndex + 1),
                     MeasureNumberOf(measures[^1].Number, measures.Count),
-                    true));
+                    true,
+                    true,
+                    ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
             }
         }
 
@@ -598,10 +624,12 @@ public sealed partial class MusicXmlImporter
                 sourceMeasureIndex + 1);
             warnings.Add(new ScoreValidationWarning(
                 $"middle-{directiveKind}-barline",
-                $"Measure {measures[sourceMeasureIndex].Number} uses a middle-barline {directiveKind} directive. Assessment is disabled for this measure.",
+                $"Measure {measures[sourceMeasureIndex].Number} uses a middle-barline {directiveKind} directive. Playback and assessment are disabled for this measure.",
                 measureNumber,
                 measureNumber,
-                true));
+                true,
+                true,
+                ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
         }
 
         return sourceMeasureIndex + 1;

@@ -11,6 +11,7 @@ public sealed class PianoAudioService : IDisposable
 {
     private const int CompatibilitySampleRate = 22050;
     private const double MaximumPlaybackSeconds = 30 * 60;
+    private const int MaximumPlaybackEvents = 2_000_000;
     private const double CompatibilityReleaseTailSeconds = 1.25;
     private const int PlanMarkerOffset = 46;
     private const string PlanMarker = "CADENZA-RT-PLAN-1";
@@ -262,13 +263,49 @@ public sealed class PianoAudioService : IDisposable
             return false;
         }
 
+        var activeNotes = new Dictionary<int, int>();
+        var activeCount = 0;
+        var maximumConcurrentNotes = 0;
+        var finiteAndMonotonic = true;
+        var previousSeconds = 0d;
+        foreach (var playbackEvent in plan.Events)
+        {
+            finiteAndMonotonic &= double.IsFinite(playbackEvent.AtSeconds) &&
+                                  playbackEvent.AtSeconds >= previousSeconds - 0.000001 &&
+                                  playbackEvent.AtSeconds >= -0.000001 &&
+                                  playbackEvent.AtSeconds <= plan.DurationSeconds + 0.000001;
+            previousSeconds = playbackEvent.AtSeconds;
+            if (playbackEvent.Kind == PlaybackEventKind.PianoOn)
+            {
+                activeNotes[playbackEvent.Note] = activeNotes.GetValueOrDefault(playbackEvent.Note) + 1;
+                activeCount++;
+                maximumConcurrentNotes = Math.Max(maximumConcurrentNotes, activeCount);
+            }
+            else if (playbackEvent.Kind == PlaybackEventKind.PianoOff &&
+                     activeNotes.TryGetValue(playbackEvent.Note, out var noteCount) && noteCount > 0)
+            {
+                if (noteCount == 1)
+                    activeNotes.Remove(playbackEvent.Note);
+                else
+                    activeNotes[playbackEvent.Note] = noteCount - 1;
+                activeCount--;
+            }
+        }
+
         info = new PreparedPlaybackInfo(
             plan.DurationSeconds,
             plan.PianoNoteCount,
             plan.MetronomePulseCount,
             plan.Events.Any(playbackEvent =>
                 playbackEvent.Kind == PlaybackEventKind.PianoOn &&
-                playbackEvent.AtSeconds <= 0.001));
+                playbackEvent.AtSeconds <= 0.001))
+        {
+            EventCount = plan.Events.Count,
+            HasFiniteMonotonicEvents = finiteAndMonotonic,
+            LastEventSeconds = plan.Events.Count == 0 ? 0 : plan.Events[^1].AtSeconds,
+            MaximumConcurrentPianoNotes = maximumConcurrentNotes,
+            HasBalancedPianoLifecycle = activeCount == 0
+        };
         return true;
     }
 
@@ -372,6 +409,7 @@ public sealed class PianoAudioService : IDisposable
             : 0;
 
         SortEvents(events);
+        ValidateEvents(events, durationSeconds);
         var preset = AudioSoundPreset.FromId(presetId, AudioSoundPreset.AcousticGrand);
         return RegisterPlan(new PlaybackPlan(
             events,
@@ -442,6 +480,7 @@ public sealed class PianoAudioService : IDisposable
         }
 
         SortEvents(events);
+        ValidateEvents(events, durationSeconds);
         var preset = AudioSoundPreset.FromId(presetId, AudioSoundPreset.AcousticGrand);
         return RegisterPlan(new PlaybackPlan(
             events,
@@ -844,6 +883,28 @@ public sealed class PianoAudioService : IDisposable
         }
     }
 
+    private static void ValidateEvents(IReadOnlyList<PlaybackEvent> events, double durationSeconds)
+    {
+        if (events.Count > MaximumPlaybackEvents)
+            throw new InvalidOperationException(
+                $"The requested playback exceeds the {MaximumPlaybackEvents:N0} event safety limit.");
+
+        var previousSeconds = 0d;
+        foreach (var playbackEvent in events)
+        {
+            if (!double.IsFinite(playbackEvent.AtSeconds) ||
+                playbackEvent.AtSeconds < previousSeconds - 0.000001 ||
+                playbackEvent.AtSeconds < -0.000001 ||
+                playbackEvent.AtSeconds > durationSeconds + 0.000001 ||
+                playbackEvent.Note is < 0 or > 127 ||
+                playbackEvent.Velocity is < 0 or > 127)
+            {
+                throw new InvalidOperationException("The requested playback contains an invalid scheduled event.");
+            }
+            previousSeconds = playbackEvent.AtSeconds;
+        }
+    }
+
     private static int ResolveRealtimePatch(AudioSoundPreset preset) =>
         preset.IsSoftSynth ? 88 : Math.Clamp(preset.PatchNumber, 0, 127);
 
@@ -854,9 +915,7 @@ public sealed class PianoAudioService : IDisposable
             PlanMarkerOffset + PlanMarkerBytes.Length + 16,
             4 * 1024 * 1024);
         var envelope = new byte[approximatePayloadLength];
-        var claimedDataBytes = checked((int)Math.Min(
-            int.MaxValue - 36L,
-            Math.Ceiling((durationSeconds + CompatibilityReleaseTailSeconds) * CompatibilitySampleRate * 2d)));
+        var claimedDataBytes = envelope.Length - 44;
 
         WriteAscii(envelope, 0, "RIFF");
         BitConverter.GetBytes(36 + claimedDataBytes).CopyTo(envelope, 4);
@@ -923,4 +982,11 @@ public readonly record struct PreparedPlaybackInfo(
     double DurationSeconds,
     int PianoNoteCount,
     int MetronomePulseCount,
-    bool HasImmediatePianoEvent);
+    bool HasImmediatePianoEvent)
+{
+    public int EventCount { get; init; }
+    public bool HasFiniteMonotonicEvents { get; init; }
+    public double LastEventSeconds { get; init; }
+    public int MaximumConcurrentPianoNotes { get; init; }
+    public bool HasBalancedPianoLifecycle { get; init; }
+}

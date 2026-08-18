@@ -3,12 +3,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:models="clr-namespace:PianoPractice.Desktop.Models"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
-        Title="Piano Practice Studio"
+        Title="Cadenza"
         Width="1480" Height="900" MinWidth="1120" MinHeight="720"
         WindowStartupLocation="CenterScreen"
         Background="#0E1116" FontFamily="Segoe UI"
         PreviewKeyDown="Window_PreviewKeyDown"
         PreviewKeyUp="Window_PreviewKeyUp"
+        Deactivated="Window_Deactivated"
         Closed="Window_Closed">
   <Window.Resources>
     <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
@@ -1337,8 +1338,8 @@
             </StackPanel>
           </Button>
           <StackPanel Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center">
-            <TextBox Text="{Binding ScoreTitle, UpdateSourceTrigger=PropertyChanged}" Background="Transparent" BorderThickness="0"
-                     Foreground="{StaticResource Ink}" FontSize="25" FontWeight="Bold" Padding="0" ToolTip="Editable lesson title" />
+            <TextBlock Text="{Binding ScoreTitle}" Foreground="{StaticResource Ink}" FontSize="25" FontWeight="Bold"
+                       TextTrimming="CharacterEllipsis" />
             <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
               <TextBlock Text="{Binding ScoreByline}" Foreground="{StaticResource Muted}" FontSize="12" />
               <TextBlock Text="  ·  " Foreground="#4C535E" FontSize="12" />
@@ -1385,22 +1386,6 @@
             <ColumnDefinition Width="*" />
           </Grid.ColumnDefinitions>
           <wv2:WebView2 Grid.Row="1" Grid.ColumnSpan="3" x:Name="NotationWebView" DefaultBackgroundColor="#101318" />
-
-          <!-- On-screen Hold Progress Overlay Card -->
-          <Border Grid.Row="1" Grid.ColumnSpan="3" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,24,0,0" Panel.ZIndex="99"
-                  Visibility="{Binding IsRemoteHoldVisible, Converter={StaticResource BoolToVisibility}}"
-                  Background="#18202A" BorderThickness="0" CornerRadius="14" Padding="20,12" Width="380">
-            <Border.Effect>
-              <DropShadowEffect BlurRadius="25" ShadowDepth="4" Color="#000000" Opacity="0.45" />
-            </Border.Effect>
-            <StackPanel>
-              <DockPanel Margin="0,0,0,8">
-                <TextBlock Text="{Binding RemoteHoldActionText}" Foreground="#FFFFFF" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
-                <TextBlock DockPanel.Dock="Right" Text="{Binding RemoteHoldTimeText}" Foreground="{StaticResource Gold}" FontWeight="Bold" FontSize="13" HorizontalAlignment="Right" VerticalAlignment="Center" />
-              </DockPanel>
-              <ProgressBar Height="8" Minimum="0" Maximum="1" Value="{Binding RemoteHoldProgress}" Background="#252C36" Foreground="{StaticResource Gold}" BorderThickness="0" />
-            </StackPanel>
-          </Border>
 
           <!-- TOP CONTROLS & ANIMATED HUD OVERLAY -->
           <Grid Grid.Row="0" Grid.ColumnSpan="3" VerticalAlignment="Top" Margin="0,24,0,8">
@@ -1496,12 +1481,15 @@
         </Border.Background>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="18,11">
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <RadioButton x:Name="ListenModeRadio" Content="Listen (F4)" Tag="Listen" GroupName="LessonMode" Style="{StaticResource SegmentRadio}"
-                         Height="44" Padding="13,0" FontSize="12" Click="LessonMode_Click" />
-            <RadioButton x:Name="PracticeModeRadio" Content="Practice · Wait (F5)" Tag="WaitForYou" GroupName="LessonMode" Style="{StaticResource SegmentRadio}"
-                         Height="44" Padding="13,0" FontSize="12" Click="LessonMode_Click" />
-            <RadioButton x:Name="PerformanceModeRadio" Content="Performance · Timed (F6)" Tag="TimedPlay" GroupName="LessonMode" Style="{StaticResource SegmentRadio}"
-                         Height="44" Padding="13,0" FontSize="12" Click="LessonMode_Click" />
+            <RadioButton x:Name="ListenModeRadio" Content="Listen  Ctrl+1" Tag="Listen" GroupName="LessonMode" Style="{StaticResource SegmentRadio}"
+                         Height="44" Padding="13,0" FontSize="12" Click="LessonMode_Click" IsEnabled="{Binding CanSwitchLessonMode}"
+                         ToolTip="Hear the selected range without assessment. Selects the mode only; press Space to begin." />
+            <RadioButton x:Name="PracticeModeRadio" Content="Practice  Ctrl+2" Tag="WaitForYou" GroupName="LessonMode" Style="{StaticResource SegmentRadio}"
+                         Height="44" Padding="13,0" FontSize="12" Click="LessonMode_Click" IsEnabled="{Binding CanSwitchLessonMode}"
+                         ToolTip="Wait-for-you practice with note feedback. Selects the mode only; press Space to begin." />
+            <RadioButton x:Name="PerformanceModeRadio" Content="Performance  Ctrl+3" Tag="TimedPlay" GroupName="LessonMode" Style="{StaticResource SegmentRadio}"
+                         Height="44" Padding="13,0" FontSize="12" Click="LessonMode_Click" IsEnabled="{Binding CanSwitchLessonMode}"
+                         ToolTip="Timed assessment with a count-in. Selects the mode only; press Space to begin." />
             <CheckBox Content="{Binding MetronomeLabel}" IsChecked="{Binding MetronomeEnabled, Mode=TwoWay}"
                       Style="{StaticResource HeaderCheckBox}" Height="44" Padding="10,0"
                       IsEnabled="{Binding HasScore}" VerticalAlignment="Center" Margin="10,0,0,0" />
@@ -1519,6 +1507,15 @@
               <ToggleButton Content="&#x21BB;" IsChecked="{Binding IsLoopEnabled, Mode=TwoWay}" IsEnabled="{Binding CanUseTransport}"
                             Width="44" Height="44" Padding="0" FontSize="18" ToolTip="{Binding LoopButtonToolTip}"
                             Style="{StaticResource TransportLoopToggleStyle}" Margin="4,0,0,0" />
+            </StackPanel>
+          </Border>
+
+          <Border Background="#15343A" BorderBrush="#4BC7D4" BorderThickness="1" CornerRadius="12" Padding="12,7"
+                  Margin="0,0,12,0" MaxWidth="190" VerticalAlignment="Center"
+                  Visibility="{Binding IsMidiRemoteArmed, Converter={StaticResource BoolToVisibility}}">
+            <StackPanel>
+              <TextBlock Text="MIDI REMOTE ARMED" Foreground="#8BEAFF" FontSize="9.5" FontWeight="Bold" TextAlignment="Center" />
+              <TextBlock Text="Press one assigned MIDI key" Foreground="{StaticResource Ink}" FontSize="10.5" TextAlignment="Center" />
             </StackPanel>
           </Border>
 
@@ -1743,9 +1740,9 @@
           <!-- Segmented Navigation Tab Bar -->
           <Border Grid.Row="1" Background="#0D1016" BorderThickness="0" Padding="24,12">
             <UniformGrid Columns="4">
-              <RadioButton Content="🎛️ Shortcuts &amp; Remote" Tag="0" GroupName="SettingsMainTabs"
+              <RadioButton Content="⌨️ Controls" Tag="0" GroupName="SettingsMainTabs"
                            IsChecked="{Binding IsSettingsTabShortcutsVisible, Mode=OneWay}"
-                           Style="{StaticResource SegmentRadio}" Click="SettingsTab_Click" ToolTip="Configure trigger behaviors, hold timers, and keybinds" FontSize="13.5" Height="44" />
+                           Style="{StaticResource SegmentRadio}" Click="SettingsTab_Click" ToolTip="View the safe keyboard and session controls" FontSize="13.5" Height="44" />
               <RadioButton Content="🎹 MIDI &amp; Hardware" Tag="1" GroupName="SettingsMainTabs"
                            IsChecked="{Binding IsSettingsTabMidiVisible, Mode=OneWay}"
                            Style="{StaticResource SegmentRadio}" Click="SettingsTab_Click" ToolTip="Select MIDI keyboard, volume, sustain pedal, and piano monitor" FontSize="13.5" Height="44" />
@@ -1762,187 +1759,105 @@
           <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="32,20,24,32">
             <StackPanel Margin="0,0,8,0">
 
-              <!-- TAB 1: SHORTCUTS & REMOTE CONTROL GESTURES -->
+              <!-- TAB 1: SAFE APP CONTROLS -->
               <StackPanel Visibility="{Binding IsSettingsTabShortcutsVisible, Converter={StaticResource BoolToVisibility}}">
-                <TextBlock Text="MODE TRIGGERS &amp; SESSION CONTROL" Foreground="{StaticResource Gold}" FontWeight="Bold" FontSize="13" Margin="0,0,0,16" />
+                <TextBlock Text="CONTROLS &amp; MIDI REMOTE" Foreground="{StaticResource Gold}" FontWeight="Bold" FontSize="13" Margin="0,0,0,6" />
+                <TextBlock Text="Keep fast keyboard and MIDI workflows without letting ordinary piano input become an app command."
+                           Foreground="{StaticResource Muted}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,18" />
 
-                <!-- Table Column Headers -->
-                <Grid Margin="0,0,0,12">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="180" />
-                    <ColumnDefinition Width="110" />
-                    <ColumnDefinition Width="120" />
-                    <ColumnDefinition Width="140" />
-                  </Grid.ColumnDefinitions>
-                  <TextBlock Text="ACTION &amp; PURPOSE" Foreground="{StaticResource Muted}" FontSize="11.5" FontWeight="Bold" ToolTip="The application action triggered by this shortcut." />
-                  <TextBlock Grid.Column="1" Text="TRIGGER BEHAVIOR" Foreground="{StaticResource Muted}" FontSize="11.5" FontWeight="Bold" Margin="0,0,10,0" ToolTip="Select how this action is triggered." />
-                  <TextBlock Grid.Column="2" Text="HOLD TIMER" Foreground="{StaticResource Muted}" FontSize="11.5" FontWeight="Bold" Margin="0,0,6,0" ToolTip="Adjust required hold duration for 'Hold Note' mode." />
-                  <TextBlock Grid.Column="3" Text="KEYBOARD" Foreground="{StaticResource Muted}" FontSize="11.5" FontWeight="Bold" Margin="0,0,8,0" ToolTip="Computer keyboard shortcut key." />
-                  <TextBlock Grid.Column="4" Text="MIDI REMOTE" Foreground="{StaticResource Muted}" FontSize="11.5" FontWeight="Bold" ToolTip="Assigned MIDI piano note." />
-                </Grid>
+                <Border Background="#14242A" BorderBrush="#32727C" BorderThickness="1" CornerRadius="14" Padding="18,14" Margin="0,0,0,20">
+                  <StackPanel>
+                    <DockPanel LastChildFill="True">
+                      <CheckBox DockPanel.Dock="Right" Content="Enable protected MIDI shortcuts"
+                                IsChecked="{Binding MidiShortcutsEnabled, Mode=TwoWay}"
+                                VerticalAlignment="Center" Margin="18,0,0,0" />
+                      <TextBlock Text="Protected MIDI Remote" Foreground="#8BEAFF" FontSize="13.5" FontWeight="SemiBold" />
+                    </DockPanel>
+                    <TextBlock Text="{Binding MidiRemoteInstructions}"
+                               Foreground="{StaticResource Ink}" FontSize="11.5" LineHeight="18" TextWrapping="Wrap" Margin="0,6,0,12" />
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Text="REMOTE KEY" Foreground="{StaticResource Muted}" FontSize="10.5" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0" />
+                      <Button Content="{Binding MidiRemoteArmNoteText}" Tag="RemoteArm" Click="RebindMidiShortcut_Click"
+                              MinWidth="92" Height="34" Padding="14,0" ToolTip="Choose the MIDI key used to arm protected shortcuts." />
+                      <Button Content="Cancel MIDI learn" Click="CancelMidiShortcutLearning_Click"
+                              Visibility="{Binding IsMidiShortcutLearning, Converter={StaticResource BoolToVisibility}}"
+                              Height="34" Padding="14,0" Margin="8,0,0,0" />
+                      <TextBlock Text="{Binding MidiShortcutLearningText}" Foreground="{StaticResource Muted}"
+                                 FontSize="10.5" VerticalAlignment="Center" TextWrapping="Wrap" Margin="12,0,0,0" />
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
 
-                <!-- Start Practice Mode -->
-                <Grid Margin="0,6">
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="110" /><ColumnDefinition Width="120" /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
-                  <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="Start Practice Mode" Foreground="{StaticResource Ink}" FontSize="13.5" FontWeight="SemiBold" />
-                    <TextBlock Text="Wait-for-you mode at active measure" Foreground="{StaticResource Muted}" FontSize="11.5" />
-                  </StackPanel>
-                  <ComboBox Grid.Column="1" Style="{StaticResource RangeComboBox}" ItemsSource="{Binding ShortcutBehaviorOptions}" SelectedIndex="{Binding BehaviorPracticeIndex, Mode=TwoWay}" FontSize="12" Margin="0,0,10,0" VerticalAlignment="Center" Height="36" />
-                  <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="{Binding IsHoldTimerVisiblePractice, Converter={StaticResource BoolToVisibility}}">
-                    <Slider Width="56" Minimum="1.0" Maximum="5.0" SmallChange="0.5" TickFrequency="0.5" IsSnapToTickEnabled="True" Value="{Binding HoldSecondsPractice, Mode=TwoWay}" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding HoldSecondsPractice, StringFormat='{}{0:0.0}s'}" Foreground="#8BEAFF" FontSize="11.5" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,0,0" />
-                  </StackPanel>
-                  <Button Grid.Column="3" Content="{Binding KeyShortcutStartPracticeText}" Tag="Practice" Click="RebindKey_Click" Padding="8,6" FontSize="12" Margin="0,0,8,0" VerticalAlignment="Center" Height="36" />
-                  <Button Grid.Column="4" Content="{Binding MidiShortcutPracticeNoteText}" Tag="Practice" Click="RebindMidi_Click" Padding="8,6" FontSize="12" VerticalAlignment="Center" Height="36" />
-                </Grid>
+                <Border Background="#11161C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="20,16" Margin="0,0,0,14">
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="230" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
-                <!-- Start Performance Mode -->
-                <Grid Margin="0,6">
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="110" /><ColumnDefinition Width="120" /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
-                  <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="Start Performance Mode" Foreground="{StaticResource Ink}" FontSize="13.5" FontWeight="SemiBold" />
-                    <TextBlock Text="Timed play mode session" Foreground="{StaticResource Muted}" FontSize="11.5" />
-                  </StackPanel>
-                  <ComboBox Grid.Column="1" Style="{StaticResource RangeComboBox}" ItemsSource="{Binding ShortcutBehaviorOptions}" SelectedIndex="{Binding BehaviorPerformanceIndex, Mode=TwoWay}" FontSize="12" Margin="0,0,10,0" VerticalAlignment="Center" Height="36" />
-                  <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="{Binding IsHoldTimerVisiblePerformance, Converter={StaticResource BoolToVisibility}}">
-                    <Slider Width="56" Minimum="1.0" Maximum="5.0" SmallChange="0.5" TickFrequency="0.5" IsSnapToTickEnabled="True" Value="{Binding HoldSecondsPerformance, Mode=TwoWay}" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding HoldSecondsPerformance, StringFormat='{}{0:0.0}s'}" Foreground="#8BEAFF" FontSize="11.5" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,0,0" />
-                  </StackPanel>
-                  <Button Grid.Column="3" Content="{Binding KeyShortcutStartPerformanceText}" Tag="Performance" Click="RebindKey_Click" Padding="8,6" FontSize="12" Margin="0,0,8,0" VerticalAlignment="Center" Height="36" />
-                  <Button Grid.Column="4" Content="{Binding MidiShortcutPerformanceNoteText}" Tag="Performance" Click="RebindMidi_Click" Padding="8,6" FontSize="12" VerticalAlignment="Center" Height="36" />
-                </Grid>
+                    <StackPanel Grid.Row="0" Margin="0,4,20,12">
+                      <TextBlock Text="SELECT MODE" Foreground="{StaticResource Gold}" FontSize="11" FontWeight="Bold" />
+                      <TextBlock Text="Selection does not start playback" Foreground="{StaticResource Muted}" FontSize="10.5" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="0" Grid.Column="1" Text="Ctrl+1  Listen    Ctrl+2  Practice    Ctrl+3  Performance"
+                               Foreground="{StaticResource Ink}" FontFamily="Consolas" FontSize="12.5" VerticalAlignment="Center" Margin="0,4,0,12" />
 
-                <!-- Play / Pause / Resume -->
-                <Grid Margin="0,6">
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="110" /><ColumnDefinition Width="120" /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
-                  <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="Play / Pause / Resume" Foreground="{StaticResource Ink}" FontSize="13.5" FontWeight="SemiBold" />
-                    <TextBlock Text="Toggles active playback" Foreground="{StaticResource Muted}" FontSize="11.5" />
-                  </StackPanel>
-                  <ComboBox Grid.Column="1" Style="{StaticResource RangeComboBox}" ItemsSource="{Binding ShortcutBehaviorOptions}" SelectedIndex="{Binding BehaviorTogglePlayIndex, Mode=TwoWay}" FontSize="12" Margin="0,0,10,0" VerticalAlignment="Center" Height="36" />
-                  <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="{Binding IsHoldTimerVisibleTogglePlay, Converter={StaticResource BoolToVisibility}}">
-                    <Slider Width="56" Minimum="1.0" Maximum="5.0" SmallChange="0.5" TickFrequency="0.5" IsSnapToTickEnabled="True" Value="{Binding HoldSecondsTogglePlay, Mode=TwoWay}" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding HoldSecondsTogglePlay, StringFormat='{}{0:0.0}s'}" Foreground="#8BEAFF" FontSize="11.5" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,0,0" />
-                  </StackPanel>
-                  <Button Grid.Column="3" Content="{Binding KeyShortcutTogglePlayText}" Tag="TogglePlay" Click="RebindKey_Click" Padding="8,6" FontSize="12" Margin="0,0,8,0" VerticalAlignment="Center" Height="36" />
-                  <Button Grid.Column="4" Content="{Binding MidiShortcutTogglePlayNoteText}" Tag="TogglePlay" Click="RebindMidi_Click" Padding="8,6" FontSize="12" VerticalAlignment="Center" Height="36" />
-                </Grid>
+                    <StackPanel Grid.Row="1" Margin="0,4,20,12">
+                      <TextBlock Text="SESSION" Foreground="{StaticResource Gold}" FontSize="11" FontWeight="Bold" />
+                      <TextBlock Text="Start, pause, stop, or restart" Foreground="{StaticResource Muted}" FontSize="10.5" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="1" Grid.Column="1" Text="Space  Play / Pause    Esc  Stop    Ctrl+R  Restart"
+                               Foreground="{StaticResource Ink}" FontFamily="Consolas" FontSize="12.5" VerticalAlignment="Center" Margin="0,4,0,12" />
 
-                <!-- Listen Mode -->
-                <Grid Margin="0,6">
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="110" /><ColumnDefinition Width="120" /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
-                  <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="Listen Mode" Foreground="{StaticResource Ink}" FontSize="13.5" FontWeight="SemiBold" />
-                    <TextBlock Text="Audio synthesis preview" Foreground="{StaticResource Muted}" FontSize="11.5" />
-                  </StackPanel>
-                  <ComboBox Grid.Column="1" Style="{StaticResource RangeComboBox}" ItemsSource="{Binding ShortcutBehaviorOptions}" SelectedIndex="{Binding BehaviorListenIndex, Mode=TwoWay}" FontSize="12" Margin="0,0,10,0" VerticalAlignment="Center" Height="36" />
-                  <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="{Binding IsHoldTimerVisibleListen, Converter={StaticResource BoolToVisibility}}">
-                    <Slider Width="56" Minimum="1.0" Maximum="5.0" SmallChange="0.5" TickFrequency="0.5" IsSnapToTickEnabled="True" Value="{Binding HoldSecondsListen, Mode=TwoWay}" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding HoldSecondsListen, StringFormat='{}{0:0.0}s'}" Foreground="#8BEAFF" FontSize="11.5" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,0,0" />
-                  </StackPanel>
-                  <Button Grid.Column="3" Content="{Binding KeyShortcutListenText}" Tag="Listen" Click="RebindKey_Click" Padding="8,6" FontSize="12" Margin="0,0,8,0" VerticalAlignment="Center" Height="36" />
-                  <Button Grid.Column="4" Content="{Binding MidiShortcutListenNoteText}" Tag="Listen" Click="RebindMidi_Click" Padding="8,6" FontSize="12" VerticalAlignment="Center" Height="36" />
-                </Grid>
+                    <StackPanel Grid.Row="2" Margin="0,4,20,12">
+                      <TextBlock Text="NAVIGATION" Foreground="{StaticResource Gold}" FontSize="11" FontWeight="Bold" />
+                      <TextBlock Text="Move through the selected score" Foreground="{StaticResource Muted}" FontSize="10.5" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="2" Grid.Column="1" Text="Ctrl+← / Ctrl+→  Measure    Ctrl+PageUp / Ctrl+PageDown  Page"
+                               Foreground="{StaticResource Ink}" FontFamily="Consolas" FontSize="12.5" VerticalAlignment="Center" Margin="0,4,0,12" />
 
-                <!-- Previous Measure -->
-                <Grid Margin="0,6">
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="110" /><ColumnDefinition Width="120" /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
-                  <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="Previous Measure" Foreground="{StaticResource Ink}" FontSize="13.5" FontWeight="SemiBold" />
-                    <TextBlock Text="Jump back one bar" Foreground="{StaticResource Muted}" FontSize="11.5" />
-                  </StackPanel>
-                  <ComboBox Grid.Column="1" Style="{StaticResource RangeComboBox}" ItemsSource="{Binding ShortcutBehaviorOptions}" SelectedIndex="{Binding BehaviorPrevMeasureIndex, Mode=TwoWay}" FontSize="12" Margin="0,0,10,0" VerticalAlignment="Center" Height="36" />
-                  <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="{Binding IsHoldTimerVisiblePrevMeasure, Converter={StaticResource BoolToVisibility}}">
-                    <Slider Width="56" Minimum="1.0" Maximum="5.0" SmallChange="0.5" TickFrequency="0.5" IsSnapToTickEnabled="True" Value="{Binding HoldSecondsPrevMeasure, Mode=TwoWay}" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding HoldSecondsPrevMeasure, StringFormat='{}{0:0.0}s'}" Foreground="#8BEAFF" FontSize="11.5" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,0,0" />
-                  </StackPanel>
-                  <Button Grid.Column="3" Content="{Binding KeyShortcutPreviousMeasureText}" Tag="PrevMeasure" Click="RebindKey_Click" Padding="8,6" FontSize="12" Margin="0,0,8,0" VerticalAlignment="Center" Height="36" />
-                  <Button Grid.Column="4" Content="{Binding MidiShortcutPreviousMeasureNoteText}" Tag="PrevMeasure" Click="RebindMidi_Click" Padding="8,6" FontSize="12" VerticalAlignment="Center" Height="36" />
-                </Grid>
+                    <StackPanel Grid.Row="3" Margin="0,4,20,4">
+                      <TextBlock Text="RESULTS" Foreground="{StaticResource Gold}" FontSize="11" FontWeight="Bold" />
+                      <TextBlock Text="Choose the next action explicitly" Foreground="{StaticResource Muted}" FontSize="10.5" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="3" Grid.Column="1" Text="Enter  Repeat    Esc  Close"
+                               Foreground="{StaticResource Ink}" FontFamily="Consolas" FontSize="12.5" VerticalAlignment="Center" Margin="0,4,0,4" />
+                  </Grid>
+                </Border>
 
-                <!-- Next Measure -->
-                <Grid Margin="0,6">
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="110" /><ColumnDefinition Width="120" /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
-                  <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="Next Measure" Foreground="{StaticResource Ink}" FontSize="13.5" FontWeight="SemiBold" />
-                    <TextBlock Text="Jump forward one bar" Foreground="{StaticResource Muted}" FontSize="11.5" />
-                  </StackPanel>
-                  <ComboBox Grid.Column="1" Style="{StaticResource RangeComboBox}" ItemsSource="{Binding ShortcutBehaviorOptions}" SelectedIndex="{Binding BehaviorNextMeasureIndex, Mode=TwoWay}" FontSize="12" Margin="0,0,10,0" VerticalAlignment="Center" Height="36" />
-                  <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="{Binding IsHoldTimerVisibleNextMeasure, Converter={StaticResource BoolToVisibility}}">
-                    <Slider Width="56" Minimum="1.0" Maximum="5.0" SmallChange="0.5" TickFrequency="0.5" IsSnapToTickEnabled="True" Value="{Binding HoldSecondsNextMeasure, Mode=TwoWay}" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding HoldSecondsNextMeasure, StringFormat='{}{0:0.0}s'}" Foreground="#8BEAFF" FontSize="11.5" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,0,0" />
-                  </StackPanel>
-                  <Button Grid.Column="3" Content="{Binding KeyShortcutNextMeasureText}" Tag="NextMeasure" Click="RebindKey_Click" Padding="8,6" FontSize="12" Margin="0,0,8,0" VerticalAlignment="Center" Height="36" />
-                  <Button Grid.Column="4" Content="{Binding MidiShortcutNextMeasureNoteText}" Tag="NextMeasure" Click="RebindMidi_Click" Padding="8,6" FontSize="12" VerticalAlignment="Center" Height="36" />
-                </Grid>
+                <TextBlock Text="MIDI SHORTCUT BINDINGS" Foreground="{StaticResource Gold}" FontWeight="Bold" FontSize="12" Margin="0,8,0,8" />
+                <Border Background="#11161C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="16,10" Margin="0,0,0,14">
+                  <ItemsControl ItemsSource="{Binding MidiShortcutBindings}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Grid Margin="0,5">
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="210" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="38" />
+                          </Grid.ColumnDefinitions>
+                          <TextBlock Text="{Binding Label}" Foreground="{StaticResource Ink}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                          <TextBlock Grid.Column="1" Text="{Binding Contexts}" Foreground="{StaticResource Muted}" FontSize="10.5" VerticalAlignment="Center" />
+                          <Button Grid.Column="2" Content="{Binding NoteText}" Tag="{Binding ActionId}" Click="RebindMidiShortcut_Click"
+                                  Height="32" Padding="12,0" ToolTip="Press to learn a replacement MIDI key. Conflicting bindings are unassigned automatically." />
+                          <Button Grid.Column="3" Content="&#x00D7;" Tag="{Binding ActionId}" Click="UnbindMidiShortcut_Click"
+                                  Height="32" Width="30" Margin="8,0,0,0" Padding="0" FontSize="16" ToolTip="Unassign this MIDI shortcut." />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </Border>
 
-                <!-- Previous Page -->
-                <Grid Margin="0,6">
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="110" /><ColumnDefinition Width="120" /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
-                  <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="Previous Score Page" Foreground="{StaticResource Ink}" FontSize="13.5" FontWeight="SemiBold" />
-                    <TextBlock Text="Turn back one page" Foreground="{StaticResource Muted}" FontSize="11.5" />
-                  </StackPanel>
-                  <ComboBox Grid.Column="1" Style="{StaticResource RangeComboBox}" ItemsSource="{Binding ShortcutBehaviorOptions}" SelectedIndex="{Binding BehaviorPrevPageIndex, Mode=TwoWay}" FontSize="12" Margin="0,0,10,0" VerticalAlignment="Center" Height="36" />
-                  <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="{Binding IsHoldTimerVisiblePrevPage, Converter={StaticResource BoolToVisibility}}">
-                    <Slider Width="56" Minimum="1.0" Maximum="5.0" SmallChange="0.5" TickFrequency="0.5" IsSnapToTickEnabled="True" Value="{Binding HoldSecondsPrevPage, Mode=TwoWay}" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding HoldSecondsPrevPage, StringFormat='{}{0:0.0}s'}" Foreground="#8BEAFF" FontSize="11.5" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,0,0" />
-                  </StackPanel>
-                  <Button Grid.Column="3" Content="{Binding KeyShortcutPreviousPageText}" Tag="PrevPage" Click="RebindKey_Click" Padding="8,6" FontSize="12" Margin="0,0,8,0" VerticalAlignment="Center" Height="36" />
-                  <Button Grid.Column="4" Content="{Binding MidiShortcutPreviousPageNoteText}" Tag="PrevPage" Click="RebindMidi_Click" Padding="8,6" FontSize="12" VerticalAlignment="Center" Height="36" />
-                </Grid>
-
-                <!-- Next Page -->
-                <Grid Margin="0,6">
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="110" /><ColumnDefinition Width="120" /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
-                  <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="Next Score Page" Foreground="{StaticResource Ink}" FontSize="13.5" FontWeight="SemiBold" />
-                    <TextBlock Text="Turn forward one page" Foreground="{StaticResource Muted}" FontSize="11.5" />
-                  </StackPanel>
-                  <ComboBox Grid.Column="1" Style="{StaticResource RangeComboBox}" ItemsSource="{Binding ShortcutBehaviorOptions}" SelectedIndex="{Binding BehaviorNextPageIndex, Mode=TwoWay}" FontSize="12" Margin="0,0,10,0" VerticalAlignment="Center" Height="36" />
-                  <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="{Binding IsHoldTimerVisibleNextPage, Converter={StaticResource BoolToVisibility}}">
-                    <Slider Width="56" Minimum="1.0" Maximum="5.0" SmallChange="0.5" TickFrequency="0.5" IsSnapToTickEnabled="True" Value="{Binding HoldSecondsNextPage, Mode=TwoWay}" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding HoldSecondsNextPage, StringFormat='{}{0:0.0}s'}" Foreground="#8BEAFF" FontSize="11.5" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,0,0" />
-                  </StackPanel>
-                  <Button Grid.Column="3" Content="{Binding KeyShortcutNextPageText}" Tag="NextPage" Click="RebindKey_Click" Padding="8,6" FontSize="12" Margin="0,0,8,0" VerticalAlignment="Center" Height="36" />
-                  <Button Grid.Column="4" Content="{Binding MidiShortcutNextPageNoteText}" Tag="NextPage" Click="RebindMidi_Click" Padding="8,6" FontSize="12" VerticalAlignment="Center" Height="36" />
-                </Grid>
-
-                <!-- Dismiss Summary Modal -->
-                <Grid Margin="0,6">
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="110" /><ColumnDefinition Width="120" /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
-                  <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="Dismiss Summary Modal" Foreground="{StaticResource Ink}" FontSize="13.5" FontWeight="SemiBold" />
-                    <TextBlock Text="Close results overlay" Foreground="{StaticResource Muted}" FontSize="11.5" />
-                  </StackPanel>
-                  <ComboBox Grid.Column="1" Style="{StaticResource RangeComboBox}" ItemsSource="{Binding ShortcutBehaviorOptions}" SelectedIndex="{Binding BehaviorDismissIndex, Mode=TwoWay}" FontSize="12" Margin="0,0,10,0" VerticalAlignment="Center" Height="36" />
-                  <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="{Binding IsHoldTimerVisibleDismiss, Converter={StaticResource BoolToVisibility}}">
-                    <Slider Width="56" Minimum="1.0" Maximum="5.0" SmallChange="0.5" TickFrequency="0.5" IsSnapToTickEnabled="True" Value="{Binding HoldSecondsDismiss, Mode=TwoWay}" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding HoldSecondsDismiss, StringFormat='{}{0:0.0}s'}" Foreground="#8BEAFF" FontSize="11.5" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,0,0" />
-                  </StackPanel>
-                  <Button Grid.Column="3" Content="{Binding KeyShortcutDismissResultsText}" Tag="Dismiss" Click="RebindKey_Click" Padding="8,6" FontSize="12" Margin="0,0,8,0" VerticalAlignment="Center" Height="36" />
-                  <Button Grid.Column="4" Content="{Binding MidiShortcutDismissResultsNoteText}" Tag="Dismiss" Click="RebindMidi_Click" Padding="8,6" FontSize="12" VerticalAlignment="Center" Height="36" />
-                </Grid>
-
-                <!-- Repeat Session Run -->
-                <Grid Margin="0,6">
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="110" /><ColumnDefinition Width="120" /><ColumnDefinition Width="140" /></Grid.ColumnDefinitions>
-                  <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="Repeat Session Run" Foreground="{StaticResource Ink}" FontSize="13.5" FontWeight="SemiBold" />
-                    <TextBlock Text="Restart performance session" Foreground="{StaticResource Muted}" FontSize="11.5" />
-                  </StackPanel>
-                  <ComboBox Grid.Column="1" Style="{StaticResource RangeComboBox}" ItemsSource="{Binding ShortcutBehaviorOptions}" SelectedIndex="{Binding BehaviorRepeatIndex, Mode=TwoWay}" FontSize="12" Margin="0,0,10,0" VerticalAlignment="Center" Height="36" />
-                  <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="{Binding IsHoldTimerVisibleRepeat, Converter={StaticResource BoolToVisibility}}">
-                    <Slider Width="56" Minimum="1.0" Maximum="5.0" SmallChange="0.5" TickFrequency="0.5" IsSnapToTickEnabled="True" Value="{Binding HoldSecondsRepeat, Mode=TwoWay}" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding HoldSecondsRepeat, StringFormat='{}{0:0.0}s'}" Foreground="#8BEAFF" FontSize="11.5" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0,0,0" />
-                  </StackPanel>
-                  <Button Grid.Column="3" Content="{Binding KeyShortcutRepeatResultsText}" Tag="Repeat" Click="RebindKey_Click" Padding="8,6" FontSize="12" Margin="0,0,8,0" VerticalAlignment="Center" Height="36" />
-                  <Button Grid.Column="4" Content="{Binding MidiShortcutRepeatResultsNoteText}" Tag="Repeat" Click="RebindMidi_Click" Padding="8,6" FontSize="12" VerticalAlignment="Center" Height="36" />
-                </Grid>
+                <TextBlock Text="Context rules are enforced when the action key is pressed. Mode switching cannot interrupt a run; navigation cannot move a running performance; results actions only work on the results screen."
+                           Foreground="{StaticResource Muted}" FontSize="11.5" FontStyle="Italic" TextWrapping="Wrap" />
               </StackPanel>
-
               <!-- TAB 2: MIDI & HARDWARE SETUP -->
               <StackPanel Visibility="{Binding IsSettingsTabMidiVisible, Converter={StaticResource BoolToVisibility}}">
                 <Grid Margin="0,0,0,16">
@@ -2122,23 +2037,6 @@
       </Border>
     </Grid>
 
-    <!-- Interactive Key & MIDI Shortcut Learning Modal -->
-    <Grid x:Name="ShortcutLearningOverlay" Visibility="{Binding IsShortcutLearningActive, Converter={StaticResource BoolToVisibility}}" Background="#D9000000">
-      <Border Width="420" Background="#171C23" BorderBrush="#D4A045" BorderThickness="1.5" CornerRadius="18" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center">
-        <StackPanel>
-          <TextBlock Text="LEARNING REMOTE SHORTCUT" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" HorizontalAlignment="Center" />
-          <TextBlock Text="{Binding LearningActionName, StringFormat='Assigning action: {0}'}" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,6,0,12" />
-          <Border Background="#252C36" BorderBrush="#3B4450" BorderThickness="1" CornerRadius="10" Padding="16,12" Margin="0,0,0,16">
-            <TextBlock Text="{Binding LearningPromptText}" Foreground="{StaticResource Ink}" FontSize="12.5" TextAlignment="Center" TextWrapping="Wrap" />
-          </Border>
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,4,0,0">
-            <Button Content="Unbind Shortcut (Esc)" Click="UnbindAction_Click" Height="32" Padding="14,0" Margin="0,0,10,0" ToolTip="Removes the shortcut binding for this action (leaves it unassigned)." />
-            <Button Content="Cancel" Click="CancelLearning_Click" Height="32" Padding="18,0" />
-          </StackPanel>
-        </StackPanel>
-      </Border>
-    </Grid>
-
     <!-- Rename Library Item Overlay Modal -->
     <Grid x:Name="RenameLibraryItemOverlay" Visibility="{Binding IsRenameOverlayVisible, Converter={StaticResource BoolToVisibility}}" Background="#D9000000">
       <Border Width="440" Background="#171C23" BorderBrush="#3B4756" BorderThickness="1" CornerRadius="18" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -2160,67 +2058,5 @@
       </Border>
     </Grid>
 
-    <!-- Shortcut Conflict & Single-Press Warning Overlay Modal -->
-    <Grid x:Name="ShortcutConflictOverlay" Visibility="{Binding IsConflictOverlayVisible, Converter={StaticResource BoolToVisibility}}" Background="#D9000000">
-      <Border Width="460" Background="#171C23" BorderBrush="#D4A045" BorderThickness="1.5" CornerRadius="18" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center">
-        <StackPanel>
-          <DockPanel Margin="0,0,0,14">
-            <StackPanel>
-              <TextBlock Text="SHORTCUT CONFLICT WARNING" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" />
-              <TextBlock Text="Confirm Binding Assignment" FontSize="19" FontWeight="SemiBold" Margin="0,2,0,0" />
-            </StackPanel>
-            <Button Style="{StaticResource ModalCloseButton}" DockPanel.Dock="Right" Click="CancelConflict_Click" VerticalAlignment="Top" />
-          </DockPanel>
-          <Border Background="#252C36" BorderBrush="#3B4450" BorderThickness="1" CornerRadius="10" Padding="16,14" Margin="0,0,0,18">
-            <TextBlock Text="{Binding ConflictMessageText}" Foreground="{StaticResource Ink}" FontSize="12.5" LineHeight="18" TextWrapping="Wrap" />
-          </Border>
-          <DockPanel>
-            <Button Content="Cancel" Click="CancelConflict_Click" Height="34" Padding="14,0" HorizontalAlignment="Left" />
-            <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right">
-              <Button Content="Unbind Other Action" Click="UnbindAndConfirmConflict_Click" Height="34" Padding="14,0" Margin="0,0,8,0" />
-              <Button Content="Bind Anyway (Share Key)" Style="{StaticResource GoldButton}" Click="ConfirmConflict_Click" Height="34" Padding="16,0" />
-            </StackPanel>
-          </DockPanel>
-        </StackPanel>
-      </Border>
-    </Grid>
-
-    <!-- Contextual Multi-Tap Count Prompt Overlay -->
-    <Grid x:Name="MultiTapPromptOverlay" Visibility="{Binding IsMultiTapPromptActive, Converter={StaticResource BoolToVisibility}}" Background="#D9000000">
-      <Border Width="440" Background="#171C23" BorderBrush="#D4A045" BorderThickness="1.5" CornerRadius="18" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center">
-        <StackPanel>
-          <DockPanel Margin="0,0,0,14">
-            <StackPanel>
-              <TextBlock Text="CUSTOM MULTI-TAP COUNT" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" />
-              <TextBlock Text="{Binding MultiTapPromptHeadlineText}" FontSize="16" FontWeight="SemiBold" Margin="0,4,0,0" TextWrapping="Wrap" />
-            </StackPanel>
-            <Button Style="{StaticResource ModalCloseButton}" DockPanel.Dock="Right" Click="CancelMultiTap_Click" VerticalAlignment="Top" />
-          </DockPanel>
-
-          <TextBlock Text="Select how many rapid note/key taps (within 600ms) are required to trigger this shortcut action:" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,0,16" TextWrapping="Wrap" />
-
-          <Border Background="#252C36" BorderBrush="#3B4450" BorderThickness="1" CornerRadius="12" Padding="20,16" Margin="0,0,0,20">
-            <Grid>
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-              </Grid.ColumnDefinitions>
-              <Button Content=" - " Click="DecrementMultiTap_Click" Width="38" Height="38" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" ToolTip="Decrease required tap count" />
-              <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center">
-                <TextBlock Text="{Binding PendingMultiTapCount, StringFormat='{}{0} Taps'}" Foreground="#8BEAFF" FontSize="24" FontWeight="Bold" HorizontalAlignment="Center" />
-                <TextBlock Text="rapid taps to trigger" Foreground="{StaticResource Muted}" FontSize="9.5" HorizontalAlignment="Center" Margin="0,2,0,0" />
-              </StackPanel>
-              <Button Grid.Column="2" Content=" + " Click="IncrementMultiTap_Click" Width="38" Height="38" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" ToolTip="Increase required tap count" />
-            </Grid>
-          </Border>
-
-          <DockPanel>
-            <Button Content="Cancel" Click="CancelMultiTap_Click" Height="36" Padding="16,0" HorizontalAlignment="Left" />
-            <Button Content="Accept Tap Count" Style="{StaticResource GoldButton}" Click="AcceptMultiTap_Click" Height="36" Padding="20,0" HorizontalAlignment="Right" />
-          </DockPanel>
-        </StackPanel>
-      </Border>
-    </Grid>
   </Grid>
 </Window>

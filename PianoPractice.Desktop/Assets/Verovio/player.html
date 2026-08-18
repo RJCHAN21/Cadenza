@@ -13,19 +13,14 @@
       position: relative; top: 0; width: 100%; max-height: 100%; transform-origin: center center;
       transition: top 170ms cubic-bezier(.22,.75,.3,1), width 160ms ease;
     }
-    #notation svg { display: block; width: 100%; height: auto; max-height: 100%; color: #f6f2e9 !important; }
-    #notation svg g, #notation svg text, #notation svg tspan { color: #f6f2e9 !important; }
+    #notationContent > svg { display: block; width: 100%; height: auto; max-height: 100%; color: #f6f2e9 !important; }
+    #notationContent > svg g, #notationContent > svg text, #notationContent > svg tspan { color: #f6f2e9 !important; }
     #stage.continuous-mode #notation {
       position: absolute; left: 0; top: 0; width: max-content !important; max-height: none;
       justify-self: start; align-self: start;
       transform-origin: 0 0; transition: none; will-change: transform;
     }
-    #stage.continuous-mode #practiceWrongNote {
-      position: absolute; left: 0; top: 0; width: max-content !important; max-height: none;
-      justify-self: start; align-self: start;
-      transform-origin: 0 0; transition: none; will-change: transform;
-    }
-    #stage.continuous-mode #notation svg {
+    #stage.continuous-mode #notationContent > svg {
       max-height: none;
     }
     #playhead {
@@ -93,7 +88,7 @@
     #feedback.early { background: #ffb54d; color: #081014; box-shadow: 0 0 16px rgba(255,181,77,.65); }
     #practiceWrongNote {
       position: absolute; inset: 0; width: 100%; height: 100%; z-index: 8;
-      overflow: visible; pointer-events: none; display: none;
+      overflow: visible; pointer-events: none; display: block; visibility: hidden;
     }
     #practiceWrongNote .wrong-feedback {
       filter: drop-shadow(0 0 10px rgba(255,59,92,.95));
@@ -103,8 +98,10 @@
         drop-shadow(0 0 2px rgba(4,30,17,1))
         drop-shadow(0 0 8px rgba(25,244,123,1));
     }
-    #practiceWrongNote .wrong-notehead { fill: #FF3B5C; stroke: #FF3B5C; }
-    #practiceWrongNote .correct-notehead { fill: #19f47b; stroke: #19f47b; }
+    #practiceWrongNote .wrong-notehead,
+    #practiceWrongNote .wrong-notehead * { color: #FF3B5C !important; fill: #FF3B5C !important; stroke: #FF3B5C !important; }
+    #practiceWrongNote .correct-notehead,
+    #practiceWrongNote .correct-notehead * { color: #19f47b !important; fill: #19f47b !important; stroke: #19f47b !important; }
     #practiceWrongNote .wrong-ledger { stroke: #FF3B5C; stroke-width: 1.5; stroke-linecap: round; }
     #practiceWrongNote .wrong-accidental {
       fill: #FF3B5C; font: 700 21px "Segoe UI Symbol", "Segoe UI", sans-serif;
@@ -468,10 +465,12 @@
 <body>
   <div id="stage">
     <div id="message">Preparing the engraving engine…</div>
-    <div id="notation"></div>
+    <div id="notation">
+      <div id="notationContent"></div>
+      <svg id="practiceWrongNote" aria-hidden="true"></svg>
+    </div>
     <div id="playhead"></div>
     <div id="audit"></div>
-    <svg id="practiceWrongNote" aria-hidden="true"></svg>
     <div id="feedback" aria-live="polite"></div>
     <div id="hintLane"><div><div id="hintTitle">NEXT NOTES</div><div id="hintNotes">—</div></div><div id="hintKeys"></div></div>
     <div id="countdownOverlay"><div id="countdownNumber">4</div></div>
@@ -623,6 +622,7 @@
     const elementPageIndex = new Map();
 
     const notation = document.getElementById("notation");
+    const notationContent = document.getElementById("notationContent");
     const message = document.getElementById("message");
     const playhead = document.getElementById("playhead");
     const feedback = document.getElementById("feedback");
@@ -634,6 +634,7 @@
     let feedbackTimer = 0;
     let wrongNoteTimer = 0;
     let lessonGeneration = 0;
+    let feedbackGlyphCloneId = 0;
     const persistentCorrectFeedback = new Map();
     let activeWrongFeedback = null;
     let feedbackTelemetry = {
@@ -927,7 +928,7 @@
       const renderedSvg = toolkit.renderToSVG(page, {});
       const apply = () => {
         if (generation !== pageTransitionGeneration) return;
-        notation.innerHTML = renderedSvg;
+        notationContent.innerHTML = renderedSvg;
         invalidateContinuousCoordinates();
         applyIvoryInk();
         applyHandFocus();
@@ -1012,10 +1013,29 @@
       if (readingMode === "Continuous") {
         notation.style.width = "max-content";
         sizeContinuousSvg();
+        syncPracticeFeedbackCoordinateSpace();
         alignContinuousSystem();
       } else {
         notation.style.width = `${userZoom * 100}%`;
+        syncPracticeFeedbackCoordinateSpace();
         centerPageSystems();
+      }
+    }
+
+    function syncPracticeFeedbackCoordinateSpace() {
+      // The feedback SVG shares the notation's layout and transform. Give it a
+      // stable, unzoomed viewBox so existing markers scale and move with the
+      // engraved score instead of retaining screen-space pixel coordinates.
+      const scoreSvg = notationContent.querySelector(":scope > svg");
+      const scoreViewBox = scoreSvg?.viewBox?.baseVal;
+      const pageAspect = scoreViewBox?.width > 0 ? scoreViewBox.height / scoreViewBox.width : 0;
+      const width = readingMode === "Page" ? stage.clientWidth : scoreSvg?.clientWidth;
+      const height = readingMode === "Page" && pageAspect > 0
+        ? width * pageAspect
+        : scoreSvg?.clientHeight;
+      if (width > 0 && height > 0) {
+        practiceWrongNote.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        practiceWrongNote.setAttribute("preserveAspectRatio", "none");
       }
     }
 
@@ -1048,11 +1068,6 @@
       const transform =
         `translate3d(${continuousOffsetX}px, ${continuousOffsetY}px, 0) scale(${userZoom})`;
       notation.style.transform = transform;
-      if (readingMode === "Continuous") {
-        practiceWrongNote.style.transform = transform;
-      } else {
-        practiceWrongNote.style.transform = "";
-      }
     }
 
     function invalidateContinuousCoordinates() {
@@ -1453,7 +1468,10 @@
     }
 
     function updatePracticeFeedbackOverlayVisibility() {
-      practiceWrongNote.style.display = practiceWrongNote.childElementCount > 0 ? "block" : "none";
+      // Keep the SVG in layout even while empty so getScreenCTM() remains
+      // authoritative for the first feedback marker after a mode change.
+      practiceWrongNote.style.display = "block";
+      practiceWrongNote.style.visibility = practiceWrongNote.childElementCount > 0 ? "visible" : "hidden";
       const wrongMidis = [...practiceWrongNote.querySelectorAll(":scope > g.wrong-feedback[data-midi]")]
         .map(node => node.getAttribute("data-midi"));
       if (wrongMidis.length) practiceWrongNote.setAttribute("data-midi", wrongMidis.join(","));
@@ -1469,6 +1487,37 @@
 
     function overlayPointToScoreCoordinates(point) {
       if (!point) return null;
+
+      // The feedback SVG is transformed alongside the score. Convert from the
+      // measured screen position into that SVG's current user space instead of
+      // reconstructing the transform from target offsets. This stays exact
+      // while Continuous mode eases between offsets and after Page-mode resize.
+      try {
+        const matrix = practiceWrongNote.getScreenCTM?.();
+        if (matrix && typeof matrix.inverse === "function" &&
+            typeof practiceWrongNote.createSVGPoint === "function") {
+          const inverse = matrix.inverse();
+          const stageRect = stage.getBoundingClientRect();
+          const toLocal = (x, y) => {
+            const svgPoint = practiceWrongNote.createSVGPoint();
+            svgPoint.x = stageRect.left + Number(x || 0);
+            svgPoint.y = stageRect.top + Number(y || 0);
+            return svgPoint.matrixTransform(inverse);
+          };
+          const center = toLocal(point.x, point.y);
+          const converted = { ...point, x: center.x, y: center.y };
+          if (point.step != null) {
+            const stepEnd = toLocal(point.x, point.y + point.step);
+            converted.step = Math.hypot(stepEnd.x - center.x, stepEnd.y - center.y);
+          }
+          if (point.top != null) converted.top = toLocal(point.x, point.top).y;
+          if (point.bottom != null) converted.bottom = toLocal(point.x, point.bottom).y;
+          return converted;
+        }
+      } catch {
+        // Fall back to the legacy scalar conversion for incomplete SVG layout.
+      }
+
       if (readingMode === "Continuous") {
         const zoom = Math.max(.01, userZoom);
         return {
@@ -1481,6 +1530,80 @@
         };
       }
       return point;
+    }
+
+    function appendFeedbackNotehead(group, sourceHead, point, className, color) {
+      const sourceRect = sourceHead?.getBoundingClientRect();
+      const sourceMatrix = sourceHead?.getScreenCTM?.();
+      const overlayMatrix = practiceWrongNote.getScreenCTM?.();
+      if (sourceHead && sourceRect?.width > 0 && sourceRect?.height > 0 &&
+          sourceMatrix && overlayMatrix && typeof overlayMatrix.inverse === "function") {
+        try {
+          const inverse = overlayMatrix.inverse();
+          const sourceCenter = practiceWrongNote.createSVGPoint();
+          sourceCenter.x = sourceRect.left + sourceRect.width / 2;
+          sourceCenter.y = sourceRect.top + sourceRect.height / 2;
+          const localCenter = sourceCenter.matrixTransform(inverse);
+          const matrix = inverse.multiply(sourceMatrix);
+          const clone = sourceHead.cloneNode(true);
+          clone.removeAttribute("id");
+          clone.removeAttribute("style");
+          clone.querySelectorAll("[id]").forEach(node => node.removeAttribute("id"));
+          clone.querySelectorAll("[style]").forEach(node => node.removeAttribute("style"));
+          clone.setAttribute("class", className);
+          clone.setAttribute("transform",
+            `matrix(${matrix.a} ${matrix.b} ${matrix.c} ${matrix.d} ` +
+            `${matrix.e + point.x - localCenter.x} ${matrix.f + point.y - localCenter.y})`);
+          const definitions = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+          clone.querySelectorAll("use").forEach(use => {
+            const href = use.getAttribute("href") || use.getAttribute("xlink:href");
+            const sourceDefinition = href?.startsWith("#")
+              ? document.getElementById(href.slice(1))
+              : null;
+            if (!sourceDefinition) return;
+            const definition = sourceDefinition.cloneNode(true);
+            const definitionId = `cadenza-feedback-glyph-${++feedbackGlyphCloneId}`;
+            definition.setAttribute("id", definitionId);
+            definition.querySelectorAll("[id]").forEach(node => node.removeAttribute("id"));
+            [definition, ...definition.querySelectorAll("*")].forEach(node => {
+              node.removeAttribute("style");
+              node.style.setProperty("color", color, "important");
+              node.style.setProperty("fill", color, "important");
+              node.style.setProperty("stroke", color, "important");
+            });
+            definitions.appendChild(definition);
+            use.setAttribute("href", `#${definitionId}`);
+            use.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", `#${definitionId}`);
+          });
+          if (definitions.childElementCount > 0) group.appendChild(definitions);
+          group.appendChild(clone);
+          return clone;
+        } catch {
+          // Use the legacy ellipse only when the source SVG transform is unavailable.
+        }
+      }
+
+      const fallback = document.createElementNS("http://www.w3.org/2000/svg", "ellipse");
+      fallback.setAttribute("cx", point.x);
+      fallback.setAttribute("cy", point.y);
+      fallback.setAttribute("rx", "7.5");
+      fallback.setAttribute("ry", "5.2");
+      fallback.setAttribute("class", className);
+      fallback.setAttribute("transform", `rotate(-12 ${point.x} ${point.y})`);
+      group.appendChild(fallback);
+      return fallback;
+    }
+
+    function feedbackSourceHead(event, staffKind, staffNumber = 0) {
+      const candidates = elementsForEvent(event, null, staffNumber);
+      const matchingStaff = candidates.find(node => {
+        const staff = node?.closest?.("g.staff");
+        return staffKind === "bass"
+          ? staff?.classList.contains("cadenza-bass")
+          : staff?.classList.contains("cadenza-treble");
+      });
+      const source = matchingStaff || candidates[0];
+      return source?.matches?.(".notehead") ? source : source?.querySelector?.(".notehead");
     }
 
     function showPracticeWrongNote(event, midiNote, dispatchId = 0, preserveExpiry = false, staffNumber = 0) {
@@ -1522,14 +1645,12 @@
         for (let y = point.top - lineStep; y >= point.y - 1; y -= lineStep) addLine(y);
       }
 
-      const head = document.createElementNS(svgNs, "ellipse");
-      head.setAttribute("cx", point.x);
-      head.setAttribute("cy", point.y);
-      head.setAttribute("rx", "7.5");
-      head.setAttribute("ry", "5.2");
-      head.setAttribute("class", "wrong-notehead");
-      head.setAttribute("transform", `rotate(-12 ${point.x} ${point.y})`);
-      group.appendChild(head);
+      appendFeedbackNotehead(
+        group,
+        feedbackSourceHead(event, point.staffKind, staffNumber),
+        point,
+        "wrong-notehead",
+        "#FF3B5C");
       if (point.accidental) {
         const accidental = document.createElementNS(svgNs, "text");
         accidental.setAttribute("x", point.x - 23);
@@ -1556,7 +1677,7 @@
       wrongNoteTimer = setTimeout(() => clearPracticeWrongNote(true), remaining);
     }
 
-    function expectedOverlayPoint(item) {
+    function expectedFeedbackTarget(item) {
       let target = null;
       if (item.noteIdentity) {
         target = elementForVerovioId(item.noteIdentity);
@@ -1566,7 +1687,7 @@
         const targets = elementsForEvent(event, item.midiNote, item.staffNumber);
         target = targets[0];
       }
-      const head = target?.matches?.(".notehead") ? target : (target?.querySelector(".notehead") || target);
+      const head = target?.matches?.(".notehead") ? target : target?.querySelector(".notehead");
       const headRect = head?.getBoundingClientRect();
       const stageRect = stage.getBoundingClientRect();
       let point = null;
@@ -1580,7 +1701,7 @@
       } else {
         return null;
       }
-      return overlayPointToScoreCoordinates(point);
+      return { head, point: overlayPointToScoreCoordinates(point) };
     }
 
     function renderPracticeCorrectNote(key, item) {
@@ -1590,7 +1711,8 @@
       if (pageForEvent(event) !== currentPage) {
         return false;
       }
-      const point = expectedOverlayPoint(item);
+      const target = expectedFeedbackTarget(item);
+      const point = target?.point;
       if (!point || !point.targetFound) return false;
       const svgNs = "http://www.w3.org/2000/svg";
       const group = document.createElementNS(svgNs, "g");
@@ -1599,14 +1721,7 @@
       group.setAttribute("data-midi", Number(item.midiNote));
       group.setAttribute("data-occurrence", Number(item.occurrenceIndex || 0));
       group.setAttribute("data-note-identity", item.noteIdentity || "");
-      const head = document.createElementNS(svgNs, "ellipse");
-      head.setAttribute("cx", point.x);
-      head.setAttribute("cy", point.y);
-      head.setAttribute("rx", "7.5");
-      head.setAttribute("ry", "5.2");
-      head.setAttribute("class", "correct-notehead");
-      head.setAttribute("transform", `rotate(-12 ${point.x} ${point.y})`);
-      group.appendChild(head);
+      appendFeedbackNotehead(group, target.head, point, "correct-notehead", "#19f47b");
       practiceWrongNote.appendChild(group);
       updatePracticeFeedbackOverlayVisibility();
       return true;
@@ -1623,12 +1738,6 @@
       clearPracticeCorrectNotes();
       for (const [key, item] of persistentCorrectFeedback) {
         if (renderPracticeCorrectNote(key, item)) renderedCorrectCount++;
-        const targetNode = item.noteIdentity ? elementForVerovioId(item.noteIdentity) : null;
-        if (targetNode) {
-          const targetNote = targetNode.closest?.("g.note") || targetNode;
-          targetNote.classList.add("feedback-correct");
-          paintNotehead(targetNote, "#19f47b");
-        }
       }
       if (activeWrongFeedback) {
         if (performance.now() >= activeWrongFeedback.expiresAt) {
@@ -2559,10 +2668,6 @@
             staffNumber: Number(staffNumber || 0),
             noteIdentity
           };
-          if (node) {
-            node.classList.add("feedback-correct");
-            paintNotehead(node, "#19f47b");
-          }
           persistentCorrectFeedback.set(persistentKey, item);
           const rendered = renderPracticeCorrectNote(persistentKey, item);
           if (rendered) renderedKeys.push(persistentKey);
@@ -2831,16 +2936,12 @@
         }
       }
 
-      const head = document.createElementNS(svgNs, "ellipse");
-      head.setAttribute("cx", point.x);
-      head.setAttribute("cy", point.y);
-      head.setAttribute("rx", "7.5");
-      head.setAttribute("ry", "5.2");
-      head.setAttribute("class", kind === "correct" ? "correct-notehead" : "wrong-notehead");
-      head.setAttribute("fill", color);
-      head.setAttribute("stroke", color);
-      head.setAttribute("transform", `rotate(-12 ${point.x} ${point.y})`);
-      group.appendChild(head);
+      appendFeedbackNotehead(
+        group,
+        feedbackSourceHead(event, point.staffKind, 0),
+        point,
+        kind === "correct" ? "correct-notehead" : "wrong-notehead",
+        color);
 
       if (point.accidental) {
         const accidental = document.createElementNS(svgNs, "text");

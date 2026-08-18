@@ -9,6 +9,13 @@ public sealed class ScoreDocument
     public string ComposerOrCreator { get; init; } = "Unknown creator";
     public string FormatVersion { get; init; } = "MusicXML";
     public string SourceContainer { get; init; } = "MusicXML";
+    /// <summary>
+    /// Exact validated MusicXML document consumed by the semantic importer.
+    /// Renderer integrations must use this payload instead of reopening the
+    /// original container and selecting a score independently.
+    /// </summary>
+    public byte[] ValidatedMusicXml { get; init; } = [];
+    public string ContentSha256 { get; init; } = string.Empty;
     public string KeySignature { get; init; } = "Not specified";
     public int KeyFifths { get; init; }
     public string TimeSignature { get; init; } = "Not specified";
@@ -153,6 +160,98 @@ public sealed class ScoreDocument
             ?? fallback;
     }
 
+    public double TempoScaleFor(double effectiveInitialBpm) =>
+        Math.Max(0.01, effectiveInitialBpm / Math.Max(1d, TempoBpm));
+
+    public double PerformanceBeatAfterElapsed(
+        double anchorBeat,
+        double elapsedSeconds,
+        double effectiveInitialBpm)
+    {
+        var scale = TempoScaleFor(effectiveInitialBpm);
+        var anchorSeconds = SecondsAtPerformanceBeat(anchorBeat, scale);
+        return PerformanceBeatAtSeconds(anchorSeconds + Math.Max(0, elapsedSeconds), scale);
+    }
+
+    public double PerformanceDurationSeconds(
+        double startBeat,
+        double endBeat,
+        double effectiveInitialBpm)
+    {
+        var scale = TempoScaleFor(effectiveInitialBpm);
+        return Math.Max(
+            0,
+            SecondsAtPerformanceBeat(endBeat, scale) - SecondsAtPerformanceBeat(startBeat, scale));
+    }
+
+    public bool IsMeasureDownbeat(double beat)
+    {
+        var occurrence = OccurrenceAtBeat(beat);
+        return occurrence is not null &&
+               Math.Abs(beat - occurrence.PerformanceStartBeat) <= BeatEpsilon;
+    }
+
+    public double NextMeterPulseBeat(double beat)
+    {
+        var occurrence = OccurrenceAtBeat(beat);
+        if (occurrence is null)
+            return Math.Clamp(beat + 1, 0, TotalPerformanceBeats);
+
+        var occurrenceEnd = occurrence.PerformanceStartBeat + occurrence.DurationBeats;
+        var meter = MeterAtBeat(occurrence.PerformanceStartBeat);
+        var pulse = 4d / Math.Max(1, meter.BeatType);
+        if (!double.IsFinite(pulse) || pulse <= 0)
+            pulse = 1;
+        var local = Math.Max(0, beat - occurrence.PerformanceStartBeat);
+        var pulseIndex = Math.Floor((local + BeatEpsilon) / pulse) + 1;
+        var next = occurrence.PerformanceStartBeat + pulseIndex * pulse;
+        if (next < occurrenceEnd - BeatEpsilon)
+            return next;
+
+        var nextOccurrence = PerformanceMeasures
+            .FirstOrDefault(item => item.OccurrenceIndex == occurrence.OccurrenceIndex + 1);
+        return nextOccurrence?.PerformanceStartBeat ?? occurrenceEnd;
+    }
+
+    public IReadOnlyList<ScorePerformanceSpan> PerformanceSpansForMeasureRange(
+        int startMeasure,
+        int endMeasure)
+    {
+        var selected = PerformanceMeasures
+            .Where(occurrence =>
+                int.TryParse(occurrence.MeasureNumber, out var measure) &&
+                measure >= startMeasure &&
+                measure <= endMeasure)
+            .OrderBy(occurrence => occurrence.PerformanceStartBeat)
+            .ToArray();
+        if (selected.Length == 0)
+            return [];
+
+        var spans = new List<ScorePerformanceSpan>();
+        var start = selected[0].PerformanceStartBeat;
+        var end = start + selected[0].DurationBeats;
+        var firstOccurrence = selected[0].OccurrenceIndex;
+        var lastOccurrence = firstOccurrence;
+        foreach (var occurrence in selected.Skip(1))
+        {
+            var occurrenceEnd = occurrence.PerformanceStartBeat + occurrence.DurationBeats;
+            if (Math.Abs(occurrence.PerformanceStartBeat - end) <= BeatEpsilon)
+            {
+                end = occurrenceEnd;
+                lastOccurrence = occurrence.OccurrenceIndex;
+                continue;
+            }
+
+            spans.Add(new ScorePerformanceSpan(start, end, firstOccurrence, lastOccurrence));
+            start = occurrence.PerformanceStartBeat;
+            end = occurrenceEnd;
+            firstOccurrence = lastOccurrence = occurrence.OccurrenceIndex;
+        }
+
+        spans.Add(new ScorePerformanceSpan(start, end, firstOccurrence, lastOccurrence));
+        return spans;
+    }
+
     private IReadOnlyList<ScoreTempoChange> NormalizedTempoChanges()
     {
         var normalized = TempoChanges
@@ -180,6 +279,18 @@ public sealed class ScoreDocument
             warning.StartMeasure <= endMeasure &&
             warning.EndMeasure >= startMeasure)?.Message;
 
+    public bool HasBlockingPlaybackWarning(int startMeasure, int endMeasure) =>
+        ValidationWarnings.Any(warning =>
+            warning.BlocksPlayback &&
+            warning.StartMeasure <= endMeasure &&
+            warning.EndMeasure >= startMeasure);
+
+    public string? BlockingPlaybackReason(int startMeasure, int endMeasure) =>
+        ValidationWarnings.FirstOrDefault(warning =>
+            warning.BlocksPlayback &&
+            warning.StartMeasure <= endMeasure &&
+            warning.EndMeasure >= startMeasure)?.Message;
+
     public bool CutsRepeatRegion(int startMeasure, int endMeasure)
     {
         foreach (var region in RepeatedMeasureRegions())
@@ -197,6 +308,68 @@ public sealed class ScoreDocument
         CutsRepeatRegion(startMeasure, endMeasure)
             ? "This range cuts through a repeat. Select the complete repeated section so playback and assessment follow one unambiguous musical sequence."
             : null;
+
+    /// <summary>
+    /// Finds the largest contiguous written range that has playable groups,
+    /// contains no assessment-blocking diagnostics, and does not cut a repeat.
+    /// </summary>
+    public ScoreMeasureRange? LargestAssessableRange(PracticeMode mode)
+    {
+        if (MeasureCount <= 0)
+            return null;
+
+        var blocked = new bool[MeasureCount + 1];
+        foreach (var warning in ValidationWarnings.Where(warning => warning.BlocksAssessment))
+        {
+            var start = Math.Clamp(warning.StartMeasure, 1, MeasureCount);
+            var end = Math.Clamp(warning.EndMeasure, start, MeasureCount);
+            for (var measure = start; measure <= end; measure++)
+                blocked[measure] = true;
+        }
+
+        foreach (var region in RepeatedMeasureRegions())
+        {
+            var start = Math.Clamp(region.Start, 1, MeasureCount);
+            var end = Math.Clamp(region.End, start, MeasureCount);
+            if (!Enumerable.Range(start, end - start + 1).Any(measure => blocked[measure]))
+                continue;
+            for (var measure = start; measure <= end; measure++)
+                blocked[measure] = true;
+        }
+
+        var groupCounts = new int[MeasureCount + 1];
+        foreach (var group in GetPracticeGroups(mode))
+        {
+            if (int.TryParse(group.MeasureNumber, out var measure) && measure >= 1 && measure <= MeasureCount)
+                groupCounts[measure]++;
+        }
+
+        ScoreMeasureRange? best = null;
+        for (var measure = 1; measure <= MeasureCount;)
+        {
+            while (measure <= MeasureCount && blocked[measure])
+                measure++;
+            if (measure > MeasureCount)
+                break;
+
+            var start = measure;
+            var groups = 0;
+            while (measure <= MeasureCount && !blocked[measure])
+            {
+                groups += groupCounts[measure];
+                measure++;
+            }
+
+            var candidate = new ScoreMeasureRange(start, measure - 1, groups);
+            if (candidate.GroupCount > 0 &&
+                (best is null || candidate.GroupCount > best.GroupCount ||
+                 (candidate.GroupCount == best.GroupCount && candidate.StartMeasure < best.StartMeasure)))
+            {
+                best = candidate;
+            }
+        }
+        return best;
+    }
 
     private IReadOnlyList<(int Start, int End)> RepeatedMeasureRegions()
     {
@@ -391,9 +564,38 @@ public sealed record ScoreMeterChange(
     string MeasureNumber,
     int PerformanceOccurrence);
 
+public sealed record ScorePerformanceSpan(
+    double StartBeat,
+    double EndBeat,
+    int FirstOccurrenceIndex,
+    int LastOccurrenceIndex)
+{
+    public double DurationBeats => Math.Max(0, EndBeat - StartBeat);
+    public bool Contains(double beat) => beat >= StartBeat - 0.0001 && beat < EndBeat - 0.0001;
+}
+
+public sealed record ScoreMeasureRange(int StartMeasure, int EndMeasure, int GroupCount);
+
 public sealed record ScoreValidationWarning(
     string Code,
     string Message,
     int StartMeasure,
     int EndMeasure,
-    bool BlocksAssessment);
+    bool BlocksAssessment,
+    bool BlocksPlayback = false,
+    ScoreCapabilityDisposition Capability = ScoreCapabilityDisposition.VisuallySupportedSemanticLimitation);
+
+/// <summary>
+/// Describes how Cadenza treats notation that is not fully represented by the
+/// performed score model. Malformed input is rejected before a ScoreDocument
+/// is created; the value remains part of the policy for stable diagnostics and
+/// tests.
+/// </summary>
+public enum ScoreCapabilityDisposition
+{
+    SemanticallySupported,
+    VisuallySupportedSemanticLimitation,
+    UnsupportedVisualOnly,
+    BlocksPlaybackAndAssessment,
+    MalformedRejected
+}

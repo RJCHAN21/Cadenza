@@ -3,16 +3,22 @@ using PianoPractice.Desktop.Models;
 using PianoPractice.Desktop.Services;
 using System.Windows.Input;
 
-var path = args.Length > 0
-    ? args[0]
-    : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "olivia-rodrigo-drivers-license.mxl");
+var runLegacyHardwareIntegration = args.Contains("--legacy-hardware", StringComparer.OrdinalIgnoreCase);
+var path = args.FirstOrDefault(argument => !argument.StartsWith("--", StringComparison.Ordinal));
+if (!runLegacyHardwareIntegration)
+{
+    await HermeticSimulationSmoke.RunAsync();
+    return;
+}
+if (path is null)
+    throw new ArgumentException("The explicit --legacy-hardware suite requires a score path.");
 
 var importer = new MusicXmlImporter();
 var score = importer.Import(path);
-if (score.PerformanceMeasures.Count != 77 || Math.Abs(score.TotalBeats - 306) > 0.001)
-    throw new InvalidOperationException($"Repeat-aware timeline mismatch: occurrences={score.PerformanceMeasures.Count}, beats={score.TotalBeats:0.###}.");
-if (!score.HasBlockingAssessmentWarning(16, 40) || score.HasBlockingAssessmentWarning(1, 15))
-    throw new InvalidOperationException("Ambiguous ending validation did not block only the affected assessed range.");
+if (score.PerformanceMeasures.Count != 70 || Math.Abs(score.TotalPerformanceBeats - 278) > 0.001)
+    throw new InvalidOperationException($"Repeat-aware timeline mismatch: occurrences={score.PerformanceMeasures.Count}, beats={score.TotalPerformanceBeats:0.###}.");
+if (score.HasBlockingAssessmentWarning(16, 40) || score.HasBlockingAssessmentWarning(1, 15))
+    throw new InvalidOperationException("Resolved repeat endings still produced a blocking assessment warning.");
 if (!score.CutsRepeatRegion(49, 49) || score.CutsRepeatRegion(49, 50))
     throw new InvalidOperationException("Partial repeat-range validation did not distinguish a cut repeat from the complete repeated section.");
 var transientProfileRoot = Path.Combine(Path.GetTempPath(), $"cadenza-simulation-smoke-{Guid.NewGuid():N}");
@@ -88,6 +94,7 @@ foreach (var (key, midiNote) in expectedComputerKeys)
 using (var transportViewModel = new MainWindowViewModel(Path.Combine(transientProfileRoot, "transport.json")))
 {
     transportViewModel.LoadScore(path);
+    transportViewModel.OpenCurrentLesson();
     transportViewModel.SetLessonMode(LessonMode.Listen);
     transportViewModel.FocusStartMeasure = 20;
     transportViewModel.FocusEndMeasure = 22;
@@ -190,6 +197,7 @@ try
     using (var settingsViewModel = new MainWindowViewModel(profilePath))
     {
         settingsViewModel.LoadScore(path);
+        settingsViewModel.OpenCurrentLesson();
         settingsViewModel.MonitorVolume = 61;
         settingsViewModel.MidiMonitorEnabled = false;
         settingsViewModel.OverallVolume = 84;
@@ -232,6 +240,7 @@ try
     using (var reloadedSettings = new MainWindowViewModel(profilePath))
     {
         reloadedSettings.LoadScore(path);
+        reloadedSettings.OpenCurrentLesson();
         if (reloadedSettings.MonitorVolume != 61 ||
             reloadedSettings.MidiMonitorEnabled ||
             reloadedSettings.OverallVolume != 84 ||
@@ -274,13 +283,22 @@ try
                 reloadedSettings.SimulateNoteOff(note);
             }
         }
+        var completionDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        while (!reloadedSettings.ResultsVisible && DateTime.UtcNow < completionDeadline)
+            await Task.Delay(50);
         if (!reloadedSettings.ResultsVisible || reloadedSettings.CompletedAttemptCount != 1)
-            throw new InvalidOperationException("A completed lesson was not finalized into progress history.");
+            throw new InvalidOperationException(
+                $"A completed lesson was not finalized into progress history: active={reloadedSettings.IsLessonActive}, " +
+                $"results={reloadedSettings.ResultsVisible}, attempts={reloadedSettings.CompletedAttemptCount}, " +
+                $"correct={reloadedSettings.CorrectLabel}, missed={reloadedSettings.MissedLabel}, " +
+                $"range={reloadedSettings.FocusStartMeasure}-{reloadedSettings.FocusEndMeasure}, " +
+                $"status={reloadedSettings.LessonStatusLabel}.");
     }
 
     using (var progressReload = new MainWindowViewModel(profilePath))
     {
         progressReload.LoadScore(path);
+        progressReload.OpenCurrentLesson();
         if (progressReload.CompletedAttemptCount != 1 ||
             !progressReload.DashboardProgressSummary.Contains("1 completed", StringComparison.Ordinal) ||
             progressReload.RecentAttemptLabel.Contains("Complete a lesson", StringComparison.Ordinal))
@@ -302,6 +320,7 @@ try
     using (var partialReload = new MainWindowViewModel(profilePath))
     {
         partialReload.LoadScore(path);
+        partialReload.OpenCurrentLesson();
         if (partialReload.CompletedAttemptCount != 1)
             throw new InvalidOperationException("An interrupted partial lesson was incorrectly persisted as a completed attempt.");
     }
@@ -310,6 +329,7 @@ try
     File.WriteAllText(malformedPath, "{ definitely not valid json");
     using var malformedProfileViewModel = new MainWindowViewModel(malformedPath);
     malformedProfileViewModel.LoadScore(path);
+    malformedProfileViewModel.OpenCurrentLesson();
     if (malformedProfileViewModel.CompletedAttemptCount != 0)
         throw new InvalidOperationException("Malformed profile fallback did not load clean defaults.");
 }
@@ -325,6 +345,7 @@ using (var waitViewModel = new MainWindowViewModel(Path.Combine(transientProfile
     waitViewModel.NoteFeedback += (_, message) => feedback.Add(message);
     waitViewModel.LessonRunStateChanged += (_, message) => runStates.Add(message);
     waitViewModel.LoadScore(path);
+    waitViewModel.OpenCurrentLesson();
     waitViewModel.RefreshMidiDevices();
     var parallelHardwareAvailable = waitViewModel.MidiDevices.Count > 0;
     if (parallelHardwareAvailable)
@@ -392,7 +413,7 @@ using (var waitViewModel = new MainWindowViewModel(Path.Combine(transientProfile
         Thread.Sleep(35);
         waitViewModel.SimulateNoteOff(note);
     }
-    var expectedWaitExtras = firstGroup.NoteCount > 1 ? "2" : "1";
+    var expectedWaitExtras = "1";
     if (waitViewModel.CorrectLabel != firstGroup.NoteCount.ToString() ||
         waitViewModel.ExtraLabel != expectedWaitExtras ||
         waitViewModel.MissedLabel != "0")
@@ -492,26 +513,22 @@ using (var waitViewModel = new MainWindowViewModel(Path.Combine(transientProfile
 using (var blockedModeViewModel = new MainWindowViewModel(Path.Combine(transientProfileRoot, "blocked-mode.json")))
 {
     blockedModeViewModel.LoadScore(path);
+    blockedModeViewModel.OpenCurrentLesson();
     blockedModeViewModel.UseKeyboardSimulation = true;
     blockedModeViewModel.FocusStartMeasure = 16;
     blockedModeViewModel.FocusEndMeasure = 40;
     blockedModeViewModel.SetLessonMode(LessonMode.TimedPlay);
-    if (blockedModeViewModel.CanStartLesson ||
-        await blockedModeViewModel.StartSelectedModeAsync() ||
-        !blockedModeViewModel.LessonStatusLabel.Contains("bars 16–32", StringComparison.OrdinalIgnoreCase) ||
-        !blockedModeViewModel.LessonStatusLabel.Contains("import warning badge", StringComparison.OrdinalIgnoreCase))
+    if (!blockedModeViewModel.CanStartLesson || !blockedModeViewModel.StartLesson())
     {
         throw new InvalidOperationException(
-            "A blocked ambiguous ending did not produce a visible, actionable Performance start state.");
+            "Resolved repeat endings incorrectly blocked the affected Performance range.");
     }
+    blockedModeViewModel.StopLesson();
     blockedModeViewModel.SetLessonMode(LessonMode.WaitForYou);
-    if (!blockedModeViewModel.CanStartLesson ||
-        !await blockedModeViewModel.StartSelectedModeAsync() ||
-        !blockedModeViewModel.StartLessonReason.Contains("guided Practice", StringComparison.OrdinalIgnoreCase) ||
-        !blockedModeViewModel.StartLessonReason.Contains("explicit repeat", StringComparison.OrdinalIgnoreCase))
+    if (!blockedModeViewModel.CanStartLesson || !blockedModeViewModel.StartLesson())
     {
         throw new InvalidOperationException(
-            "Ambiguous volta warnings prevented unscored guided Practice from following explicit repeats.");
+            "Resolved repeat endings incorrectly blocked the affected guided Practice range.");
     }
     blockedModeViewModel.StopLesson();
 }
@@ -528,6 +545,7 @@ using (var chordFeedbackViewModel = new MainWindowViewModel(Path.Combine(transie
     var chordFeedback = new List<LessonNoteFeedbackEvent>();
     chordFeedbackViewModel.NoteFeedback += (_, message) => chordFeedback.Add(message);
     chordFeedbackViewModel.LoadScore(path);
+    chordFeedbackViewModel.OpenCurrentLesson();
     chordFeedbackViewModel.UseKeyboardSimulation = true;
     chordFeedbackViewModel.FocusStartMeasure = threeToneMeasure;
     chordFeedbackViewModel.FocusEndMeasure = threeToneMeasure;
@@ -567,7 +585,7 @@ using (var chordFeedbackViewModel = new MainWindowViewModel(Path.Combine(transie
     chordFeedbackViewModel.SimulateNoteOn(first);
     chordFeedbackViewModel.SimulateNoteOff(first);
     if (int.Parse(chordFeedbackViewModel.CorrectLabel) != correctBeforeChord + 2 ||
-        int.Parse(chordFeedbackViewModel.ExtraLabel) != extraBeforeChord + 1 ||
+        int.Parse(chordFeedbackViewModel.ExtraLabel) != extraBeforeChord ||
         Math.Abs(chordFeedbackViewModel.CursorBeat - threeToneGroup.OnsetBeats) > 0.0001)
     {
         throw new InvalidOperationException(
@@ -590,7 +608,7 @@ using (var chordFeedbackViewModel = new MainWindowViewModel(Path.Combine(transie
     }
     chordFeedbackViewModel.StopLesson();
     Console.WriteLine(
-        $"Three-tone chord regression passed: accepted=3, duplicateExtra=1, pendingMisses=0, measure={threeToneMeasure}.");
+        $"Three-tone chord regression passed: accepted=3, duplicateIgnored=true, pendingMisses=0, measure={threeToneMeasure}.");
 }
 
 using (var fullRepeatWaitViewModel = new MainWindowViewModel(Path.Combine(transientProfileRoot, "full-repeat-wait.json")))
@@ -603,6 +621,7 @@ using (var fullRepeatWaitViewModel = new MainWindowViewModel(Path.Combine(transi
         if (message.Kind == "correct") acceptedOccurrences.Add(message.OccurrenceIndex);
     };
     fullRepeatWaitViewModel.LoadScore(path);
+    fullRepeatWaitViewModel.OpenCurrentLesson();
     fullRepeatWaitViewModel.UseKeyboardSimulation = true;
     fullRepeatWaitViewModel.FocusStartMeasure = 1;
     fullRepeatWaitViewModel.FocusEndMeasure = score.MeasureCount;
@@ -613,7 +632,7 @@ using (var fullRepeatWaitViewModel = new MainWindowViewModel(Path.Combine(transi
             $"Full repeat-aware guided Practice could not start: {fullRepeatWaitViewModel.StartLessonReason}");
 
     var fullGroups = score.GetPracticeGroups(PracticeMode.BothHands);
-    var requiredBoundaries = new[] { 126d, 226d, 298d };
+    var requiredBoundaries = new[] { 126d, 166d, 198d, 270d };
     foreach (var boundary in requiredBoundaries)
     {
         if (!fullGroups.Any(group => Math.Abs(group.OnsetBeats - boundary) < 0.001))
@@ -625,10 +644,12 @@ using (var fullRepeatWaitViewModel = new MainWindowViewModel(Path.Combine(transi
         var group = fullGroups[index];
         if (Math.Abs(group.OnsetBeats - 126d) < 0.001)
             fullRepeatWaitViewModel.SetReadingMode(ScoreReadingMode.Continuous);
-        else if (Math.Abs(group.OnsetBeats - 226d) < 0.001)
+        else if (Math.Abs(group.OnsetBeats - 166d) < 0.001)
             fullRepeatWaitViewModel.SetReadingMode(ScoreReadingMode.Page);
-        else if (Math.Abs(group.OnsetBeats - 298d) < 0.001)
+        else if (Math.Abs(group.OnsetBeats - 198d) < 0.001)
             fullRepeatWaitViewModel.SetReadingMode(ScoreReadingMode.Continuous);
+        else if (Math.Abs(group.OnsetBeats - 270d) < 0.001)
+            fullRepeatWaitViewModel.SetReadingMode(ScoreReadingMode.Page);
 
         foreach (var note in group.MidiNotes)
         {
@@ -647,27 +668,32 @@ using (var fullRepeatWaitViewModel = new MainWindowViewModel(Path.Combine(transi
         }
     }
 
+    var fullCompletionDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+    while (fullRepeatWaitViewModel.IsLessonActive && DateTime.UtcNow < fullCompletionDeadline)
+        await Task.Delay(50);
+
     if (fullRepeatWaitViewModel.IsLessonActive ||
         repeatStates.Count(state => state.State == "completed") != 1 ||
         int.Parse(fullRepeatWaitViewModel.CorrectLabel) != fullGroups.Sum(group => group.NoteCount) ||
         fullRepeatWaitViewModel.MissedLabel != "0" ||
-        fullRepeatWaitViewModel.CompletedAttemptCount != 0 ||
+        fullRepeatWaitViewModel.CompletedAttemptCount != 1 ||
         !requiredBoundaries.All(boundary =>
             score.PerformanceMeasures.Any(occurrence => Math.Abs(occurrence.PerformanceStartBeat - boundary) < 0.001)) ||
         acceptedOccurrences.Count < 2)
     {
         throw new InvalidOperationException(
-            "Full 306-beat guided Practice did not continue through every explicit repeat occurrence and terminate only once at the end.");
+            "Full 278-beat guided Practice did not continue through every explicit repeat occurrence and terminate only once at the end.");
     }
     Console.WriteLine(
-        $"Full repeat Practice regression passed: groups={fullGroups.Count}, beats={score.TotalBeats:0}, " +
+        $"Full repeat Practice regression passed: groups={fullGroups.Count}, beats={score.TotalPerformanceBeats:0}, " +
         $"boundaries={string.Join(',', requiredBoundaries.Select(boundary => boundary.ToString("0")))}, " +
-        $"completedEvents=1, savedAttempts=0.");
+        $"completedEvents=1, savedAttempts=1.");
 }
 
 using (var defaultRangeViewModel = new MainWindowViewModel(Path.Combine(transientProfileRoot, "default-range.json")))
 {
     defaultRangeViewModel.LoadScore(path);
+    defaultRangeViewModel.OpenCurrentLesson();
     defaultRangeViewModel.UseKeyboardSimulation = true;
     defaultRangeViewModel.FocusStartMeasure = 1;
     defaultRangeViewModel.FocusEndMeasure = score.MeasureCount;
@@ -688,10 +714,10 @@ using (var defaultRangeViewModel = new MainWindowViewModel(Path.Combine(transien
     defaultRangeViewModel.FocusEndMeasure = score.MeasureCount;
     if (!defaultRangeViewModel.PrepareDefaultAssessableRange() ||
         defaultRangeViewModel.FocusStartMeasure != 1 ||
-        defaultRangeViewModel.FocusEndMeasure != 15)
+        defaultRangeViewModel.FocusEndMeasure != score.MeasureCount)
     {
         throw new InvalidOperationException(
-            $"Default Performance range was not repaired to the safe assessed section: " +
+            $"Default Performance range did not preserve the resolved full-score section: " +
             $"{defaultRangeViewModel.FocusStartMeasure}-{defaultRangeViewModel.FocusEndMeasure}.");
     }
 }
@@ -706,6 +732,7 @@ foreach (var from in Enum.GetValues<LessonMode>())
         var states = new List<LessonRunStateEvent>();
         switchViewModel.LessonRunStateChanged += (_, state) => states.Add(state);
         switchViewModel.LoadScore(path);
+        switchViewModel.OpenCurrentLesson();
         switchViewModel.UseKeyboardSimulation = true;
         switchViewModel.FocusStartMeasure = 1;
         switchViewModel.FocusEndMeasure = 1;
@@ -720,23 +747,19 @@ foreach (var from in Enum.GetValues<LessonMode>())
         {
             throw new InvalidOperationException($"Mode switch {from} to {to} retained stale/completed lesson state.");
         }
-        if (to == LessonMode.Listen)
+        if (switchViewModel.IsLessonActive ||
+            switchViewModel.IsPreviewPlaying ||
+            switchViewModel.IsPreviewPaused ||
+            switchViewModel.CorrectLabel != "0" ||
+            switchViewModel.ExtraLabel != "0")
         {
-            if (!switchViewModel.IsScorePreviewPlaying || switchViewModel.IsLessonActive)
-                throw new InvalidOperationException($"Mode switch {from} to Listen did not leave only preview playback active.");
-        }
-        else if (!switchViewModel.IsLessonActive ||
-                 switchViewModel.IsPreviewPlaying ||
-                 switchViewModel.IsPreviewPaused ||
-                 switchViewModel.CorrectLabel != "0" ||
-                 switchViewModel.ExtraLabel != "0")
-        {
-            throw new InvalidOperationException($"Mode switch {from} to {to} retained stale audio, transport, or score state.");
+            throw new InvalidOperationException($"Mode selection {from} to {to} started or retained stale session state.");
         }
 
         switchViewModel.StopTransport();
         using var reloaded = new MainWindowViewModel(profile);
         reloaded.LoadScore(path);
+        reloaded.OpenCurrentLesson();
         if (reloaded.CompletedAttemptCount != 0)
             throw new InvalidOperationException($"Partial {from} attempt was persisted while switching to {to}.");
     }
@@ -745,28 +768,32 @@ foreach (var from in Enum.GetValues<LessonMode>())
 using (var pausedRepeatSwitch = new MainWindowViewModel(Path.Combine(transientProfileRoot, "paused-repeat-switch.json")))
 {
     pausedRepeatSwitch.LoadScore(path);
+    pausedRepeatSwitch.OpenCurrentLesson();
     pausedRepeatSwitch.UseKeyboardSimulation = true;
     pausedRepeatSwitch.FocusStartMeasure = 49;
     pausedRepeatSwitch.FocusEndMeasure = 50;
     if (!await pausedRepeatSwitch.SwitchLessonModeAsync(LessonMode.Listen))
         throw new InvalidOperationException(pausedRepeatSwitch.StatusMessage);
     await pausedRepeatSwitch.SeekDisplayMeasureAsync(1);
-    await pausedRepeatSwitch.TogglePreviewAsync();
     if (!pausedRepeatSwitch.IsPreviewPaused)
         throw new InvalidOperationException("Repeat-position Listen setup did not enter paused state.");
-    if (!await pausedRepeatSwitch.SwitchLessonModeAsync(LessonMode.WaitForYou) ||
-        !pausedRepeatSwitch.IsLessonActive ||
-        pausedRepeatSwitch.IsPreviewPaused ||
-        pausedRepeatSwitch.IsPreviewPlaying)
+    if (await pausedRepeatSwitch.SwitchLessonModeAsync(LessonMode.WaitForYou) ||
+        pausedRepeatSwitch.SelectedLessonMode != LessonMode.Listen)
     {
-        throw new InvalidOperationException("Paused repeat-position Listen did not switch cleanly to Practice.");
+        throw new InvalidOperationException("Paused Listen allowed an unsafe mode change.");
     }
+    pausedRepeatSwitch.StopPreview();
+    if (!await pausedRepeatSwitch.SwitchLessonModeAsync(LessonMode.WaitForYou) ||
+        !await pausedRepeatSwitch.StartSelectedModeAsync() ||
+        !pausedRepeatSwitch.IsLessonActive || pausedRepeatSwitch.IsPreviewPaused || pausedRepeatSwitch.IsPreviewPlaying)
+        throw new InvalidOperationException("Stopped Listen did not select and explicitly start Practice cleanly.");
     pausedRepeatSwitch.StopLesson();
 }
 
 using (var continuousNavigation = new MainWindowViewModel(Path.Combine(transientProfileRoot, "continuous-navigation.json")))
 {
     continuousNavigation.LoadScore(path);
+    continuousNavigation.OpenCurrentLesson();
     continuousNavigation.SetReadingMode(ScoreReadingMode.Continuous);
     continuousNavigation.FocusStartMeasure = 20;
     continuousNavigation.FocusEndMeasure = 22;
@@ -774,8 +801,9 @@ using (var continuousNavigation = new MainWindowViewModel(Path.Combine(transient
         throw new InvalidOperationException(continuousNavigation.StatusMessage);
     var firstContinuousBeat = continuousNavigation.CursorBeat;
     await continuousNavigation.SeekDisplayMeasureAsync(1);
-    if (continuousNavigation.CursorBeat <= firstContinuousBeat || !continuousNavigation.IsScorePreviewPlaying)
-        throw new InvalidOperationException("Continuous next-measure navigation did not cue and synchronize playback.");
+    if (continuousNavigation.CursorBeat <= firstContinuousBeat ||
+        !continuousNavigation.IsPreviewPaused || continuousNavigation.IsScorePreviewPlaying)
+        throw new InvalidOperationException("Continuous next-measure navigation did not cue without auto-starting playback.");
     continuousNavigation.FocusStartMeasure = 21;
     if (continuousNavigation.IsPreviewPlaying || continuousNavigation.IsLessonActive ||
         continuousNavigation.CursorBeat < firstContinuousBeat)
@@ -785,10 +813,6 @@ using (var continuousNavigation = new MainWindowViewModel(Path.Combine(transient
 }
 
 var midiPath = Path.ChangeExtension(path, ".mid");
-if (!File.Exists(midiPath))
-{
-    midiPath = Path.Combine(Path.GetDirectoryName(path) ?? string.Empty, "olivia-rodrigo-drivers-license.mid");
-}
 if (File.Exists(midiPath))
 {
     var midiReference = new MidiFileImporter().Import(midiPath);
@@ -800,6 +824,7 @@ if (File.Exists(midiPath))
 
     using var referenceViewModel = new MainWindowViewModel(Path.Combine(transientProfileRoot, "reference.json"));
     referenceViewModel.LoadScore(path);
+    referenceViewModel.OpenCurrentLesson();
     referenceViewModel.LoadMidiReference(midiPath);
     if (!referenceViewModel.HasMidiReference || !referenceViewModel.CanPlayMidiReference ||
         referenceViewModel.MidiListenTracks.Count == 0)
@@ -817,7 +842,7 @@ if (File.Exists(midiPath))
         throw new InvalidOperationException("MIDI reference playback did not re-enable after selecting a track.");
     }
 
-    var pdfPath = Path.Combine(Path.GetDirectoryName(path) ?? string.Empty, "olivia-rodrigo-drivers-license.pdf");
+    var pdfPath = Path.ChangeExtension(path, ".pdf");
     if (File.Exists(pdfPath))
     {
         referenceViewModel.LoadPdfReference(pdfPath);
@@ -832,6 +857,7 @@ if (File.Exists(midiPath))
 using (var performanceTaxonomy = new MainWindowViewModel(Path.Combine(transientProfileRoot, "performance-taxonomy.json")))
 {
     performanceTaxonomy.LoadScore(path);
+    performanceTaxonomy.OpenCurrentLesson();
     performanceTaxonomy.UseKeyboardSimulation = true;
     performanceTaxonomy.FocusStartMeasure = 1;
     performanceTaxonomy.FocusEndMeasure = 1;
@@ -847,11 +873,11 @@ using (var performanceTaxonomy = new MainWindowViewModel(Path.Combine(transientP
     performanceTaxonomy.SimulateNoteOn(acceptedTone);
     performanceTaxonomy.SimulateNoteOff(acceptedTone);
     if (performanceTaxonomy.CorrectLabel != "1" ||
-        performanceTaxonomy.ExtraLabel != "1" ||
+        performanceTaxonomy.ExtraLabel != "0" ||
         performanceTaxonomy.MissedLabel != "0")
     {
         throw new InvalidOperationException(
-            $"Performance duplicate taxonomy failed: correct={performanceTaxonomy.CorrectLabel}, " +
+            $"Performance duplicate suppression failed: correct={performanceTaxonomy.CorrectLabel}, " +
             $"missed={performanceTaxonomy.MissedLabel}, extra={performanceTaxonomy.ExtraLabel}.");
     }
     performanceTaxonomy.StopLesson();
@@ -860,6 +886,7 @@ using (var performanceTaxonomy = new MainWindowViewModel(Path.Combine(transientP
 using (var performanceDeadline = new MainWindowViewModel(Path.Combine(transientProfileRoot, "performance-deadline.json")))
 {
     performanceDeadline.LoadScore(path);
+    performanceDeadline.OpenCurrentLesson();
     performanceDeadline.UseKeyboardSimulation = true;
     performanceDeadline.FocusStartMeasure = 1;
     performanceDeadline.FocusEndMeasure = 1;
@@ -889,6 +916,7 @@ using (var timedViewModel = new MainWindowViewModel(Path.Combine(transientProfil
     var timedStates = new List<LessonRunStateEvent>();
     timedViewModel.LessonRunStateChanged += (_, message) => timedStates.Add(message);
     timedViewModel.LoadScore(path);
+    timedViewModel.OpenCurrentLesson();
     timedViewModel.RefreshMidiDevices();
     timedViewModel.UseKeyboardSimulation = true;
     timedViewModel.FocusStartMeasure = 1;

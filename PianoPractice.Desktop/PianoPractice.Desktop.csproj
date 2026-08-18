@@ -6,7 +6,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>PianoPractice.Desktop</RootNamespace>
-    <AssemblyName>PianoPractice.Desktop</AssemblyName>
+    <AssemblyName>Cadenza</AssemblyName>
+    <AssemblyTitle>Cadenza</AssemblyTitle>
+    <Product>Cadenza</Product>
+    <Description>A focused piano practice studio for listening, guided practice, and performance.</Description>
+    <ApplicationIcon>Assets\Branding\Cadenza.ico</ApplicationIcon>
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
   <ItemGroup>
@@ -19,5 +23,8 @@
   <ItemGroup>
     <Content Include="Assets\Verovio\**\*" CopyToOutputDirectory="Always" />
     <Content Include="Assets\Bravura\**\*" CopyToOutputDirectory="Always" />
+    <Content Include="Packaging\Uninstall-Cadenza.ps1"
+             CopyToOutputDirectory="PreserveNewest"
+             TargetPath="Uninstall-Cadenza.ps1" />
   </ItemGroup>
 </Project>

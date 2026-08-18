@@ -1,10 +1,8 @@
-using System.Runtime.CompilerServices;
 using PianoPractice.Desktop.Models;
 using PianoPractice.Desktop.Services;
 
 internal static class RealtimePlaybackPlanSmoke
 {
-    [ModuleInitializer]
     internal static void Run()
     {
         var score = new ScoreDocument
@@ -69,13 +67,17 @@ internal static class RealtimePlaybackPlanSmoke
                 cancellationToken: CancellationToken.None)
             .GetAwaiter()
             .GetResult();
-
         if (!audio.TryGetPreparedPlaybackInfo(normalPayload, out var normalPlan))
             throw new InvalidOperationException("Score playback did not produce a real-time event plan.");
         if (Math.Abs(normalPlan.DurationSeconds - 2) > 0.001 ||
-            normalPlan.PianoNoteCount != 1 ||
-            normalPlan.MetronomePulseCount != 4 ||
-            !normalPlan.HasImmediatePianoEvent)
+             normalPlan.PianoNoteCount != 1 ||
+             normalPlan.MetronomePulseCount != 4 ||
+             !normalPlan.HasImmediatePianoEvent ||
+             !normalPlan.HasFiniteMonotonicEvents ||
+             !normalPlan.HasBalancedPianoLifecycle ||
+             normalPlan.MaximumConcurrentPianoNotes != 1 ||
+             normalPlan.EventCount != 10 ||
+             normalPlan.LastEventSeconds > normalPlan.DurationSeconds + 0.0001)
         {
             throw new InvalidOperationException(
                 $"Real-time playback plan mismatch: duration={normalPlan.DurationSeconds:0.###}, " +
@@ -95,7 +97,6 @@ internal static class RealtimePlaybackPlanSmoke
                 cancellationToken: CancellationToken.None)
             .GetAwaiter()
             .GetResult();
-
         if (!audio.TryGetPreparedPlaybackInfo(slowPayload, out var slowPlan) ||
             Math.Abs(slowPlan.DurationSeconds - 4) > 0.001)
         {
@@ -107,6 +108,11 @@ internal static class RealtimePlaybackPlanSmoke
         {
             throw new InvalidOperationException(
                 "The prepared playback payload is still large enough to resemble full-song PCM rendering.");
+        }
+        if (BitConverter.ToInt32(normalPayload, 4) != normalPayload.Length - 8 ||
+            BitConverter.ToInt32(normalPayload, 40) != normalPayload.Length - 44)
+        {
+            throw new InvalidOperationException("The compatibility WAVE envelope contains inconsistent chunk lengths.");
         }
     }
 }

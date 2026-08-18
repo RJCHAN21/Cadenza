@@ -11,6 +11,7 @@ internal static class AuthoritativeNavigationRegression
         StandardVoltaSkipsFirstEndingOnSecondPass();
         RightBarlineEndingStartAppliesToFollowingMeasure();
         EventsPastWrittenBarlineCannotLeakAcrossRepeat();
+        UnsupportedRepeatCountsBlockPlayback();
         ExpectedGroupsMatchExpandedPerformance();
         Console.WriteLine("PASS authoritative navigation regression fixtures");
         TraceUserScoreIfProvided();
@@ -64,8 +65,21 @@ internal static class AuthoritativeNavigationRegression
             "An overflowing 4/4 measure was not bounded at four beats.");
         Assert(score.Notes.Count(note => note.SourceMeasureIndex == 0) == 8,
             "Notes serialized beyond the barline leaked into the expanded performance.");
-        Assert(score.ValidationWarnings.Any(warning => warning.Code == "measure-overflow" && warning.BlocksAssessment),
-            "The overflowing source measure did not produce a blocking warning.");
+        Assert(score.ValidationWarnings.Any(warning =>
+                warning.Code == "measure-overflow" && warning.BlocksAssessment && warning.BlocksPlayback),
+            "The overflowing source measure did not block approximated playback and assessment.");
+    }
+
+    private static void UnsupportedRepeatCountsBlockPlayback()
+    {
+        var score = Import(Score(
+            Measure(1, Note("C"), "<barline location=\"left\"><repeat direction=\"forward\"/></barline>"),
+            Measure(2, Note("D"), "<barline location=\"right\"><repeat direction=\"backward\" times=\"0\"/></barline>")));
+
+        var warning = score.ValidationWarnings.Single(item => item.Code == "repeat-times");
+        Assert(warning.BlocksAssessment && warning.BlocksPlayback &&
+               warning.Capability == ScoreCapabilityDisposition.BlocksPlaybackAndAssessment,
+            "An unsupported repeat count did not fail closed for playback and assessment.");
     }
 
     private static void ExpectedGroupsMatchExpandedPerformance()

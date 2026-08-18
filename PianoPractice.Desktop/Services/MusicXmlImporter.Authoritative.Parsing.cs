@@ -46,6 +46,9 @@ public sealed partial class MusicXmlImporter
             tempos.AddRange(parsed.TempoChanges);
             meters.AddRange(parsed.MeterChanges);
             sourceBeat += parsed.DurationBeats;
+            if (!double.IsFinite(sourceBeat) || sourceBeat > MaxWrittenBeats)
+                throw new InvalidDataException(
+                    $"Part {partName} exceeds the {MaxWrittenBeats:0} written-beat safety limit.");
             measureIndex++;
         }
 
@@ -75,13 +78,52 @@ public sealed partial class MusicXmlImporter
                      ?? (sourceMeasureIndex + 1).ToString(CultureInfo.InvariantCulture);
         var displayMeasure = MeasureNumberOf(number, sourceMeasureIndex + 1);
         var attributes = Descendant(measure, "attributes");
-        var divisions = Math.Max(1, ParseInt(Value(Descendant(attributes, "divisions"))) ?? inheritedDivisions);
+        var divisionsElement = Descendant(attributes, "divisions");
+        var divisions = inheritedDivisions;
+        if (divisionsElement is not null)
+        {
+            var parsedDivisions = ParseInt(Value(divisionsElement));
+            if (parsedDivisions is null or <= 0 || parsedDivisions > MaxDivisions)
+                throw new InvalidDataException(
+                    $"Part {partName}, measure {number} has invalid divisions. Expected 1-{MaxDivisions:N0}.");
+            divisions = parsedDivisions.Value;
+        }
 
         var meter = inheritedMeter;
         var meterChanges = new List<ParsedMeterChange>();
         var timeElement = Descendant(attributes, "time");
-        var parsedBeats = ParseInt(Value(Descendant(timeElement, "beats")));
-        var parsedBeatType = ParseInt(Value(Descendant(timeElement, "beat-type")));
+        var beatsText = Value(Descendant(timeElement, "beats"));
+        var beatTypeText = Value(Descendant(timeElement, "beat-type"));
+        var parsedBeats = ParseInt(beatsText);
+        var parsedBeatType = ParseInt(beatTypeText);
+        if (timeElement is not null && Descendant(timeElement, "senza-misura") is not null)
+        {
+            AddWarningOnce(warnings, new ScoreValidationWarning(
+                "unsupported-free-meter",
+                $"Part {partName}, measure {number} uses senza misura. It remains visible but playback and assessment are disabled for this measure.",
+                displayMeasure,
+                displayMeasure,
+                true,
+                true,
+                ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
+        }
+        else if (beatsText?.Contains('+', StringComparison.Ordinal) == true)
+        {
+            AddWarningOnce(warnings, new ScoreValidationWarning(
+                "unsupported-additive-meter",
+                $"Part {partName}, measure {number} uses additive meter {beatsText}/{beatTypeText}. It remains visible but playback and assessment are disabled for this measure.",
+                displayMeasure,
+                displayMeasure,
+                true,
+                true,
+                ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
+        }
+        else if (timeElement is not null &&
+                 (parsedBeats is null or <= 0 or > 128 || parsedBeatType is null or <= 0 or > 1024))
+        {
+            throw new InvalidDataException(
+                $"Part {partName}, measure {number} contains an invalid time signature.");
+        }
         if (parsedBeats is > 0 && parsedBeatType is > 0)
         {
             meter = (parsedBeats.Value, parsedBeatType.Value);
@@ -114,9 +156,33 @@ public sealed partial class MusicXmlImporter
                 case "note":
                 {
                     noteCount++;
-                    var durationDivisions = Math.Max(0, ParseInt(Value(Descendant(element, "duration"))) ?? 0);
-                    var voice = Value(Descendant(element, "voice")) ?? "1";
-                    var staff = ParseInt(Value(Descendant(element, "staff"))) ?? 0;
+                    var isGrace = Descendant(element, "grace") is not null;
+                    var isCue = Descendant(element, "cue") is not null;
+                    var durationElement = Descendant(element, "duration");
+                    var parsedDuration = ParseInt(Value(durationElement));
+                    if (!isGrace && (durationElement is null || parsedDuration is null or <= 0))
+                        throw new InvalidDataException(
+                            $"Part {partName}, measure {number} contains a note or rest without a positive duration.");
+                    if (parsedDuration is < 0)
+                        throw new InvalidDataException(
+                            $"Part {partName}, measure {number} contains a negative note duration.");
+                    var durationDivisions = isGrace ? 0 : parsedDuration!.Value;
+                    ValidateCursorDelta(durationDivisions, divisions, partName, number, "note duration");
+                    var voiceElement = Descendant(element, "voice");
+                    var voice = Value(voiceElement) ?? "1";
+                    if (voiceElement is not null &&
+                        (string.IsNullOrWhiteSpace(voice) ||
+                         voice.Length > MaxVoiceIdentifierLength ||
+                         voice.Any(char.IsControl)))
+                    {
+                        throw new InvalidDataException(
+                            $"Part {partName}, measure {number} contains an invalid voice identifier.");
+                    }
+                    var staffElement = Descendant(element, "staff");
+                    var staff = ParseInt(Value(staffElement)) ?? 0;
+                    if (staffElement is not null && (staff is <= 0 or > MaxStavesPerPart))
+                        throw new InvalidDataException(
+                            $"Part {partName}, measure {number} contains an invalid staff number.");
                     var key = (voice, staff);
                     var isChord = Descendant(element, "chord") is not null;
                     if (isChord)
@@ -138,11 +204,13 @@ public sealed partial class MusicXmlImporter
                         staffTwo++;
 
                     var sourceOnset = measureStartBeat + start / (double)divisions;
-                    var sourceDuration = Math.Max(0.05, durationDivisions / (double)divisions);
+                    var sourceDuration = isGrace ? 0 : durationDivisions / (double)divisions;
                     var noteType = Value(Descendant(element, "type"))
                                    ?? InferNoteType(durationDivisions, divisions);
                     var dotCount = Descendants(element, "dot").Count();
-                    var pitch = ParsePitch(element);
+                    var pitch = isRest
+                        ? null
+                        : ParsePitch(element, partName, number, displayMeasure, warnings);
                     var notations = Descendant(element, "notations");
                     var articulations = Descendants(notations, "articulations")
                         .SelectMany(parent => parent.Elements())
@@ -154,8 +222,48 @@ public sealed partial class MusicXmlImporter
                     var isTenuto = articulations.Any(item =>
                         string.Equals(item.Name.LocalName, "tenuto", StringComparison.OrdinalIgnoreCase));
                     var isSlurred = Descendants(notations, "slur").Any();
+                    var ornaments = Descendants(notations, "ornaments")
+                        .SelectMany(parent => parent.Elements())
+                        .Select(item => item.Name.LocalName)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+                    if (ornaments.Length > 0)
+                    {
+                        AddWarningOnce(warnings, new ScoreValidationWarning(
+                            "unsupported-ornament-semantics",
+                            $"Part {partName}, measure {number} contains ornament notation ({string.Join(", ", ornaments)}). It remains visible, but strict assessment is disabled because the ornament is not interpreted semantically.",
+                            displayMeasure,
+                            displayMeasure,
+                            true,
+                            false,
+                            ScoreCapabilityDisposition.VisuallySupportedSemanticLimitation));
+                    }
 
-                    if (!isRest && pitch is not null)
+                    if (isGrace)
+                    {
+                        AddWarningOnce(warnings, new ScoreValidationWarning(
+                            "unsupported-grace-note-semantics",
+                            $"Part {partName}, measure {number} contains grace-note notation. It remains visible but is excluded from playback and assessment because Cadenza does not invent grace timing.",
+                            displayMeasure,
+                            displayMeasure,
+                            true,
+                            true,
+                            ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
+                    }
+
+                    if (isCue)
+                    {
+                        AddWarningOnce(warnings, new ScoreValidationWarning(
+                            "cue-note-advisory-only",
+                            $"Part {partName}, measure {number} contains cue notes. They remain visible but are excluded from playback and assessment.",
+                            displayMeasure,
+                            displayMeasure,
+                            false,
+                            false,
+                            ScoreCapabilityDisposition.VisuallySupportedSemanticLimitation));
+                    }
+
+                    if (!isGrace && !isCue && !isRest && pitch is not null)
                     {
                         var sourceNoteId = (string?)element.Attribute("id") ?? string.Empty;
                         notes.Add(new ScoreNote(
@@ -204,7 +312,7 @@ public sealed partial class MusicXmlImporter
                                 sourceOnset));
                         }
                     }
-                    else if (isRest)
+                    else if (!isGrace && isRest)
                     {
                         rests.Add(new ScoreRest(
                             sourceOnset,
@@ -219,11 +327,15 @@ public sealed partial class MusicXmlImporter
                             sourceOnset));
                     }
 
-                    maximumCursor = Math.Max(maximumCursor, start + durationDivisions);
-                    if (!isChord)
+                    if (!isGrace)
                     {
-                        cursor += durationDivisions;
-                        maximumCursor = Math.Max(maximumCursor, cursor);
+                        maximumCursor = Math.Max(maximumCursor, checked(start + durationDivisions));
+                        if (!isChord)
+                        {
+                            cursor = checked(cursor + durationDivisions);
+                            maximumCursor = Math.Max(maximumCursor, cursor);
+                        }
+                        ValidateCursorPosition(maximumCursor, divisions, partName, number);
                     }
                     break;
                 }
@@ -231,7 +343,26 @@ public sealed partial class MusicXmlImporter
                 case "direction":
                 {
                     var offset = ParseInt(Value(Descendant(element, "offset"))) ?? 0;
-                    var directionCursor = Math.Max(0, cursor + offset);
+                    ValidateCursorDelta(Math.Abs((long)offset), divisions, partName, number, "direction offset");
+                    var requestedDirectionCursor = (long)cursor + offset;
+                    var tempo = TempoFromDirection(element, partName, number, displayMeasure, warnings);
+                    if (requestedDirectionCursor < 0)
+                    {
+                        var blocksTiming = tempo is > 0;
+                        AddWarningOnce(warnings, new ScoreValidationWarning(
+                            "direction-before-measure",
+                            blocksTiming
+                                ? $"Part {partName}, measure {number} contains a tempo direction before the measure start. It remains visible at the barline, but playback and assessment are disabled because the requested timing cannot be represented authoritatively."
+                                : $"Part {partName}, measure {number} contains a direction before the measure start. The visual direction was anchored at the barline.",
+                            displayMeasure,
+                            displayMeasure,
+                            blocksTiming,
+                            blocksTiming,
+                            blocksTiming
+                                ? ScoreCapabilityDisposition.BlocksPlaybackAndAssessment
+                                : ScoreCapabilityDisposition.VisuallySupportedSemanticLimitation));
+                    }
+                    var directionCursor = (int)Math.Max(0, requestedDirectionCursor);
                     var sourceOnset = measureStartBeat + directionCursor / (double)divisions;
                     var staff = ParseInt(Value(Descendant(element, "staff"))) ?? 1;
 
@@ -280,20 +411,29 @@ public sealed partial class MusicXmlImporter
                             sourceOnset));
                     }
 
-                    var tempo = TempoFromDirection(element);
                     if (tempo is > 0)
                         tempos.Add(new ParsedTempoChange(sourceOnset, tempo.Value, number, sourceMeasureIndex));
                     break;
                 }
 
                 case "backup":
-                    cursor = Math.Max(0, cursor - Math.Max(0, ParseInt(Value(Descendant(element, "duration"))) ?? 0));
+                {
+                    var backup = ParseRequiredCursorDelta(element, divisions, partName, number, "backup");
+                    if (backup > cursor)
+                        throw new InvalidDataException(
+                            $"Part {partName}, measure {number} contains a backup before the measure start.");
+                    cursor -= backup;
                     break;
+                }
 
                 case "forward":
-                    cursor += Math.Max(0, ParseInt(Value(Descendant(element, "duration"))) ?? 0);
+                {
+                    var forward = ParseRequiredCursorDelta(element, divisions, partName, number, "forward");
+                    cursor = checked(cursor + forward);
                     maximumCursor = Math.Max(maximumCursor, cursor);
+                    ValidateCursorPosition(maximumCursor, divisions, partName, number);
                     break;
+                }
             }
         }
 
@@ -309,10 +449,12 @@ public sealed partial class MusicXmlImporter
             warnings.Add(new ScoreValidationWarning(
                 "measure-overflow",
                 $"Part {partName}, measure {number} serializes {rawDuration:0.###} beats in a {meter.Beats}/{meter.BeatType} bar. " +
-                "Playback is bounded at the written barline; assessment is disabled until the source voices are corrected.",
+                "Playback and assessment are disabled until the source voices are corrected.",
                 displayMeasure,
                 displayMeasure,
-                true));
+                true,
+                true,
+                ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
             duration = nominalDuration;
         }
 
@@ -327,7 +469,9 @@ public sealed partial class MusicXmlImporter
                     $"Part {partName}, measure {number} contains a note after the written barline. It was excluded from playback.",
                     displayMeasure,
                     displayMeasure,
-                    true));
+                    true,
+                    true,
+                    ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
                 continue;
             }
 
@@ -381,7 +525,9 @@ public sealed partial class MusicXmlImporter
                 $"Part {partName}, measure {number} contains a tempo event after the written barline. It was excluded.",
                 displayMeasure,
                 displayMeasure,
-                true));
+                true,
+                true,
+                ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
         }
 
         var firstTempo = boundedTempos.FirstOrDefault()?.Bpm;
@@ -424,19 +570,88 @@ public sealed partial class MusicXmlImporter
         Descendants(note, "tied").Any(tied =>
             string.Equals((string?)tied.Attribute("type"), type, StringComparison.OrdinalIgnoreCase));
 
-    private static double? TempoFromDirection(XElement direction)
+    private static int ParseRequiredCursorDelta(
+        XElement element,
+        int divisions,
+        string partName,
+        string measureNumber,
+        string elementName)
+    {
+        var duration = ParseInt(Value(Descendant(element, "duration")));
+        if (duration is null or <= 0)
+            throw new InvalidDataException(
+                $"Part {partName}, measure {measureNumber} contains a {elementName} without a positive duration.");
+        ValidateCursorDelta(duration.Value, divisions, partName, measureNumber, elementName);
+        return duration.Value;
+    }
+
+    private static void ValidateCursorDelta(
+        long durationDivisions,
+        int divisions,
+        string partName,
+        string measureNumber,
+        string valueName)
+    {
+        var maximum = checked((long)divisions * MaxMeasureBeats);
+        if (durationDivisions < 0 || durationDivisions > maximum)
+            throw new InvalidDataException(
+                $"Part {partName}, measure {measureNumber} has a {valueName} outside the {MaxMeasureBeats:N0}-beat measure safety limit.");
+    }
+
+    private static void ValidateCursorPosition(
+        int cursor,
+        int divisions,
+        string partName,
+        string measureNumber)
+    {
+        if ((long)cursor > (long)divisions * MaxMeasureBeats)
+            throw new InvalidDataException(
+                $"Part {partName}, measure {measureNumber} exceeds the {MaxMeasureBeats:N0}-beat measure safety limit.");
+    }
+
+    private static double? TempoFromDirection(
+        XElement direction,
+        string partName,
+        string measureNumber,
+        int displayMeasure,
+        ICollection<ScoreValidationWarning> warnings)
     {
         var soundTempo = Descendants(direction, "sound")
             .Select(sound => (string?)sound.Attribute("tempo"))
-            .FirstOrDefault(value => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out _));
-        if (double.TryParse(soundTempo, NumberStyles.Float, CultureInfo.InvariantCulture, out var tempo) && tempo > 0)
-            return tempo;
+            .FirstOrDefault(value => value is not null);
+        if (soundTempo is not null)
+            return ParseTempoValue(soundTempo, partName, measureNumber);
 
-        var metronomeTempo = Descendants(direction, "metronome")
-            .Select(metronome => Value(Descendant(metronome, "per-minute")))
-            .FirstOrDefault(value => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out _));
-        return double.TryParse(metronomeTempo, NumberStyles.Float, CultureInfo.InvariantCulture, out tempo) && tempo > 0
-            ? tempo
-            : null;
+        var metronome = Descendants(direction, "metronome").FirstOrDefault();
+        var metronomeTempo = Value(Descendant(metronome, "per-minute"));
+        if (metronomeTempo is null)
+            return null;
+        var beatUnit = Value(Descendant(metronome, "beat-unit"));
+        if (!string.IsNullOrWhiteSpace(beatUnit) &&
+            !string.Equals(beatUnit, "quarter", StringComparison.OrdinalIgnoreCase))
+        {
+            AddWarningOnce(warnings, new ScoreValidationWarning(
+                "unsupported-tempo-beat-unit",
+                $"Part {partName}, measure {measureNumber} uses a {beatUnit} metronome unit. It remains visible, but playback and assessment are disabled because the tempo cannot be converted authoritatively.",
+                displayMeasure,
+                displayMeasure,
+                true,
+                true,
+                ScoreCapabilityDisposition.BlocksPlaybackAndAssessment));
+            return null;
+        }
+        return ParseTempoValue(metronomeTempo, partName, measureNumber);
+    }
+
+    private static double ParseTempoValue(string value, string partName, string measureNumber)
+    {
+        if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var tempo) ||
+            !double.IsFinite(tempo) || tempo is <= 0 or > 1000)
+        {
+            throw new InvalidDataException(
+                $"Part {partName}, measure {measureNumber} contains an invalid tempo value '{value}'.");
+        }
+
+        return tempo;
     }
 }

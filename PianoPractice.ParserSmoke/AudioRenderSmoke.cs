@@ -1,10 +1,8 @@
-using System.Runtime.CompilerServices;
 using PianoPractice.Desktop.Models;
 using PianoPractice.Desktop.Services;
 
 internal static class AudioRenderSmoke
 {
-    [ModuleInitializer]
     internal static void Run()
     {
         var score = new ScoreDocument
@@ -56,7 +54,7 @@ internal static class AudioRenderSmoke
                 cancellationToken: CancellationToken.None)
             .GetAwaiter()
             .GetResult();
-        AssertWave(fullWave, minimumSeconds: 4.7, "full tempo-map preview");
+        AssertWave(audio, fullWave, minimumSeconds: 3.49, "full tempo-map preview");
 
         var seekWave = audio.BuildPreviewAsync(
                 score,
@@ -70,8 +68,8 @@ internal static class AudioRenderSmoke
                 cancellationToken: CancellationToken.None)
             .GetAwaiter()
             .GetResult();
-        AssertWave(seekWave, minimumSeconds: 2.2, "seek preview");
-        if (!ContainsAudibleSampleNearStart(seekWave))
+        var seekPlan = AssertWave(audio, seekWave, minimumSeconds: 0.99, "seek preview");
+        if (!seekPlan.HasImmediatePianoEvent)
             throw new InvalidOperationException("A note sustaining across the seek point was omitted from the rendered audio.");
     }
 
@@ -105,28 +103,28 @@ internal static class AudioRenderSmoke
             SourceOnsetBeats: onset,
             Velocity: 96);
 
-    private static void AssertWave(byte[] wave, double minimumSeconds, string name)
+    private static PreparedPlaybackInfo AssertWave(
+        PianoAudioService audio,
+        byte[] wave,
+        double minimumSeconds,
+        string name)
     {
         if (wave.Length < 44 ||
             System.Text.Encoding.ASCII.GetString(wave, 0, 4) != "RIFF" ||
             System.Text.Encoding.ASCII.GetString(wave, 8, 4) != "WAVE")
             throw new InvalidOperationException($"{name} did not produce a valid PCM WAVE header.");
 
-        var sampleRate = BitConverter.ToInt32(wave, 24);
+        var riffBytes = BitConverter.ToInt32(wave, 4);
         var dataBytes = BitConverter.ToInt32(wave, 40);
-        var seconds = dataBytes / (sampleRate * 2d);
-        if (seconds < minimumSeconds)
-            throw new InvalidOperationException($"{name} was truncated to {seconds:0.###} seconds.");
-    }
-
-    private static bool ContainsAudibleSampleNearStart(byte[] wave)
-    {
-        var end = Math.Min(wave.Length - 1, 44 + 22050 / 2);
-        for (var offset = 44; offset + 1 < end; offset += 2)
-        {
-            if (Math.Abs(BitConverter.ToInt16(wave, offset)) > 8)
-                return true;
-        }
-        return false;
+        if (riffBytes != wave.Length - 8 || dataBytes != wave.Length - 44)
+            throw new InvalidOperationException($"{name} has inconsistent RIFF or data chunk lengths.");
+        if (!audio.TryGetPreparedPlaybackInfo(wave, out var plan))
+            throw new InvalidOperationException($"{name} did not retain its real-time playback plan.");
+        if (plan.DurationSeconds < minimumSeconds)
+            throw new InvalidOperationException($"{name} was truncated to {plan.DurationSeconds:0.###} seconds.");
+        if (!plan.HasFiniteMonotonicEvents || !plan.HasBalancedPianoLifecycle ||
+            plan.LastEventSeconds > plan.DurationSeconds + 0.0001)
+            throw new InvalidOperationException($"{name} contains an invalid or unbalanced event lifecycle.");
+        return plan;
     }
 }

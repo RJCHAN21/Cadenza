@@ -18,7 +18,9 @@ On startup the app looks for `Downloads\olivia-rodrigo-drivers-license.mxl` and 
 - High-contrast ivory notation on charcoal, cyan rendered-position playhead, Page and Continuous layouts, zoom, directional page transitions, focused bar range, and 50-120% lesson tempo.
 - Listen transport with previous/next-measure cueing, restart from the selected range start, real pause/resume, stop, and local piano-like score audio.
 - Generic WinMM device discovery and persistent callback capture. Device Settings separates open/start state from real `MIM_DATA` callbacks and exposes last key, monitor/thru, volume, audio test, latency calibration, sustain setup, and a bounded diagnostic trace.
-- Practice/Wait (`F5`) keeps the playhead anchored on the expected onset and advances only after the expected note/chord. Performance/Timed (`F6`) runs continuously with metronome and grades correct, missed, extra, timing, and hold duration. Space starts/stops a lesson.
+- Practice/Wait keeps the playhead anchored on the expected onset and advances only after the expected note/chord. Performance/Timed runs continuously with metronome and grades correct, missed, extra, timing, and hold duration.
+- Safe app controls use `Ctrl+1`, `Ctrl+2`, and `Ctrl+3` to select Listen, Practice, and Performance without starting them. `Space` controls the selected mode, `Esc` stops, and `Ctrl+R` restarts. Mode selection is locked during active, paused, preparing, and results states.
+- The optional MIDI Remote preserves note-key shortcuts without treating ordinary playing as commands: tap and release the reserved Remote key (`C6` by default) with no other notes held, then press one bound command key within three seconds. Commands are context-gated, held/repeated notes cannot retrigger, and `C4` restarts by default. Bindings can be learned or cleared in Settings.
 - Immediate score feedback uses shape plus color: green check for correct, red diamond/cross for missed or extra, cyan hold guidance, and amber early-release feedback. Markers persist for static post-run score review.
 - Left, right, and both-hand practice; CC64 monitoring; pedal grading only when the source contains pedal data.
 - MIDI and PDF reference import. PDF is opened as a review source; it is not falsely converted by unreliable recognition.
@@ -31,12 +33,13 @@ On startup the app looks for `Downloads\olivia-rodrigo-drivers-license.mxl` and 
 
 ```powershell
 dotnet build .\PianoPractice.Desktop\PianoPractice.Desktop.csproj
+dotnet run --project .\PianoPractice.ShortcutSmoke\PianoPractice.ShortcutSmoke.csproj
 dotnet run --project .\PianoPractice.ParserSmoke\PianoPractice.ParserSmoke.csproj -- "C:\Users\RJ Chan\Downloads\olivia-rodrigo-drivers-license.mxl"
 dotnet run --project .\PianoPractice.SimulationSmoke\PianoPractice.SimulationSmoke.csproj -- "C:\Users\RJ Chan\Downloads\olivia-rodrigo-drivers-license.mxl"
-node .\PianoPractice.RendererSmoke\renderer-smoke.cjs "C:\Users\RJ Chan\Downloads\olivia-rodrigo-drivers-license.mxl" 198
+node .\PianoPractice.RendererSmoke\renderer-smoke.cjs "C:\Users\RJ Chan\Downloads\olivia-rodrigo-drivers-license.mxl" 306
 ```
 
-The supplied score parses as MusicXML 3.1: one Piano part, 50 measures, 993 note elements, 41 rests, 350 lyric elements, B-flat major, 4/4, 72 BPM, 952 playable notes, and 476 both-hand onset groups. The simulation smoke covers selected-range transport, pause/resume/restart, home-row mapping, preview audio, metronome, WinMM discovery and input open/close, piano output, MIDI-reference import, wait-for-you scoring, timed scoring, note hold/release, settings restart persistence, finalized-attempt persistence, partial-run exclusion, preferred-device matching, and malformed-profile recovery. The renderer smoke follows all later pages and repeat boundaries, requiring a monotonic 198-beat mapping with no unresolved SVG IDs or backward page transitions.
+The supplied score imports as 50 written measures and an authoritative 70-occurrence, 278-beat performance plan. The simulation smoke covers selected-range transport, pause/resume/restart, home-row mapping, preview audio, metronome, WinMM discovery and input open/close, piano output, MIDI-reference import, wait-for-you scoring, timed scoring, note hold/release, settings restart persistence, finalized-attempt persistence, partial-run exclusion, preferred-device matching, and malformed-profile recovery. The broad renderer regression separately exercises Verovio's 306-beat repeat-expanded timemap, requiring no unresolved SVG IDs or backward page transitions.
 
 ## Honest limits
 
