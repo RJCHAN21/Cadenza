@@ -17,6 +17,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
 {
     private readonly MusicXmlImporter _importer = new();
     private readonly MidiDeviceService _midiDeviceService = new();
+    private readonly MidiDeviceService _midiControlSurfaceService = new();
     private readonly PianoAudioService _audioService = new();
     private readonly MidiOutSynthService _liveSynth = new();
     private readonly MidiOutSynthService _accompanimentSynth = new();
@@ -43,6 +44,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     private LessonMode _selectedLessonMode = LessonMode.WaitForYou;
     private ScoreReadingMode _readingMode = ScoreReadingMode.Page;
     private MidiDeviceInfo? _selectedMidiDevice;
+    private MidiDeviceInfo? _midiControlSurfaceDevice;
     private ScoreDocument? _score;
     private MidiReference? _midiReference;
     private bool _useKeyboardSimulation;
@@ -231,6 +233,10 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         _midiDeviceService.InputError += MidiDeviceService_InputError;
         _midiDeviceService.InputDisconnected += MidiDeviceService_InputDisconnected;
         _midiDeviceService.Diagnostic += MidiDeviceService_Diagnostic;
+        _midiControlSurfaceService.RawMessage += MidiControlSurfaceService_RawMessage;
+        _midiControlSurfaceService.InputError += MidiControlSurfaceService_InputError;
+        _midiControlSurfaceService.InputDisconnected += MidiControlSurfaceService_InputDisconnected;
+        _midiControlSurfaceService.Diagnostic += MidiControlSurfaceService_Diagnostic;
         RefreshLibrary();
     }
 
@@ -444,8 +450,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     public bool CanChooseInput => !IsLessonActive;
     public bool HasAcceptedInput => _nativeInputActive || UseKeyboardSimulation;
     public bool CanStartLesson => HasScore && !IsLessonActive && !_isStartingLesson &&
-                                  ((SelectedLessonMode == LessonMode.Listen &&
-                                    !_score!.HasBlockingPlaybackWarning(FocusStartMeasure, FocusEndMeasure)) ||
+                                  (SelectedLessonMode == LessonMode.Listen ||
                                    ((SelectedLessonMode == LessonMode.WaitForYou ||
                                      !_score!.HasBlockingAssessmentWarning(FocusStartMeasure, FocusEndMeasure)) &&
                                     !_score!.CutsRepeatRegion(FocusStartMeasure, FocusEndMeasure) &&
@@ -816,7 +821,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
                     warning.EndMeasure >= FocusStartMeasure);
                 return playbackWarning is null
                     ? "Ready to play the selected score automatically without assessment."
-                    : $"Playback is unavailable for bars {playbackWarning.StartMeasure}–{playbackWarning.EndMeasure}: {playbackWarning.Message}";
+                    : $"Ready for best-effort playback. Bars {playbackWarning.StartMeasure}–{playbackWarning.EndMeasure} contain notation that may not be reproduced exactly.";
             }
             var blockingWarning = _score?.ValidationWarnings.FirstOrDefault(warning =>
                 warning.BlocksAssessment &&
@@ -1569,7 +1574,10 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     {
         try
         {
-            _score = _importer.Import(path);
+            var importedScore = _importer.Import(path);
+            if (ResultsVisible)
+                DismissResults();
+            _score = importedScore;
             var initialTitle = NormalizeSampleTitle(_score.Title, path);
             ScoreByline = _score.ComposerOrCreator;
             SourceFileLabel = Path.GetFileName(_score.SourcePath);
@@ -1642,9 +1650,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             CursorBeat = SelectedPreviewStartBeat;
             StatusMessage = _score.ValidationWarnings.Count == 0
                 ? $"Loaded {ScoreTitle} | {_score.MeasureCount:N0} written measures | {_score.PerformanceMeasures.Count:N0} performed measures | {_score.TempoBpm:0} BPM."
-                : _score.ValidationWarnings.Any(warning => warning.BlocksPlayback)
-                    ? $"Loaded with {_score.ValidationWarnings.Count} validation warning(s). Affected playback and assessment ranges are disabled."
-                    : $"Loaded with {_score.ValidationWarnings.Count} validation warning(s). Listen is available; affected assessed ranges are disabled.";
+                : $"Loaded with {_score.ValidationWarnings.Count} validation warning(s). Listen uses best-effort playback; affected assessed ranges remain disabled.";
             PreviewStatusLabel = "Preview is ready. It includes a simple synthesized piano-like sound, not an audio recording.";
             SaveProfileSettings();
         }
@@ -1683,6 +1689,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         else
         {
             _midiDeviceService.StopInput();
+            _midiControlSurfaceService.StopInput();
+            _midiControlSurfaceDevice = null;
             SetNativeInputActive(false);
             _selectedMidiDevice = null;
             OnPropertyChanged(nameof(SelectedMidiDevice));
@@ -1723,7 +1731,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             var activeStillPresent = snapshot.Devices.Any(device =>
                 string.Equals(device.Id, SelectedMidiDevice.Id, StringComparison.Ordinal) ||
                 string.Equals(device.Name, SelectedMidiDevice.Name, StringComparison.OrdinalIgnoreCase));
-            if (activeStillPresent) return;
+            if (activeStillPresent)
+            {
+                ConnectMidiControlSurface();
+                return;
+            }
         }
 
         RefreshMidiDevices(userInitiated: false);
@@ -1734,6 +1746,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         if (SelectedMidiDevice is null)
         {
             _midiDeviceService.StopInput();
+            _midiControlSurfaceService.StopInput();
+            _midiControlSurfaceDevice = null;
             SetNativeInputActive(false);
             MidiLiveIndicator = "Not connected";
             MidiStatusLabel = MidiDevices.Count == 0 ? "No MIDI keyboard found" : "Choose a MIDI keyboard to connect";
@@ -1748,6 +1762,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             MidiLiveIndicator = _lastMidiEventAt is null
                 ? $"{SelectedMidiDevice.Name} connected · waiting for first event"
                 : $"{SelectedMidiDevice.Name} connected · receiving";
+            ConnectMidiControlSurface();
             return;
         }
 
@@ -1775,11 +1790,55 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         LastMidiKeyLabel = "Press any key on the connected keyboard";
         MidiStatusLabel = $"{SelectedMidiDevice.Name} connected — waiting for MIDI";
         MidiApiDetail = $"WinMM input {SelectedMidiDevice.Id} is open and callbacks are active.";
+        ConnectMidiControlSurface();
         var synthResult = _liveSynth.Open();
         LiveMonitorStatus = synthResult.Success
             ? "MIDI Monitor / Thru is on. Play a key to hear the piano and see the received event."
             : $"MIDI input is connected, but audio monitor failed: {synthResult.Message}";
         StatusMessage = LiveMonitorStatus;
+    }
+
+    private void ConnectMidiControlSurface()
+    {
+        if (SelectedMidiDevice is null ||
+            SelectedMidiDevice.Name.StartsWith("MIDIIN2", StringComparison.OrdinalIgnoreCase))
+        {
+            _midiControlSurfaceService.StopInput();
+            _midiControlSurfaceDevice = null;
+            return;
+        }
+
+        var companion = MidiDevices.FirstOrDefault(device =>
+            device.Name.StartsWith("MIDIIN2", StringComparison.OrdinalIgnoreCase) &&
+            device.Name.Contains(SelectedMidiDevice.Name, StringComparison.OrdinalIgnoreCase));
+        if (companion is null)
+        {
+            _midiControlSurfaceService.StopInput();
+            _midiControlSurfaceDevice = null;
+            MidiRemoteStatusText = "Piano input is connected. No separate DAW-control endpoint was found; CC controls can still be learned from the main input.";
+            return;
+        }
+
+        if (_midiControlSurfaceService.IsCapturing &&
+            string.Equals(_midiControlSurfaceService.ActiveDeviceId, companion.Id, StringComparison.Ordinal))
+        {
+            _midiControlSurfaceDevice = companion;
+            return;
+        }
+
+        var result = _midiControlSurfaceService.StartInput(companion.Id);
+        if (!result.Success)
+        {
+            _midiControlSurfaceDevice = null;
+            AddMidiDiagnostic($"Could not open {companion.Name}: {result.Error}");
+            MidiRemoteStatusText = $"Piano input is connected, but {companion.Name} could not be opened. Close other DAW/control-surface software and refresh.";
+            return;
+        }
+
+        _midiControlSurfaceDevice = companion;
+        MidiRemoteStatusText = $"{companion.Name} connected. Oxygen transport, knobs, faders, and learned buttons are direct controls.";
+        MidiApiDetail = $"WinMM keyboard input {SelectedMidiDevice.Id} and control-surface input {companion.Id} are both open.";
+        AddMidiDiagnostic($"Automatic control surface connected: {companion.Name} (WinMM id {companion.Id}).");
     }
 
     public async Task TogglePreviewAsync()
@@ -1965,12 +2024,6 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     private async Task StartScorePreviewAsync(double startBeat)
     {
         if (_score is null) return;
-        if (_score.BlockingPlaybackReason(FocusStartMeasure, FocusEndMeasure) is { } blockingReason)
-        {
-            StatusMessage = blockingReason;
-            PreviewStatusLabel = blockingReason;
-            return;
-        }
         CancelPreviewPlayback();
         var span = SelectedPerformanceSpanAtOrAfter(startBeat);
         if (span is null)
@@ -2699,6 +2752,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         _midiDeviceService.InputDisconnected -= MidiDeviceService_InputDisconnected;
         _midiDeviceService.Diagnostic -= MidiDeviceService_Diagnostic;
         _midiDeviceService.Dispose();
+        _midiControlSurfaceService.RawMessage -= MidiControlSurfaceService_RawMessage;
+        _midiControlSurfaceService.InputError -= MidiControlSurfaceService_InputError;
+        _midiControlSurfaceService.InputDisconnected -= MidiControlSurfaceService_InputDisconnected;
+        _midiControlSurfaceService.Diagnostic -= MidiControlSurfaceService_Diagnostic;
+        _midiControlSurfaceService.Dispose();
         _liveSynth.Dispose();
         _accompanimentSynth.Dispose();
         _audioService.Dispose();
@@ -2860,6 +2918,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         if (Application.Current is null) return;
         _ = Application.Current.Dispatcher.InvokeAsync(() =>
         {
+            HandleMidiControllerMessage(message, false);
             _lastMidiEventAt = message.Timestamp;
             _lastIndicatorSecond = -1;
             var command = message.Status & 0xF0;
@@ -2874,6 +2933,47 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             LastMidiKeyLabel = $"{description} · channel {channel}";
             MidiLiveIndicator = $"{SelectedMidiDevice?.Name ?? "MIDI input"} connected · receiving now";
         });
+    }
+
+    private void MidiControlSurfaceService_RawMessage(object? sender, MidiRawEvent message)
+    {
+        if (Application.Current is null) return;
+        _ = Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            HandleMidiControllerMessage(message, true);
+            _lastMidiEventAt = message.Timestamp;
+            _lastIndicatorSecond = -1;
+            LastMidiKeyLabel = $"Controller 0x{message.Status:X2} · {message.Data1} · {message.Data2}";
+            MidiLiveIndicator = $"{SelectedMidiDevice?.Name ?? "MIDI keyboard"} + {_midiControlSurfaceDevice?.Name ?? "DAW controls"} receiving";
+        });
+    }
+
+    private void MidiControlSurfaceService_InputError(object? sender, string error)
+    {
+        if (Application.Current is null) return;
+        _ = Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            _midiControlSurfaceService.StopInput();
+            _midiControlSurfaceDevice = null;
+            AddMidiDiagnostic($"Control surface error: {error}");
+            MidiRemoteStatusText = "The DAW control endpoint disconnected; piano input remains active.";
+        });
+    }
+
+    private void MidiControlSurfaceService_InputDisconnected(object? sender, EventArgs e)
+    {
+        if (Application.Current is null) return;
+        _ = Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            _midiControlSurfaceDevice = null;
+            MidiRemoteStatusText = "The DAW control endpoint disconnected; reconnect the Oxygen and refresh MIDI devices.";
+        });
+    }
+
+    private void MidiControlSurfaceService_Diagnostic(object? sender, string message)
+    {
+        if (Application.Current is null) return;
+        _ = Application.Current.Dispatcher.InvokeAsync(() => AddMidiDiagnostic($"DAW controls: {message}"));
     }
 
     private void MidiDeviceService_InputError(object? sender, string error)
@@ -2897,6 +2997,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         ResetMidiShortcutState();
         CancelMidiShortcutLearning();
         _midiDeviceService.StopInput();
+        _midiControlSurfaceService.StopInput();
+        _midiControlSurfaceDevice = null;
         SetNativeInputActive(false);
         _selectedMidiDevice = null;
         _liveSynth.AllNotesOff();
@@ -3605,6 +3707,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
 
     private void SaveProfileSettings()
     {
+        if (_applyingMidiContinuousControl) return;
         var settings = _profile.Settings ??= new CadenzaUserSettings();
         settings.MidiMonitorEnabled = MidiMonitorEnabled;
         settings.MonitorVolume = MonitorVolume;

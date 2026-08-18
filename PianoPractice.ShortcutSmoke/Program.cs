@@ -93,6 +93,32 @@ var repeatResults = midiRouter.ProcessNoteOn(67, 84, midiBindings, MidiShortcutC
 Assert(repeatResults.Action == MidiShortcutAction.RepeatResults,
     "The protected Repeat Results binding did not work in its valid context.");
 
+midiRouter.Reset();
+midiRouter.ProcessNoteOn(84, 84, midiBindings, MidiShortcutContext.Results, now.AddSeconds(7));
+midiRouter.ProcessNoteOff(84, 84, now.AddSeconds(7.1));
+var restartFromResults = midiRouter.ProcessNoteOn(60, 84, midiBindings, MidiShortcutContext.Results, now.AddSeconds(7.2));
+Assert(restartFromResults.Action == MidiShortcutAction.Restart,
+    "The protected C4 Restart binding was blocked after a completed measure.");
+
+var oxygenPlay = new MidiControllerBinding(true, MidiControllerMessageKind.Note, 0, 94);
+Assert(oxygenPlay.Matches(0x90, 94) && oxygenPlay.Matches(0x80, 94) && !oxygenPlay.Matches(0x90, 93),
+    "The Oxygen Play transport binding did not match its Mackie note messages exactly.");
+Assert(MidiControllerBinding.Parse(oxygenPlay.Serialize()) == oxygenPlay,
+    "The Oxygen transport binding did not survive settings serialization.");
+
+var oxygenKnob = new MidiControllerBinding(true, MidiControllerMessageKind.ControlChange, 0, 16);
+Assert(oxygenKnob.Matches(0xB0, 16) && !oxygenKnob.Matches(0xB1, 16),
+    "The Oxygen knob binding ignored its MIDI channel or CC number.");
+
+var oxygenMasterFader = new MidiControllerBinding(true, MidiControllerMessageKind.PitchBend, 8, 0);
+Assert(oxygenMasterFader.Matches(0xE8, 0) && !oxygenMasterFader.Matches(0xE7, 0),
+    "The Oxygen master-fader binding ignored its MIDI channel.");
+
+Assert(MidiShortcutRouter.IsActionAllowed(MidiShortcutAction.TogglePlayback, MidiShortcutContext.Results) &&
+       MidiShortcutRouter.IsActionAllowed(MidiShortcutAction.Stop, MidiShortcutContext.Results) &&
+       MidiShortcutRouter.IsActionAllowed(MidiShortcutAction.ToggleLoop, MidiShortcutContext.Running),
+    "Direct transport controls are not available in their intended player contexts.");
+
 Console.WriteLine("PASS deterministic shortcut safety fixtures");
 return;
 

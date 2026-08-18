@@ -141,6 +141,22 @@
     #stage.hints #notation g.note.expected {
       animation: hintPulse 1.2s infinite ease-in-out;
     }
+    #stage.hints #notation .hint-svg-badge {
+      pointer-events: none;
+      filter: drop-shadow(0 0 5px rgba(0,240,255,.95)) drop-shadow(0 0 10px rgba(56,189,248,.75));
+    }
+    #stage.hints #notation .hint-svg-badge rect {
+      fill: #00F0FF !important;
+      stroke: #D9FCFF !important;
+    }
+    #stage.hints #notation .hint-svg-badge text {
+      fill: #071014 !important;
+      stroke: none !important;
+    }
+    #stage.hints #notation .hint-chord-badge line {
+      stroke: #00F0FF !important;
+      stroke-linecap: round;
+    }
     #stage.hints #notation g.measure.active-measure-glow > rect,
     #stage.hints #notation g.measure.active-measure-glow > path {
       stroke: #38BDF8 !important;
@@ -826,6 +842,7 @@
       stage.classList.toggle("hand-left", handMode === "LeftHand");
       stage.classList.toggle("hand-right", handMode === "RightHand");
       applyHandFocus();
+      if (hintMode && toolkit && timemap.length) renderLatestCursor();
     }
 
     function applyHandFocus() {
@@ -940,6 +957,7 @@
         rebuildAudit();
         reapplyLessonFeedback();
         pendingPage = 0;
+        restoreExpectedStateAfterRedraw();
         const systems = Math.max(1, notation.querySelectorAll("g.system").length);
         lastPositionKey = "";
         post("pageChanged", { page: currentPage, pages: pageCount, system: 1, systems });
@@ -1276,7 +1294,19 @@
       if (!pname || !Number.isFinite(octave)) return null;
       const base = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[pname];
       const accidentalValue = attribute("accid") || attribute("accid.ges") || "";
+      const accidentalUse = note.querySelector?.(".accid use");
+      const accidentalHref = accidentalUse?.getAttribute("href") ||
+        accidentalUse?.getAttribute("xlink:href") || "";
+      const accidentalGlyph = accidentalHref.match(/#(E26[0-4])(?:-|$)/i)?.[1]?.toUpperCase();
+      const renderedAccidental = {
+        E260: -1,
+        E261: 0,
+        E262: 1,
+        E263: 2,
+        E264: -2
+      }[accidentalGlyph];
       const accidental = { ff: -2, f: -1, n: 0, s: 1, ss: 2 }[accidentalValue] ??
+        renderedAccidental ??
         keyAccidentalForPname(pname);
       return (octave + 1) * 12 + base + accidental;
     }
@@ -1303,6 +1333,92 @@
       const names = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
       const value = Number(midiNote);
       return `${names[(value % 12 + 12) % 12]}${Math.floor(value / 12) - 1}`;
+    }
+
+    function hintPitchName(element) {
+      const note = element?.closest?.("g.note") || element;
+      if (!note) return "";
+      const id = note.id || note.getAttribute("data-id");
+      let toolkitAttributes = null;
+      try {
+        toolkitAttributes = id && toolkit?.getElementAttr ? toolkit.getElementAttr(id) : null;
+      } catch {
+        toolkitAttributes = null;
+      }
+      const attribute = name =>
+        note.getAttribute(`data-${name}`) ??
+        toolkitAttributes?.[name] ??
+        toolkitAttributes?.[name.replace(".", "-")] ??
+        null;
+      const pname = (attribute("pname") || "").toUpperCase();
+      const octave = Number(attribute("oct"));
+      if (!pname || !Number.isFinite(octave)) return midiName(midiFromElement(note));
+
+      const accidentalFrom = candidate => {
+        const candidateId = candidate.id || candidate.getAttribute("data-id");
+        let candidateAttributes = null;
+        try {
+          candidateAttributes = candidateId && toolkit?.getElementAttr
+            ? toolkit.getElementAttr(candidateId)
+            : null;
+        } catch {
+          candidateAttributes = null;
+        }
+        const candidateAttribute = name =>
+          candidate.getAttribute(`data-${name}`) ??
+          candidateAttributes?.[name] ??
+          candidateAttributes?.[name.replace(".", "-")] ??
+          null;
+        const value = candidateAttribute("accid") || candidateAttribute("accid.ges") || "";
+        if (Object.hasOwn({ ff: -2, f: -1, n: 0, s: 1, ss: 2 }, value))
+          return { value: { ff: -2, f: -1, n: 0, s: 1, ss: 2 }[value], explicit: true };
+        const use = candidate.querySelector?.(".accid use");
+        const href = use?.getAttribute("href") || use?.getAttribute("xlink:href") || "";
+        const glyph = href.match(/#(E26[0-4])(?:-|$)/i)?.[1]?.toUpperCase();
+        const rendered = { E260: -1, E261: 0, E262: 1, E263: 2, E264: -2 }[glyph];
+        return rendered == null ? { value: null, explicit: false } : { value: rendered, explicit: true };
+      };
+
+      const keyAccidental = keyAccidentalForPname(pname);
+      let measureAccidental = keyAccidental;
+      let changedFromKey = false;
+      const measureNotes = note.closest("g.measure")?.querySelectorAll("g.note") || [note];
+      for (const candidate of measureNotes) {
+        const candidateId = candidate.id || candidate.getAttribute("data-id");
+        let candidateAttributes = null;
+        try {
+          candidateAttributes = candidateId && toolkit?.getElementAttr
+            ? toolkit.getElementAttr(candidateId)
+            : null;
+        } catch {
+          candidateAttributes = null;
+        }
+        const candidateAttribute = name =>
+          candidate.getAttribute(`data-${name}`) ??
+          candidateAttributes?.[name] ??
+          candidateAttributes?.[name.replace(".", "-")] ??
+          null;
+        const candidatePname = (candidateAttribute("pname") || "").toUpperCase();
+        const candidateOctave = Number(candidateAttribute("oct"));
+        if (candidatePname === pname && candidateOctave === octave) {
+          const accidental = accidentalFrom(candidate);
+          if (accidental.value != null) {
+            measureAccidental = accidental.value;
+            changedFromKey = changedFromKey || accidental.value !== keyAccidental;
+          }
+        }
+        if (candidate === note) break;
+      }
+
+      const naturalMidi = (octave + 1) * 12 + { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[pname];
+      const resolvedMidi = midiFromElement(note);
+      const alteration = Number.isFinite(resolvedMidi) ? resolvedMidi - naturalMidi : measureAccidental;
+      const currentAccidental = accidentalFrom(note);
+      const symbols = { "-2": "♭♭", "-1": "♭", 0: "", 1: "♯", 2: "♯♯" };
+      const showNatural = alteration === 0 &&
+        (currentAccidental.explicit || changedFromKey || keyAccidental !== 0);
+      const symbol = showNatural ? "♮" : (symbols[alteration] ?? "");
+      return `${pname}${symbol}${octave}`;
     }
 
     function pitchSpelling(midiNote) {
@@ -2039,10 +2155,23 @@
       }
       if (pendingPage) return;
       updateCursor(beat * 60000 / bpm, true);
+      const atTime = toolkit?.getElementsAtTime(Math.max(0, Math.round(ms)));
+      updateExpectedState(atTime, beat);
+    }
+
+    function restoreExpectedStateAfterRedraw() {
+      if (!toolkit || !timemap.length) return;
+      const beat = latestRequestedBeat;
+      const sourceBeat = performanceToSourceBeat(beat);
+      const ms = sourceBeat * 60000 / bpm;
+      const atTime = toolkit.getElementsAtTime(Math.max(0, Math.round(ms)));
+      updateExpectedState(atTime, beat);
+    }
+
+    function updateExpectedState(atTime, beat) {
       document.querySelectorAll(".expected").forEach(node => node.classList.remove("expected"));
       document.querySelectorAll(".active-measure-glow").forEach(node => node.classList.remove("active-measure-glow"));
       document.querySelectorAll(".hint-svg-badge").forEach(node => node.remove());
-      const atTime = toolkit?.getElementsAtTime(Math.max(0, Math.round(ms)));
       for (const id of atTime?.notes || []) {
         const el = elementForVerovioId(id);
         if (el) {
@@ -2063,63 +2192,181 @@
       if (!noteEl || !noteText) return;
       noteEl.querySelector(".hint-svg-badge")?.remove();
       try {
-        const bbox = noteEl.getBBox();
+        const notehead = noteEl.querySelector(".notehead") || noteEl;
+        const headRect = notehead.getBoundingClientRect();
+        const measure = noteEl.closest("g.measure");
+        const measureRect = measure?.getBoundingClientRect();
+        const svg = noteEl.ownerSVGElement;
+        const badgeLayer = measure || svg;
+        const screenMatrix = badgeLayer?.getScreenCTM?.() || noteEl.getScreenCTM();
+        if (!svg || !screenMatrix || headRect.width <= 0 || headRect.height <= 0) return;
+
+        const inverse = screenMatrix.inverse();
+        const toLocal = (screenX, screenY) => {
+          const point = svg.createSVGPoint();
+          point.x = screenX;
+          point.y = screenY;
+          return point.matrixTransform(inverse);
+        };
+        const widthPixels = Math.max(34, noteText.length * 8 + 12);
+        const heightPixels = 22;
+        const gapPixels = 7;
+        const fitsRight = !measureRect ||
+          headRect.right + gapPixels + widthPixels <= measureRect.right - 2;
+        const leftPixels = fitsRight
+          ? headRect.right + gapPixels
+          : headRect.left - gapPixels - widthPixels;
+        const centerYPixels = headRect.top + headRect.height / 2;
+        const topLeft = toLocal(leftPixels, centerYPixels - heightPixels / 2);
+        const bottomRight = toLocal(leftPixels + widthPixels, centerYPixels + heightPixels / 2);
+        const center = toLocal(leftPixels + widthPixels / 2, centerYPixels);
+        const textBaseline = toLocal(leftPixels + widthPixels / 2, centerYPixels + 4.2);
         const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
         g.setAttribute("class", "hint-svg-badge");
-        const textWidth = Math.max(26, noteText.length * 8 + 8);
-        const textHeight = 16;
-        const x = bbox.x + bbox.width / 2 - textWidth / 2;
-        const y = bbox.y - textHeight - 4;
+        g.setAttribute("data-side", fitsRight ? "right" : "left");
 
         const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-        rect.setAttribute("x", x);
-        rect.setAttribute("y", y);
-        rect.setAttribute("width", textWidth);
-        rect.setAttribute("height", textHeight);
-        rect.setAttribute("rx", "4");
-        rect.setAttribute("ry", "4");
-        rect.setAttribute("fill", "#00F0FF");
-        rect.setAttribute("filter", "drop-shadow(0px 2px 5px rgba(0, 240, 255, 0.7))");
+        rect.setAttribute("x", Math.min(topLeft.x, bottomRight.x));
+        rect.setAttribute("y", Math.min(topLeft.y, bottomRight.y));
+        rect.setAttribute("width", Math.abs(bottomRight.x - topLeft.x));
+        rect.setAttribute("height", Math.abs(bottomRight.y - topLeft.y));
+        rect.setAttribute("rx", Math.abs(toLocal(leftPixels + 5, centerYPixels).x - toLocal(leftPixels, centerYPixels).x));
+        rect.setAttribute("ry", Math.abs(toLocal(leftPixels, centerYPixels + 5).y - toLocal(leftPixels, centerYPixels).y));
+        rect.setAttribute("stroke-width", Math.abs(toLocal(leftPixels + 1, centerYPixels).x - toLocal(leftPixels, centerYPixels).x));
 
         const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        text.setAttribute("x", x + textWidth / 2);
-        text.setAttribute("y", y + 12);
+        text.setAttribute("x", center.x);
+        text.setAttribute("y", textBaseline.y);
         text.setAttribute("text-anchor", "middle");
+        text.setAttribute("dominant-baseline", "alphabetic");
         text.setAttribute("font-family", "Segoe UI, sans-serif");
-        text.setAttribute("font-size", "11px");
+        text.setAttribute("font-size", Math.abs(toLocal(leftPixels, centerYPixels + 12).y - toLocal(leftPixels, centerYPixels).y));
         text.setAttribute("font-weight", "800");
-        text.setAttribute("fill", "#090C10");
         text.textContent = noteText;
 
         g.appendChild(rect);
         g.appendChild(text);
-        noteEl.appendChild(g);
+        // Append after Verovio's measure content so notation cannot paint over the guide.
+        badgeLayer.appendChild(g);
+      } catch (e) {}
+    }
+
+    function attachSvgChordHintBadge(entries) {
+      const notes = entries
+        .filter(entry => entry?.element && entry?.text)
+        .map(entry => ({
+          ...entry,
+          headRect: (entry.element.querySelector(".notehead") || entry.element).getBoundingClientRect()
+        }))
+        .filter(entry => entry.headRect.width > 0 && entry.headRect.height > 0)
+        .sort((left, right) => left.headRect.top - right.headRect.top);
+      if (notes.length < 2) {
+        if (notes[0]) attachSvgHintBadge(notes[0].element, notes[0].text);
+        return;
+      }
+
+      try {
+        const anchor = notes[0].element;
+        const svg = anchor.ownerSVGElement;
+        const measure = anchor.closest("g.measure");
+        const badgeLayer = measure || svg;
+        const screenMatrix = badgeLayer?.getScreenCTM?.() || anchor.getScreenCTM();
+        if (!svg || !screenMatrix) return;
+        const inverse = screenMatrix.inverse();
+        const toLocal = (screenX, screenY) => {
+          const point = svg.createSVGPoint();
+          point.x = screenX;
+          point.y = screenY;
+          return point.matrixTransform(inverse);
+        };
+
+        const widthPixels = Math.max(38, ...notes.map(note => note.text.length * 8 + 14));
+        const rowHeightPixels = 19;
+        const paddingPixels = 4;
+        const heightPixels = notes.length * rowHeightPixels + paddingPixels * 2;
+        const gapPixels = 9;
+        const headsLeft = Math.min(...notes.map(note => note.headRect.left));
+        const headsRight = Math.max(...notes.map(note => note.headRect.right));
+        const headsTop = Math.min(...notes.map(note => note.headRect.top));
+        const headsBottom = Math.max(...notes.map(note => note.headRect.bottom));
+        const measureRect = measure?.getBoundingClientRect();
+        const fitsRight = !measureRect || headsRight + gapPixels + widthPixels <= measureRect.right - 2;
+        const leftPixels = fitsRight
+          ? headsRight + gapPixels
+          : headsLeft - gapPixels - widthPixels;
+        const centerYPixels = (headsTop + headsBottom) / 2;
+        const topPixels = centerYPixels - heightPixels / 2;
+        const topLeft = toLocal(leftPixels, topPixels);
+        const bottomRight = toLocal(leftPixels + widthPixels, topPixels + heightPixels);
+
+        const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        group.setAttribute("class", "hint-svg-badge hint-chord-badge");
+        group.setAttribute("data-side", fitsRight ? "right" : "left");
+
+        const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        background.setAttribute("x", Math.min(topLeft.x, bottomRight.x));
+        background.setAttribute("y", Math.min(topLeft.y, bottomRight.y));
+        background.setAttribute("width", Math.abs(bottomRight.x - topLeft.x));
+        background.setAttribute("height", Math.abs(bottomRight.y - topLeft.y));
+        background.setAttribute("rx", Math.abs(toLocal(leftPixels + 5, topPixels).x - toLocal(leftPixels, topPixels).x));
+        background.setAttribute("ry", Math.abs(toLocal(leftPixels, topPixels + 5).y - toLocal(leftPixels, topPixels).y));
+        background.setAttribute("stroke-width", Math.abs(toLocal(leftPixels + 1, topPixels).x - toLocal(leftPixels, topPixels).x));
+        group.appendChild(background);
+
+        notes.forEach((note, index) => {
+          const rowCenterPixels = topPixels + paddingPixels + rowHeightPixels * (index + .5);
+          const headCenterPixels = note.headRect.top + note.headRect.height / 2;
+          const lineStartPixels = fitsRight ? note.headRect.right : note.headRect.left;
+          const lineEndPixels = fitsRight ? leftPixels : leftPixels + widthPixels;
+          const lineStart = toLocal(lineStartPixels, headCenterPixels);
+          const lineEnd = toLocal(lineEndPixels, rowCenterPixels);
+          const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line.setAttribute("x1", lineStart.x);
+          line.setAttribute("y1", lineStart.y);
+          line.setAttribute("x2", lineEnd.x);
+          line.setAttribute("y2", lineEnd.y);
+          line.setAttribute("stroke-width", Math.abs(toLocal(lineStartPixels + 1.25, headCenterPixels).x - lineStart.x));
+          group.appendChild(line);
+
+          const labelPoint = toLocal(leftPixels + widthPixels / 2, rowCenterPixels + 4.2);
+          const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          text.setAttribute("x", labelPoint.x);
+          text.setAttribute("y", labelPoint.y);
+          text.setAttribute("text-anchor", "middle");
+          text.setAttribute("dominant-baseline", "alphabetic");
+          text.setAttribute("font-family", "Segoe UI, sans-serif");
+          text.setAttribute("font-size", Math.abs(toLocal(leftPixels, rowCenterPixels + 12).y - toLocal(leftPixels, rowCenterPixels).y));
+          text.setAttribute("font-weight", "800");
+          text.textContent = note.text;
+          group.appendChild(text);
+        });
+
+        // Keep the complete chord guide above every note, stem, flag, and beam in the measure.
+        badgeLayer.appendChild(group);
       } catch (e) {}
     }
 
     function updateHintLane(atTime, beat) {
       if (!hintMode) return;
       const ids = atTime?.notes?.length ? atTime.notes : (eventAtBeat(beat)?.on || []);
+      const entries = [];
+      const seen = new Set();
       ids.forEach(id => {
-        const element = elementForVerovioId(id);
-        if (!element) return;
+        const sourceElement = elementForVerovioId(id);
+        const element = sourceElement?.closest?.("g.note") || sourceElement;
+        if (!element?.matches?.("g.note") || seen.has(element)) return;
+        seen.add(element);
+        const staff = element.closest("g.staff");
+        if (handMode === "RightHand" && staff?.classList.contains("cadenza-bass")) return;
+        if (handMode === "LeftHand" && staff?.classList.contains("cadenza-treble")) return;
         const measure = element.closest("g.measure");
         if (measure) measure.classList.add("active-measure-glow");
 
-        let pitchStr = "";
-        const pnum = Number(element.getAttribute("data-pnum"));
-        if (Number.isFinite(pnum) && pnum > 0) {
-          const names = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
-          pitchStr = `${names[pnum % 12]}${Math.floor(pnum / 12) - 1}`;
-        } else {
-          const pname = (element.getAttribute("data-pname") || "?").toUpperCase();
-          const accidentalValue = element.getAttribute("data-accid") || element.getAttribute("data-accid.ges") || "";
-          const explicit = { f: "♭", ff: "♭♭", s: "♯", ss: "♯♯", n: "♮" }[accidentalValue] || "";
-          const oct = element.getAttribute("data-oct") || "";
-          pitchStr = `${pname}${explicit}${oct}`;
-        }
-        if (pitchStr && element.matches(".note")) attachSvgHintBadge(element, pitchStr);
+        const pitchStr = hintPitchName(element);
+        if (pitchStr) entries.push({ element, text: pitchStr });
       });
+      if (entries.length === 1) attachSvgHintBadge(entries[0].element, entries[0].text);
+      else if (entries.length > 1) attachSvgChordHintBadge(entries);
     }
 
     function playbackFrame(now) {

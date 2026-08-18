@@ -293,6 +293,17 @@ try
                 $"correct={reloadedSettings.CorrectLabel}, missed={reloadedSettings.MissedLabel}, " +
                 $"range={reloadedSettings.FocusStartMeasure}-{reloadedSettings.FocusEndMeasure}, " +
                 $"status={reloadedSettings.LessonStatusLabel}.");
+
+        reloadedSettings.LoadScore(path);
+        if (reloadedSettings.ResultsVisible || !reloadedSettings.CanSwitchLessonMode ||
+            !await reloadedSettings.SwitchLessonModeAsync(LessonMode.Listen))
+        {
+            throw new InvalidOperationException(
+                "Loading a song left the previous lesson results active and prevented Listen mode playback.");
+        }
+        if (!await reloadedSettings.StartSelectedModeAsync() || !reloadedSettings.IsPreviewPlaying)
+            throw new InvalidOperationException("Listen mode did not start playback after loading a song.");
+        reloadedSettings.StopTransport();
     }
 
     using (var progressReload = new MainWindowViewModel(profilePath))

@@ -13,7 +13,15 @@ public enum MidiShortcutAction
     PreviousPage,
     NextPage,
     DismissResults,
-    RepeatResults
+    RepeatResults,
+    Stop,
+    ToggleLoop,
+    SetLessonTempo,
+    SetNotationZoom,
+    SetOverallVolume,
+    SetInstrumentalVolume,
+    SetMetronomeVolume,
+    SetMonitorVolume
 }
 
 public enum MidiShortcutContext
@@ -202,20 +210,56 @@ public sealed class MidiShortcutRouter
             MidiShortcutAction.PreviousMeasure or
             MidiShortcutAction.NextMeasure or
             MidiShortcutAction.PreviousPage or
-            MidiShortcutAction.NextPage,
+            MidiShortcutAction.NextPage or
+            MidiShortcutAction.Stop or
+            MidiShortcutAction.ToggleLoop or
+            MidiShortcutAction.SetLessonTempo or
+            MidiShortcutAction.SetNotationZoom or
+            MidiShortcutAction.SetOverallVolume or
+            MidiShortcutAction.SetInstrumentalVolume or
+            MidiShortcutAction.SetMetronomeVolume or
+            MidiShortcutAction.SetMonitorVolume,
         MidiShortcutContext.Running => action is
             MidiShortcutAction.TogglePlayback or
-            MidiShortcutAction.Restart,
+            MidiShortcutAction.Restart or
+            MidiShortcutAction.Stop or
+            MidiShortcutAction.ToggleLoop or
+            MidiShortcutAction.SetLessonTempo or
+            MidiShortcutAction.SetNotationZoom or
+            MidiShortcutAction.SetOverallVolume or
+            MidiShortcutAction.SetInstrumentalVolume or
+            MidiShortcutAction.SetMetronomeVolume or
+            MidiShortcutAction.SetMonitorVolume,
         MidiShortcutContext.Paused => action is
             MidiShortcutAction.TogglePlayback or
             MidiShortcutAction.Restart or
             MidiShortcutAction.PreviousMeasure or
             MidiShortcutAction.NextMeasure or
             MidiShortcutAction.PreviousPage or
-            MidiShortcutAction.NextPage,
+            MidiShortcutAction.NextPage or
+            MidiShortcutAction.Stop or
+            MidiShortcutAction.ToggleLoop or
+            MidiShortcutAction.SetLessonTempo or
+            MidiShortcutAction.SetNotationZoom or
+            MidiShortcutAction.SetOverallVolume or
+            MidiShortcutAction.SetInstrumentalVolume or
+            MidiShortcutAction.SetMetronomeVolume or
+            MidiShortcutAction.SetMonitorVolume,
         MidiShortcutContext.Results => action is
             MidiShortcutAction.DismissResults or
-            MidiShortcutAction.RepeatResults,
+            MidiShortcutAction.RepeatResults or
+            MidiShortcutAction.Restart or
+            MidiShortcutAction.TogglePlayback or
+            MidiShortcutAction.StartListen or
+            MidiShortcutAction.StartPractice or
+            MidiShortcutAction.StartPerformance or
+            MidiShortcutAction.Stop or
+            MidiShortcutAction.ToggleLoop or
+            MidiShortcutAction.SetNotationZoom or
+            MidiShortcutAction.SetOverallVolume or
+            MidiShortcutAction.SetInstrumentalVolume or
+            MidiShortcutAction.SetMetronomeVolume or
+            MidiShortcutAction.SetMonitorVolume,
         _ => false
     };
 
@@ -232,8 +276,24 @@ public sealed class MidiShortcutRouter
         MidiShortcutAction.NextPage => "Next Page",
         MidiShortcutAction.DismissResults => "Dismiss Results",
         MidiShortcutAction.RepeatResults => "Repeat Results",
+        MidiShortcutAction.Stop => "Stop / Close Results",
+        MidiShortcutAction.ToggleLoop => "Toggle Loop",
+        MidiShortcutAction.SetLessonTempo => "Lesson Tempo",
+        MidiShortcutAction.SetNotationZoom => "Notation Zoom",
+        MidiShortcutAction.SetOverallVolume => "Overall Volume",
+        MidiShortcutAction.SetInstrumentalVolume => "Song Volume",
+        MidiShortcutAction.SetMetronomeVolume => "Metronome Volume",
+        MidiShortcutAction.SetMonitorVolume => "Live Piano Volume",
         _ => "No action"
     };
+
+    public static bool IsContinuousAction(MidiShortcutAction action) => action is
+        MidiShortcutAction.SetLessonTempo or
+        MidiShortcutAction.SetNotationZoom or
+        MidiShortcutAction.SetOverallVolume or
+        MidiShortcutAction.SetInstrumentalVolume or
+        MidiShortcutAction.SetMetronomeVolume or
+        MidiShortcutAction.SetMonitorVolume;
 
     private static string GetBlockedReason(MidiShortcutAction action, MidiShortcutContext context) =>
         $"{GetActionLabel(action)} is unavailable while the app is {GetContextLabel(context)}. MIDI notes were not forwarded as music.";

@@ -19,6 +19,8 @@ internal static class HermeticSimulationSmoke
             Assert(score.GetPracticeGroups(PracticeMode.RightHand).Count > 0, "Right-hand timeline is empty.");
             Assert(score.TempoChanges.Count >= 2, "Tempo-map changes were not retained.");
             Assert(score.MeterChanges.Count >= 2, "Meter changes were not retained.");
+            Assert(score.HasBlockingPlaybackWarning(1, score.MeasureCount),
+                "The deterministic fixture no longer exercises best-effort Listen playback.");
 
             using (var audio = new PianoAudioService())
             {
@@ -72,6 +74,10 @@ internal static class HermeticSimulationSmoke
                 Assert(viewModel.IsLessonActive, "Performance mode did not enter its running state.");
                 viewModel.StopLesson();
                 Assert(!viewModel.IsLessonActive, "Performance mode did not leave its running state.");
+
+                viewModel.SetLessonMode(LessonMode.Listen);
+                Assert(viewModel.CanStartLesson,
+                    "A successfully imported score with playback limitations disabled Listen mode.");
 
                 var originalHash = viewModel.CurrentScore!.ContentSha256;
                 var malformedPath = Path.Combine(root, "malformed.musicxml");
@@ -137,6 +143,7 @@ internal static class HermeticSimulationSmoke
                 <clef number="2"><sign>F</sign><line>4</line></clef>
               </attributes>
               <direction><sound tempo="120"/></direction>
+              <direction><direction-type><pedal type="start"/></direction-type></direction>
               <note><pitch><step>C</step><octave>4</octave></pitch><duration>8</duration><voice>1</voice><staff>1</staff></note>
               <backup><duration>8</duration></backup>
               <note><pitch><step>C</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><staff>2</staff></note>

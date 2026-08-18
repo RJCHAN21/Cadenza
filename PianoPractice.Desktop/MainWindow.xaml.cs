@@ -882,6 +882,15 @@ public partial class MainWindow : Window
         {
             await LoadNotationAsync();
         }
+        else if (e.PropertyName == nameof(MainWindowViewModel.NotationZoomPercent))
+        {
+            _notationZoom = _viewModel.NotationZoomPercent;
+            ZoomLevelButton.Content = $"{_notationZoom}%";
+            if (_notationReady && NotationWebView.CoreWebView2 is not null)
+            {
+                await ExecuteRendererScriptAsync($"window.CadenzaNotation.setZoom({_notationZoom});");
+            }
+        }
         else if (e.PropertyName is nameof(MainWindowViewModel.CustomScoreScale) or nameof(MainWindowViewModel.CustomScoreMargin) or nameof(MainWindowViewModel.CustomNoteSpacing) or nameof(MainWindowViewModel.CustomBarDensity))
         {
             if (_notationReady && NotationWebView.CoreWebView2 is not null)

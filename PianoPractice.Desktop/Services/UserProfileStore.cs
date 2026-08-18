@@ -176,6 +176,7 @@ public sealed class CadenzaUserSettings
     public int MidiShortcutNextPageNote { get; set; } = 55; // G3
     public int MidiShortcutDismissResultsNote { get; set; } = 62; // D4
     public int MidiShortcutRepeatResultsNote { get; set; } = 67; // G4
+    public Dictionary<string, string> MidiControllerBindings { get; set; } = new(StringComparer.Ordinal);
 }
 
 public sealed class SongProgressRecord
