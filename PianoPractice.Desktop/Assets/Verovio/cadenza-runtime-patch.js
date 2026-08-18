@@ -364,14 +364,15 @@
       document.querySelectorAll(".expected").forEach(node => node.classList.remove("expected"));
       document.querySelectorAll(".active-measure-glow").forEach(node => node.classList.remove("active-measure-glow"));
       document.querySelectorAll(".hint-svg-badge").forEach(node => node.remove());
-      for (const id of event?.on || []) {
+      const hintIds = hintIdsForSelectedHand(event?.on);
+      for (const id of hintIds) {
         const element = elementForVerovioId(id);
         if (element) {
           element.classList.add("expected");
           element.querySelectorAll(".syl, text, tspan").forEach(child => child.classList.add("expected"));
         }
       }
-      updateHintLane({ notes: event?.on || [], elements: [] }, beat);
+      updateHintLane({ notes: hintIds, elements: [] }, beat);
     };
 
     findTiedContinuationElements = function cadenzaFindTiedContinuationElements(node) {

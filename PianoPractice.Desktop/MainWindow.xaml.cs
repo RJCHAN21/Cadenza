@@ -518,6 +518,9 @@ public partial class MainWindow : Window
         }
     }
 
+    private void MapMidiController_Click(object sender, RoutedEventArgs e) =>
+        _viewModel.StartMidiControllerAutoMapping();
+
     private void UnbindMidiShortcut_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: string actionId })
@@ -633,6 +636,17 @@ public partial class MainWindow : Window
     private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (IsTextInputFocused(e)) return;
+        if (_viewModel.IsMidiShortcutLearning && e.Key == Key.Escape)
+        {
+            _viewModel.CancelMidiShortcutLearning();
+            e.Handled = true;
+            return;
+        }
+        if (_viewModel.IsMidiShortcutLearning && e.Key == Key.Back)
+        {
+            if (_viewModel.UnbindCurrentMidiShortcutLearning()) e.Handled = true;
+            return;
+        }
         if (!_viewModel.IsPlayerVisible) return;
         if (IsModalOverlayVisible()) return;
 
@@ -997,6 +1011,8 @@ public partial class MainWindow : Window
                 $"{JsonSerializer.Serialize(_viewModel.RewardLabel)}, " +
                 $"{JsonSerializer.Serialize(_viewModel.AccuracyLabel)}, " +
                 $"{JsonSerializer.Serialize(_viewModel.TimingStatValue)}, " +
+                $"{JsonSerializer.Serialize(_viewModel.ResultElapsedTimeLabel)}, " +
+                $"{JsonSerializer.Serialize(_viewModel.ResultTargetTimeLabel)}, " +
                 $"{JsonSerializer.Serialize(_viewModel.HoldStatValue)}, " +
                 $"{pedalJson}, " +
                 $"{_viewModel.CorrectCount}, " +

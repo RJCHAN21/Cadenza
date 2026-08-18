@@ -10,6 +10,14 @@ const playerPath = path.join(
   "Verovio",
   "player.html");
 const playerSource = fs.readFileSync(playerPath, "utf8");
+const edgePatchSource = fs.readFileSync(
+  path.join(projectRoot, "PianoPractice.Desktop", "Assets", "Verovio", "cadenza-runtime-edge-patch.js"),
+  "utf8");
+
+if (!edgePatchSource.includes('node.isConnected && node.classList.contains("expected")') ||
+    !edgePatchSource.includes('document.querySelector(".hint-svg-badge") !== null') ||
+    !edgePatchSource.includes('const hintKey = `${handMode}:${key}`'))
+  throw new Error("Hint refresh caching does not recover removed decorations or react to hand changes.");
 
 const renderPageSource = playerSource.slice(
   playerSource.indexOf("    function renderPage"),
@@ -49,9 +57,39 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(
+  sourceBetween("    function isHintElementForSelectedHand", "    function updateExpectedState"),
+  context,
+  { filename: playerPath });
+vm.runInContext(
   sourceBetween("    function attachSvgHintBadge", "    function updateHintLane"),
   context,
   { filename: playerPath });
+
+function createHandNote(staffClass) {
+  const staff = { classList: { contains(value) { return value === staffClass; } } };
+  return {
+    closest(selector) {
+      if (selector === "g.note") return this;
+      if (selector === "g.staff") return staff;
+      return null;
+    }
+  };
+}
+
+const handNotes = {
+  right: createHandNote("cadenza-treble"),
+  left: createHandNote("cadenza-bass")
+};
+context.elementForVerovioId = id => handNotes[id] || null;
+context.handMode = "RightHand";
+if (Array.from(context.hintIdsForSelectedHand(["right", "left"])).join(",") !== "right")
+  throw new Error("Right-hand hints included a left-hand note.");
+context.handMode = "LeftHand";
+if (Array.from(context.hintIdsForSelectedHand(["right", "left"])).join(",") !== "left")
+  throw new Error("Left-hand hints included a right-hand note.");
+context.handMode = "BothHands";
+if (Array.from(context.hintIdsForSelectedHand(["right", "left"])).join(",") !== "right,left")
+  throw new Error("Both-hands hints did not retain both staves.");
 
 function createNote(measureRight, top = 50) {
   const notehead = {

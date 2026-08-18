@@ -15,7 +15,9 @@ public sealed record MidiControllerBinding(
     bool ControlSurface,
     MidiControllerMessageKind Kind,
     int Channel,
-    int Number)
+    int Number,
+    bool Relative = false,
+    string? DisplayName = null)
 {
     public bool Matches(int status, int data1)
     {
@@ -31,20 +33,26 @@ public sealed record MidiControllerBinding(
         };
     }
 
-    public string Serialize() => $"{(ControlSurface ? "Surface" : "Keyboard")}|{Kind}|{Channel}|{Number}";
+    public string Serialize()
+    {
+        var value = $"{(ControlSurface ? "Surface" : "Keyboard")}|{Kind}|{Channel}|{Number}|{(Relative ? "Relative" : "Absolute")}";
+        return string.IsNullOrWhiteSpace(DisplayName)
+            ? value
+            : $"{value}|{Uri.EscapeDataString(DisplayName.Trim())}";
+    }
 
     public string Format() => Kind switch
     {
-        MidiControllerMessageKind.Note => $"{(ControlSurface ? "DAW" : "MIDI")} Note {Number}",
-        MidiControllerMessageKind.ControlChange => $"{(ControlSurface ? "DAW" : "MIDI")} CC{Number} · ch {Channel + 1}",
-        MidiControllerMessageKind.PitchBend => $"{(ControlSurface ? "DAW" : "MIDI")} fader · ch {Channel + 1}",
+        MidiControllerMessageKind.Note => $"{(ControlSurface ? "MIDIIN2" : "MIDI")} Note {Number} · ch {Channel + 1}",
+        MidiControllerMessageKind.ControlChange => $"{(ControlSurface ? "MIDIIN2" : "MIDI")} CC{Number} · ch {Channel + 1}{(Relative ? " · relative" : string.Empty)}",
+        MidiControllerMessageKind.PitchBend => $"{(ControlSurface ? "MIDIIN2" : "MIDI")} Pitch Bend · ch {Channel + 1}",
         _ => "Unassigned"
     };
 
     public static MidiControllerBinding? Parse(string? value)
     {
         var parts = value?.Split('|');
-        if (parts is not { Length: 4 } ||
+        if (parts is not { Length: 4 } and not { Length: 5 } and not { Length: 6 } ||
             !Enum.TryParse<MidiControllerMessageKind>(parts[1], out var kind) ||
             !int.TryParse(parts[2], out var channel) ||
             !int.TryParse(parts[3], out var number) ||
@@ -57,7 +65,9 @@ public sealed record MidiControllerBinding(
             string.Equals(parts[0], "Surface", StringComparison.OrdinalIgnoreCase),
             kind,
             channel,
-            number);
+            number,
+            parts.Length >= 5 && string.Equals(parts[4], "Relative", StringComparison.OrdinalIgnoreCase),
+            parts.Length == 6 ? Uri.UnescapeDataString(parts[5]) : null);
     }
 
     public static MidiControllerBinding? FromRaw(int status, int data1, bool controlSurface)

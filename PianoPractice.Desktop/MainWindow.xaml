@@ -1521,6 +1521,10 @@
 
           <!-- Animated Live Stats Pill Tiles -->
           <StackPanel x:Name="LiveStatsPanel" Orientation="Horizontal" VerticalAlignment="Center">
+            <Border Style="{StaticResource AnimatedStatPillStyle}"
+                    ToolTip="Countdown to the target duration for the selected bars and tempo. Continues below zero in overtime.">
+              <StackPanel Width="72"><TextBlock Text="TIME LEFT" Style="{StaticResource Eyebrow}" HorizontalAlignment="Center" /><TextBlock Text="{Binding LessonCountdownLabel}" Foreground="#F5D08C" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" /></StackPanel>
+            </Border>
             <Border Style="{StaticResource AnimatedStatPillStyle}" ToolTip="Correct: expected chord tones accepted for the current onset.">
               <StackPanel Width="56"><TextBlock Text="CORRECT" Style="{StaticResource Eyebrow}" HorizontalAlignment="Center" /><TextBlock Text="{Binding CorrectLabel}" Foreground="#19F47B" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" /></StackPanel>
             </Border>
@@ -1766,7 +1770,7 @@
                            Foreground="{StaticResource Muted}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,18" />
 
                 <Border Background="#181B21" BorderBrush="#4A4434" BorderThickness="1" CornerRadius="10" Padding="14,10" Margin="0,0,0,14">
-                  <TextBlock Text="Oxygen 49 MKV setup: enable DAW mode and select NC1 (Mackie 1). Cadenza automatically opens MIDIIN2 for transport, faders, knobs, fader buttons, and DAW-mode pads. MIDIIN3 is reserved for M-Audio's preset editor and is intentionally left alone."
+                  <TextBlock Text="Cadenza opens the keyboard and its dedicated control port together. Use Map connected controls so assignments come from the messages your current hardware preset actually sends; the preset-editor port is left untouched."
                              Foreground="#D8C88E" FontSize="10.5" TextWrapping="Wrap" />
                 </Border>
 
@@ -1776,17 +1780,20 @@
                       <CheckBox DockPanel.Dock="Right" Content="Enable MIDI controller shortcuts"
                                 IsChecked="{Binding MidiShortcutsEnabled, Mode=TwoWay}"
                                 VerticalAlignment="Center" Margin="18,0,0,0" />
-                      <TextBlock Text="Oxygen Controller &amp; Protected Note Remote" Foreground="#8BEAFF" FontSize="13.5" FontWeight="SemiBold" />
+                      <TextBlock Text="Connected MIDI Controller &amp; Protected Note Remote" Foreground="#8BEAFF" FontSize="13.5" FontWeight="SemiBold" />
                     </DockPanel>
                     <TextBlock Text="{Binding MidiRemoteInstructions}"
                                Foreground="{StaticResource Ink}" FontSize="11.5" LineHeight="18" TextWrapping="Wrap" Margin="0,6,0,12" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                      <Button Content="Map connected controls" Click="MapMidiController_Click"
+                              Height="34" Padding="14,0" ToolTip="Capture Loop, Stop, Play, Record, knobs, and faders from live MIDI input." />
+                      <TextBlock Text="{Binding MidiRemoteStatusText}" Foreground="#8BEAFF" FontSize="10.5"
+                                 VerticalAlignment="Center" TextWrapping="Wrap" Margin="12,0,0,0" />
+                    </StackPanel>
                     <StackPanel Orientation="Horizontal">
                       <TextBlock Text="REMOTE ARM BUTTON" Foreground="{StaticResource Muted}" FontSize="10.5" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0" />
                       <Button Content="{Binding MidiRemoteArmControlText}" Tag="Control:RemoteArm" Click="RebindMidiShortcut_Click"
-                              MinWidth="112" Height="34" Padding="14,0" ToolTip="Press to learn a hardware button that arms protected piano-note shortcuts." />
-                      <TextBlock Text="Note fallback" Foreground="{StaticResource Muted}" FontSize="10.5" VerticalAlignment="Center" Margin="12,0,8,0" />
-                      <Button Content="{Binding MidiRemoteArmNoteText}" Tag="Note:RemoteArm" Click="RebindMidiShortcut_Click"
-                              MinWidth="72" Height="34" Padding="12,0" ToolTip="Optional piano-key fallback for arming protected note shortcuts." />
+                              MinWidth="112" Height="34" Padding="14,0" ToolTip="Select to reassign. Escape cancels; Backspace unassigns while Listening." />
                       <Button Content="Cancel MIDI learn" Click="CancelMidiShortcutLearning_Click"
                               Visibility="{Binding IsMidiShortcutLearning, Converter={StaticResource BoolToVisibility}}"
                               Height="34" Padding="14,0" Margin="8,0,0,0" />
@@ -1840,7 +1847,7 @@
                 </Border>
 
                 <TextBlock Text="MIDI CONTROLLER BINDINGS" Foreground="{StaticResource Gold}" FontWeight="Bold" FontSize="12" Margin="0,8,0,4" />
-                <TextBlock Text="Direct controls do not require Remote Arm. Protected piano notes do. Select any binding to learn a replacement from the connected controller."
+                <TextBlock Text="Direct controls do not require Remote Arm. Protected piano notes do. Select any binding to learn a replacement. Controller buttons may be shared by multiple actions; Cadenza warns you and keeps every assignment."
                            Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,8" />
                 <Border Background="#11161C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="16,10" Margin="0,0,0,14">
                   <ItemsControl ItemsSource="{Binding MidiShortcutBindings}">
@@ -1858,11 +1865,11 @@
                           <TextBlock Text="{Binding Label}" Foreground="{StaticResource Ink}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
                           <TextBlock Grid.Column="1" Text="{Binding Contexts}" Foreground="{StaticResource Muted}" FontSize="10.5" VerticalAlignment="Center" />
                           <Button Grid.Column="2" Content="{Binding DirectControlText}" Tag="{Binding ControlActionId}" Click="RebindMidiShortcut_Click"
-                                  Height="32" Padding="10,0" ToolTip="Learn a direct button, knob, or fader binding. No Remote Arm required." />
+                                  Height="32" Padding="10,0" ToolTip="Select to reassign. Escape cancels; Backspace unassigns while Listening." />
                           <Button Grid.Column="3" Content="&#x00D7;" Tag="{Binding ControlActionId}" Click="UnbindMidiShortcut_Click"
                                   Height="32" Width="26" Margin="4,0,0,0" Padding="0" FontSize="15" ToolTip="Unassign this direct controller binding." />
                           <Button Grid.Column="4" Content="{Binding NoteText}" Tag="{Binding NoteActionId}" Click="RebindMidiShortcut_Click"
-                                  IsEnabled="{Binding CanUseNoteBinding}" Height="32" Padding="8,0" Margin="8,0,0,0" ToolTip="Learn an optional protected piano-note binding." />
+                                  IsEnabled="{Binding CanUseNoteBinding}" Height="32" Padding="8,0" Margin="8,0,0,0" ToolTip="Select to reassign. Escape cancels; Backspace unassigns while Listening." />
                           <Button Grid.Column="5" Content="&#x00D7;" Tag="{Binding NoteActionId}" Click="UnbindMidiShortcut_Click"
                                   IsEnabled="{Binding CanUseNoteBinding}" Height="32" Width="26" Margin="4,0,0,0" Padding="0" FontSize="15" ToolTip="Unassign this protected piano-note binding." />
                         </Grid>

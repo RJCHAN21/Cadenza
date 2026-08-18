@@ -507,6 +507,14 @@
             <div class="stat-label">TIMING</div>
           </div>
           <div class="stat-box">
+            <div class="stat-value text-gold" id="resElapsedTime">0:00.0</div>
+            <div class="stat-label">TIME TAKEN</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value text-blue" id="resTargetTime">0:00.0</div>
+            <div class="stat-label">TARGET TIME</div>
+          </div>
+          <div class="stat-box">
             <div class="stat-value text-gold" id="resHold">90%</div>
             <div class="stat-label">NOTE HOLD</div>
           </div>
@@ -2168,11 +2176,25 @@
       updateExpectedState(atTime, beat);
     }
 
+    function isHintElementForSelectedHand(sourceElement) {
+      if (handMode === "BothHands") return true;
+      const element = sourceElement?.closest?.("g.note") || sourceElement;
+      const staff = element?.closest?.("g.staff");
+      if (!staff) return false;
+      if (handMode === "RightHand") return staff.classList.contains("cadenza-treble");
+      if (handMode === "LeftHand") return staff.classList.contains("cadenza-bass");
+      return false;
+    }
+
+    function hintIdsForSelectedHand(ids) {
+      return (ids || []).filter(id => isHintElementForSelectedHand(elementForVerovioId(id)));
+    }
+
     function updateExpectedState(atTime, beat) {
       document.querySelectorAll(".expected").forEach(node => node.classList.remove("expected"));
       document.querySelectorAll(".active-measure-glow").forEach(node => node.classList.remove("active-measure-glow"));
       document.querySelectorAll(".hint-svg-badge").forEach(node => node.remove());
-      for (const id of atTime?.notes || []) {
+      for (const id of hintIdsForSelectedHand(atTime?.notes)) {
         const el = elementForVerovioId(id);
         if (el) {
           el.classList.add("expected");
@@ -2181,7 +2203,7 @@
       }
       for (const id of atTime?.elements || []) {
         const el = elementForVerovioId(id);
-        if (el && (el.matches(".syl") || el.closest(".syl"))) {
+        if (el && isHintElementForSelectedHand(el) && (el.matches(".syl") || el.closest(".syl"))) {
           el.classList.add("expected");
         }
       }
@@ -2348,7 +2370,8 @@
 
     function updateHintLane(atTime, beat) {
       if (!hintMode) return;
-      const ids = atTime?.notes?.length ? atTime.notes : (eventAtBeat(beat)?.on || []);
+      const ids = hintIdsForSelectedHand(
+        atTime?.notes?.length ? atTime.notes : (eventAtBeat(beat)?.on || []));
       const entries = [];
       const seen = new Set();
       ids.forEach(id => {
@@ -2356,9 +2379,6 @@
         const element = sourceElement?.closest?.("g.note") || sourceElement;
         if (!element?.matches?.("g.note") || seen.has(element)) return;
         seen.add(element);
-        const staff = element.closest("g.staff");
-        if (handMode === "RightHand" && staff?.classList.contains("cadenza-bass")) return;
-        if (handMode === "LeftHand" && staff?.classList.contains("cadenza-treble")) return;
         const measure = element.closest("g.measure");
         if (measure) measure.classList.add("active-measure-glow");
 
@@ -3095,13 +3115,15 @@
       if (number) number.classList.remove("pulse");
     }
 
-    function showResultsModal(headline, reward, accuracy, timing, hold, pedal, correctCount, missedCount, extraCount, repeatText, progress, voicing, articulation, chordSync) {
+    function showResultsModal(headline, reward, accuracy, timing, elapsedTime, targetTime, hold, pedal, correctCount, missedCount, extraCount, repeatText, progress, voicing, articulation, chordSync) {
       const overlay = document.getElementById("resultsModalOverlay");
       if (!overlay) return;
       document.getElementById("resultsHeadline").textContent = headline || "Run Complete";
       document.getElementById("resultsReward").textContent = reward || "";
       document.getElementById("resAccuracy").textContent = accuracy || "0%";
       document.getElementById("resTiming").textContent = timing || "n/a";
+      document.getElementById("resElapsedTime").textContent = elapsedTime || "—";
+      document.getElementById("resTargetTime").textContent = targetTime || "—";
       document.getElementById("resHold").textContent = hold || "—";
       document.getElementById("resVoicing").textContent = voicing || "100%";
       document.getElementById("resArticulation").textContent = articulation || "100%";

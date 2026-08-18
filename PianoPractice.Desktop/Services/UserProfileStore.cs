@@ -164,11 +164,12 @@ public sealed class CadenzaUserSettings
     public double AutoDismissResultsSeconds { get; set; } = 10.0;
     public bool AlwaysShowLiveNoteFeedback { get; set; } = true;
     public bool MidiShortcutsEnabled { get; set; } = true;
-    public int MidiRemoteArmNote { get; set; } = 84; // C6
+    public int MidiRemoteArmNote { get; set; } = -1; // Retained for profile compatibility; piano keys cannot arm shortcuts.
     public int MidiShortcutListenNote { get; set; } = 48; // C3
     public int MidiShortcutPracticeNote { get; set; } = 50; // D3
     public int MidiShortcutPerformanceNote { get; set; } = 52; // E3
     public int MidiShortcutTogglePlayNote { get; set; } = 64; // E4
+    public int MidiShortcutPauseNote { get; set; } = -1;
     public int MidiShortcutRestartNote { get; set; } = 60; // C4
     public int MidiShortcutPreviousMeasureNote { get; set; } = 57; // A3
     public int MidiShortcutNextMeasureNote { get; set; } = 59; // B3
@@ -176,6 +177,7 @@ public sealed class CadenzaUserSettings
     public int MidiShortcutNextPageNote { get; set; } = 55; // G3
     public int MidiShortcutDismissResultsNote { get; set; } = 62; // D4
     public int MidiShortcutRepeatResultsNote { get; set; } = 67; // G4
+    public int MidiControllerMappingVersion { get; set; }
     public Dictionary<string, string> MidiControllerBindings { get; set; } = new(StringComparer.Ordinal);
 }
 

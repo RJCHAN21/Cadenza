@@ -7,6 +7,8 @@ public enum MidiShortcutAction
     StartPractice,
     StartPerformance,
     TogglePlayback,
+    Play,
+    Pause,
     Restart,
     PreviousMeasure,
     NextMeasure,
@@ -51,9 +53,8 @@ public sealed record MidiShortcutRouteResult(
     string? Message = null);
 
 /// <summary>
-/// Routes protected MIDI commands through a deliberate tap-to-arm gesture.
-/// Ordinary notes pass through untouched; reserved arm/command notes are only
-/// consumed while participating in an active remote gesture.
+/// Routes protected MIDI-note commands after a dedicated controller control
+/// arms the remote. Ordinary piano notes cannot arm shortcuts themselves.
 /// </summary>
 public sealed class MidiShortcutRouter
 {
@@ -62,14 +63,35 @@ public sealed class MidiShortcutRouter
 
     private readonly HashSet<int> _notesDown = [];
     private readonly HashSet<int> _consumedNotes = [];
-    private bool _armTapEligible;
-    private DateTimeOffset _armPressedAt;
     private DateTimeOffset? _armedUntil;
 
     public bool IsArmed(DateTimeOffset now)
     {
         ExpireArm(now);
         return _armedUntil is not null;
+    }
+
+    public MidiShortcutRouteResult ArmFromDedicatedControl(
+        MidiShortcutContext context,
+        DateTimeOffset now)
+    {
+        if (context == MidiShortcutContext.Unavailable)
+        {
+            _armedUntil = null;
+            return new MidiShortcutRouteResult(
+                true,
+                MidiShortcutAction.None,
+                MidiShortcutSignal.Blocked,
+                Message: "MIDI Remote is unavailable while the app is busy or a dialog is open.");
+        }
+
+        _armedUntil = now + ArmedDuration;
+        return new MidiShortcutRouteResult(
+            true,
+            MidiShortcutAction.None,
+            MidiShortcutSignal.Armed,
+            _armedUntil,
+            "MIDI Remote armed from a dedicated controller control for 3 seconds.");
     }
 
     public MidiShortcutRouteResult ProcessNoteOn(
@@ -87,32 +109,6 @@ public sealed class MidiShortcutRouter
                 _consumedNotes.Contains(noteNumber),
                 MidiShortcutAction.None,
                 MidiShortcutSignal.None);
-        }
-
-        if (noteNumber == armNoteNumber)
-        {
-            _consumedNotes.Add(noteNumber);
-            if (context == MidiShortcutContext.Unavailable)
-            {
-                _armTapEligible = false;
-                _armedUntil = null;
-                return new MidiShortcutRouteResult(
-                    true,
-                    MidiShortcutAction.None,
-                    MidiShortcutSignal.Blocked,
-                    Message: "MIDI Remote is unavailable while the app is busy or a dialog is open.");
-            }
-
-            _armTapEligible = _notesDown.Count == 1;
-            _armPressedAt = now;
-            _armedUntil = null;
-            return new MidiShortcutRouteResult(
-                true,
-                MidiShortcutAction.None,
-                _armTapEligible ? MidiShortcutSignal.ModifierPressed : MidiShortcutSignal.Blocked,
-                Message: _armTapEligible
-                    ? "Release the Remote key to arm MIDI shortcuts."
-                    : "Release every other MIDI key before tapping the Remote key.");
         }
 
         if (_armedUntil is null)
@@ -155,40 +151,11 @@ public sealed class MidiShortcutRouter
         _notesDown.Remove(noteNumber);
         var consumed = _consumedNotes.Remove(noteNumber);
 
-        if (noteNumber != armNoteNumber)
-        {
-            return new MidiShortcutRouteResult(consumed, MidiShortcutAction.None, MidiShortcutSignal.None);
-        }
-
-        var elapsed = now - _armPressedAt;
-        var canArm = _armTapEligible &&
-                     elapsed >= TimeSpan.Zero &&
-                     elapsed <= MaximumArmTapDuration &&
-                     _notesDown.Count == 0;
-        _armTapEligible = false;
-
-        if (!canArm)
-        {
-            _armedUntil = null;
-            return new MidiShortcutRouteResult(
-                true,
-                MidiShortcutAction.None,
-                MidiShortcutSignal.Cancelled,
-                Message: "MIDI Remote was not armed. Tap and release the Remote key with all other keys up.");
-        }
-
-        _armedUntil = now + ArmedDuration;
-        return new MidiShortcutRouteResult(
-            true,
-            MidiShortcutAction.None,
-            MidiShortcutSignal.Armed,
-            _armedUntil,
-            "MIDI Remote armed for 3 seconds.");
+        return new MidiShortcutRouteResult(consumed, MidiShortcutAction.None, MidiShortcutSignal.None);
     }
 
     public void CancelArm()
     {
-        _armTapEligible = false;
         _armedUntil = null;
     }
 
@@ -206,6 +173,7 @@ public sealed class MidiShortcutRouter
             MidiShortcutAction.StartPractice or
             MidiShortcutAction.StartPerformance or
             MidiShortcutAction.TogglePlayback or
+            MidiShortcutAction.Play or
             MidiShortcutAction.Restart or
             MidiShortcutAction.PreviousMeasure or
             MidiShortcutAction.NextMeasure or
@@ -221,6 +189,8 @@ public sealed class MidiShortcutRouter
             MidiShortcutAction.SetMonitorVolume,
         MidiShortcutContext.Running => action is
             MidiShortcutAction.TogglePlayback or
+            MidiShortcutAction.Play or
+            MidiShortcutAction.Pause or
             MidiShortcutAction.Restart or
             MidiShortcutAction.Stop or
             MidiShortcutAction.ToggleLoop or
@@ -232,6 +202,8 @@ public sealed class MidiShortcutRouter
             MidiShortcutAction.SetMonitorVolume,
         MidiShortcutContext.Paused => action is
             MidiShortcutAction.TogglePlayback or
+            MidiShortcutAction.Play or
+            MidiShortcutAction.Pause or
             MidiShortcutAction.Restart or
             MidiShortcutAction.PreviousMeasure or
             MidiShortcutAction.NextMeasure or
@@ -250,6 +222,7 @@ public sealed class MidiShortcutRouter
             MidiShortcutAction.RepeatResults or
             MidiShortcutAction.Restart or
             MidiShortcutAction.TogglePlayback or
+            MidiShortcutAction.Play or
             MidiShortcutAction.StartListen or
             MidiShortcutAction.StartPractice or
             MidiShortcutAction.StartPerformance or
@@ -268,7 +241,9 @@ public sealed class MidiShortcutRouter
         MidiShortcutAction.StartListen => "Start Listen",
         MidiShortcutAction.StartPractice => "Start Practice",
         MidiShortcutAction.StartPerformance => "Start Performance",
-        MidiShortcutAction.TogglePlayback => "Play / Pause / Stop",
+        MidiShortcutAction.TogglePlayback => "Play / Pause (Legacy)",
+        MidiShortcutAction.Play => "Play",
+        MidiShortcutAction.Pause => "Pause",
         MidiShortcutAction.Restart => "Restart",
         MidiShortcutAction.PreviousMeasure => "Previous Measure",
         MidiShortcutAction.NextMeasure => "Next Measure",
@@ -276,7 +251,7 @@ public sealed class MidiShortcutRouter
         MidiShortcutAction.NextPage => "Next Page",
         MidiShortcutAction.DismissResults => "Dismiss Results",
         MidiShortcutAction.RepeatResults => "Repeat Results",
-        MidiShortcutAction.Stop => "Stop / Close Results",
+        MidiShortcutAction.Stop => "Stop",
         MidiShortcutAction.ToggleLoop => "Toggle Loop",
         MidiShortcutAction.SetLessonTempo => "Lesson Tempo",
         MidiShortcutAction.SetNotationZoom => "Notation Zoom",

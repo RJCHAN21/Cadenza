@@ -236,10 +236,12 @@
     }
 
     function updateExpected(ids, beat) {
-      const key = stableKey(ids);
-      if (key !== lastExpectedKey || ![...expectedNodes].every(node => node.isConnected)) {
+      const filteredIds = hintIdsForSelectedHand(ids);
+      const key = stableKey(filteredIds);
+      if (key !== lastExpectedKey ||
+          ![...expectedNodes].every(node => node.isConnected && node.classList.contains("expected"))) {
         lastExpectedKey = key;
-        expectedNodes = replaceClassSet(expectedNodes, nodeSetForIds(ids), "expected");
+        expectedNodes = replaceClassSet(expectedNodes, nodeSetForIds(filteredIds), "expected");
       }
       if (!hintMode) {
         if (lastHintKey) {
@@ -248,10 +250,13 @@
         }
         return;
       }
-      if (key === lastHintKey) return;
-      lastHintKey = key;
+      const hintKey = `${handMode}:${key}`;
+      const hintDecorationsExist = filteredIds.length === 0 ||
+        document.querySelector(".hint-svg-badge") !== null;
+      if (hintKey === lastHintKey && hintDecorationsExist) return;
+      lastHintKey = hintKey;
       clearHintDecorations();
-      updateHintLane({ notes: ids || [], elements: [] }, beat);
+      updateHintLane({ notes: filteredIds, elements: [] }, beat);
     }
 
     function setPixelStyle(element, property, value) {

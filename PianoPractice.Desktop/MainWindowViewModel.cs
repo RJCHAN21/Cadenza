@@ -92,6 +92,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     private string _liveMonitorStatus = "MIDI monitor is on. Select a device to hear live piano.";
     private string _resultHeadline = "Lesson complete";
     private string _resultSummary = string.Empty;
+    private string _resultElapsedTimeLabel = "—";
+    private string _resultTargetTimeLabel = "—";
     private string _rewardLabel = string.Empty;
     private string _midiLiveIndicator = "Not connected";
     private string _lastMidiKeyLabel = "No physical MIDI event received";
@@ -145,6 +147,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     private int _focusEndMeasure = 1;
     private int _lessonTempoPercent = 100;
     private double _lessonStartBeat;
+    private double _lessonTargetSeconds;
     private double _previewStartBeat;
     private double _previewEndBeat;
     private bool _hintModeEnabled;
@@ -320,6 +323,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     public string LiveMonitorStatus { get => _liveMonitorStatus; private set => SetField(ref _liveMonitorStatus, value); }
     public string ResultHeadline { get => _resultHeadline; private set => SetField(ref _resultHeadline, value); }
     public string ResultSummary { get => _resultSummary; private set => SetField(ref _resultSummary, value); }
+    public string ResultElapsedTimeLabel { get => _resultElapsedTimeLabel; private set => SetField(ref _resultElapsedTimeLabel, value); }
+    public string ResultTargetTimeLabel { get => _resultTargetTimeLabel; private set => SetField(ref _resultTargetTimeLabel, value); }
     public string RewardLabel { get => _rewardLabel; private set => SetField(ref _rewardLabel, value); }
     public string MidiLiveIndicator { get => _midiLiveIndicator; private set => SetField(ref _midiLiveIndicator, value); }
     public string LastMidiKeyLabel { get => _lastMidiKeyLabel; private set => SetField(ref _lastMidiKeyLabel, value); }
@@ -354,6 +359,38 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     public int CorrectCount => _correctCount;
     public int MissedCount => _missedCount;
     public int ExtraCount => _extraCount;
+    public string LessonCountdownLabel
+    {
+        get
+        {
+            if (_score is null) return "--:--";
+            if (IsLessonActive)
+                return FormatCountdown(_lessonTargetSeconds - _practiceSessionClock.Elapsed.TotalSeconds);
+
+            if (SelectedLessonMode == LessonMode.Listen && _previewUsesScore)
+            {
+                if (IsPreviewPlaying)
+                {
+                    var previewSeconds = _score.PerformanceDurationSeconds(
+                        _previewStartBeat,
+                        _previewEndBeat,
+                        EffectiveLessonTempoBpm);
+                    return FormatCountdown(previewSeconds - _previewClock.Elapsed.TotalSeconds);
+                }
+
+                if (IsPreviewPaused)
+                    return FormatCountdown(_score.PerformanceDurationSeconds(
+                        CursorBeat,
+                        _previewEndBeat,
+                        EffectiveLessonTempoBpm));
+            }
+
+            if (SelectedLessonMode == LessonMode.Listen && CursorBeat >= SelectedPreviewEndBeat - 0.01)
+                return "0:00";
+
+            return FormatCountdown(CalculateLessonTargetSeconds());
+        }
+    }
     public IReadOnlySet<int> HeldNoteNumbers { get => _heldNoteNumbers; private set => SetField(ref _heldNoteNumbers, value); }
     public ScoreDocument? CurrentScore => _score;
     public bool HasMidiReference => _midiReference is not null;
@@ -475,6 +512,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             }
             RefreshLessonGroups();
             ResetPreviewPositionToRangeStart();
+            CursorBeat = InitialLessonCursorBeat;
             OnPropertyChanged(nameof(FocusRangeLabel));
             SaveProfileSettings();
         }
@@ -495,6 +533,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             StopActiveSessionForSelectionChange();
             RefreshLessonGroups();
             ResetPreviewPositionToRangeStart();
+            CursorBeat = InitialLessonCursorBeat;
             OnPropertyChanged(nameof(FocusRangeLabel));
             SaveProfileSettings();
         }
@@ -511,6 +550,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             OnPropertyChanged(nameof(LessonTempoPercentText));
             OnPropertyChanged(nameof(EffectiveLessonTempoBpmText));
             OnPropertyChanged(nameof(MetronomeLabel));
+            OnPropertyChanged(nameof(LessonCountdownLabel));
             SaveProfileSettings();
         }
     }
@@ -873,6 +913,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             {
                 OnPropertyChanged(nameof(SelectedLessonModeLabel));
                 OnPropertyChanged(nameof(ModeTitleLabel));
+                OnPropertyChanged(nameof(LessonCountdownLabel));
                 ResetLessonStats();
                 SaveProfileSettings();
             }
@@ -904,6 +945,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
                     SaveProfileSettings();
                     OnPropertyChanged(nameof(PreferredMidiDeviceLabel));
                 }
+                RefreshMidiShortcutPresentation();
                 OnPropertyChanged(nameof(InputSourceLabel));
                 OnPropertyChanged(nameof(StartLessonReason));
                 OnPropertyChanged(nameof(CanStartLesson));
@@ -1647,7 +1689,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             OnPropertyChanged(nameof(CompletedAttemptCount));
             OnPropertyChanged(nameof(CanUseTransport));
             RefreshLessonGroups();
-            CursorBeat = SelectedPreviewStartBeat;
+            CursorBeat = InitialLessonCursorBeat;
             StatusMessage = _score.ValidationWarnings.Count == 0
                 ? $"Loaded {ScoreTitle} | {_score.MeasureCount:N0} written measures | {_score.PerformanceMeasures.Count:N0} performed measures | {_score.TempoBpm:0} BPM."
                 : $"Loaded with {_score.ValidationWarnings.Count} validation warning(s). Listen uses best-effort playback; affected assessed ranges remain disabled.";
@@ -2307,10 +2349,12 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         SelectedMode = mode;
         if (_score is not null)
         {
-            _lessonGroups = _score.GetPracticeGroups(SelectedMode);
+            _lessonGroups = _score.GetPracticeGroups(SelectedMode)
+                .Where(IsGroupInFocus)
+                .ToArray();
             _lessonGroupIndex = 0;
             _matchedNotes.Clear();
-            CursorBeat = SelectedPreviewStartBeat;
+            CursorBeat = InitialLessonCursorBeat;
             UpdateExpectedGuideForCursor();
         }
         StatusMessage = $"{SelectedModeLabel} selected. Press Play (or Space) to start.";
@@ -2328,6 +2372,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         _preparedPerformanceWave = null;
         _performanceAudioOwnsMetronome = false;
         SelectedLessonMode = mode;
+        CursorBeat = InitialLessonCursorBeat;
         StatusMessage = $"{SelectedLessonModeLabel} selected. {StartLessonReason}";
         LessonStatusLabel = StartLessonReason;
         ExpectedLabel = mode == LessonMode.Listen
@@ -2364,7 +2409,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             StopActiveModeForSwitch();
             ApplyLessonModeSelection(mode);
             PrepareDefaultAssessableRange();
-            CursorBeat = SelectedPreviewStartBeat;
+            CursorBeat = InitialLessonCursorBeat;
             UpdateExpectedGuideForCursor();
 
             StatusMessage = $"{SelectedLessonModeLabel} selected. Press Play (or Space) to start.";
@@ -2510,8 +2555,9 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         ResetLessonStats();
         _lessonGroupIndex = 0;
         _lessonStartBeat = SelectedPreviewStartBeat;
+        _lessonTargetSeconds = CalculateLessonTargetSeconds();
         _nextMetronomeBeat = _lessonStartBeat;
-        CursorBeat = _lessonStartBeat;
+        CursorBeat = InitialLessonCursorBeat;
         if (SelectedLessonMode == LessonMode.TimedPlay)
         {
             if (_preparedPerformanceWave is not null)
@@ -2520,12 +2566,16 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             _preparedPerformanceWave = null;
         }
         else _lessonClock.Reset();
-        _practiceSessionClock.Restart();
+        if (SelectedLessonMode == LessonMode.TimedPlay)
+            _practiceSessionClock.Restart();
+        else
+            _practiceSessionClock.Reset();
         IsLessonActive = true;
         _lessonRunGeneration++;
         _feedbackEventSequence = 0;
-        LessonRunStateChanged?.Invoke(this, new LessonRunStateEvent("started", SelectedLessonMode, _lessonStartBeat, _lessonRunGeneration));
+        LessonRunStateChanged?.Invoke(this, new LessonRunStateEvent("started", SelectedLessonMode, CursorBeat, _lessonRunGeneration));
         _lessonTimer.Start();
+        OnPropertyChanged(nameof(LessonCountdownLabel));
         LessonStatusLabel = $"{SelectedLessonModeLabel} · {FocusRangeLabel} · {EffectiveLessonTempoBpm:0} BPM.";
         ExpectedLabel = FormatExpectedGroup();
         StatusMessage = (_nativeInputActive, UseKeyboardSimulation) switch
@@ -2800,6 +2850,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         _lessonGroupIndex = 0;
         OnPropertyChanged(nameof(CanStartLesson));
         OnPropertyChanged(nameof(StartLessonReason));
+        OnPropertyChanged(nameof(LessonCountdownLabel));
         ProgressLabel = $"0 / {_lessonGroups.Count} expected groups";
         UpdateExpectedGuideForCursor();
     }
@@ -2832,6 +2883,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         .Select(occurrence => occurrence.PerformanceStartBeat)
         .DefaultIfEmpty(0)
         .Min();
+
+    private double InitialLessonCursorBeat =>
+        SelectedLessonMode == LessonMode.WaitForYou && _lessonGroups.Count > 0
+            ? _lessonGroups[0].OnsetBeats
+            : SelectedPreviewStartBeat;
 
     private double SelectedPreviewEndBeat => SelectedPerformanceOccurrences
         .Select(occurrence => occurrence.PerformanceStartBeat + occurrence.DurationBeats)
@@ -2893,7 +2949,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         CurrentStreak = 0;
         BestStreak = 0;
         ResultsVisible = false;
-        CursorBeat = SelectedPreviewStartBeat;
+        CursorBeat = InitialLessonCursorBeat;
         CorrectLabel = "0";
         MissedLabel = "0";
         ExtraLabel = "0";
@@ -2927,10 +2983,12 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             {
                 0x90 when message.Data2 > 0 => $"Key {MidiNoteFormatter.Format(message.Data1)} · velocity {message.Data2}",
                 0x80 or 0x90 => $"Released {MidiNoteFormatter.Format(message.Data1)}",
-                0xB0 => $"Controller CC{message.Data1} · value {message.Data2}",
-                _ => $"MIDI 0x{message.Status:X2} · {message.Data1} · {message.Data2}"
+                0xB0 when message.Data1 == 64 => $"Sustain pedal {(message.Data2 >= 64 ? "down" : "up")}",
+                _ => FormatUserFacingMidiActivity(message, false)
             };
-            LastMidiKeyLabel = $"{description} · channel {channel}";
+            LastMidiKeyLabel = command is 0x80 or 0x90
+                ? $"{description} · channel {channel}"
+                : description;
             MidiLiveIndicator = $"{SelectedMidiDevice?.Name ?? "MIDI input"} connected · receiving now";
         });
     }
@@ -2943,7 +3001,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             HandleMidiControllerMessage(message, true);
             _lastMidiEventAt = message.Timestamp;
             _lastIndicatorSecond = -1;
-            LastMidiKeyLabel = $"Controller 0x{message.Status:X2} · {message.Data1} · {message.Data2}";
+            LastMidiKeyLabel = FormatUserFacingMidiActivity(message, true);
             MidiLiveIndicator = $"{SelectedMidiDevice?.Name ?? "MIDI keyboard"} + {_midiControlSurfaceDevice?.Name ?? "DAW controls"} receiving";
         });
     }
@@ -3094,11 +3152,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
                 ScorePedalEvent(_pedalDown);
                 OnPropertyChanged(nameof(PedalStatusLabel));
                 OnPropertyChanged(nameof(PedalCategoryLabel));
-                InputActivityLabel = $"MIDI CC64 from {SelectedMidiDevice?.Name ?? "selected input"}: sustain {(_pedalDown ? "down" : "up")} ({message.Value})";
+                InputActivityLabel = $"Sustain pedal {(_pedalDown ? "down" : "up")}.";
             }
             else
             {
-                InputActivityLabel = $"MIDI CC{message.Controller} from {SelectedMidiDevice?.Name ?? "selected input"}: {message.Value}";
+                InputActivityLabel = "MIDI control moved.";
             }
 
             if (MidiMonitorEnabled)
@@ -3166,6 +3224,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
 
         if (SelectedLessonMode == LessonMode.WaitForYou)
         {
+            if (!_practiceSessionClock.IsRunning)
+            {
+                _practiceSessionClock.Start();
+                OnPropertyChanged(nameof(LessonCountdownLabel));
+            }
             HandleWaitForYouNote(midiNoteNumber);
         }
         else
@@ -3208,6 +3271,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
                 _matchedNotes.Clear();
                 if (_lessonGroupIndex >= _lessonGroups.Count)
                 {
+                    _practiceSessionClock.Stop();
+                    OnPropertyChanged(nameof(LessonCountdownLabel));
                     var generation = _modeSwitchGeneration;
                     _ = CompletePracticeLessonAsync(generation);
                 }
@@ -3358,7 +3423,16 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     private void LessonTimer_Tick(object? sender, EventArgs e)
     {
         if (_score is null) return;
-        if (!IsLessonActive) return;
+        if (!IsLessonActive)
+        {
+            if (SelectedLessonMode == LessonMode.Listen && IsPreviewPlaying &&
+                (DateTime.UtcNow - _lastLiveUpdate).TotalMilliseconds >= 80)
+            {
+                _lastLiveUpdate = DateTime.UtcNow;
+                OnPropertyChanged(nameof(LessonCountdownLabel));
+            }
+            return;
+        }
         var beat = PerformanceBeatAtElapsed(_lessonStartBeat, _lessonClock.Elapsed);
         while (_nextMetronomeBeat <= beat)
         {
@@ -3384,6 +3458,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         if ((DateTime.UtcNow - _lastLiveUpdate).TotalMilliseconds >= 80)
         {
             _lastLiveUpdate = DateTime.UtcNow;
+            OnPropertyChanged(nameof(LessonCountdownLabel));
             UpdateLessonMetrics();
         }
     }
@@ -3430,6 +3505,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         _lessonTimer.Stop();
         _lessonClock.Stop();
         _practiceSessionClock.Stop();
+        ResultElapsedTimeLabel = FormatResultDuration(_practiceSessionClock.Elapsed.TotalSeconds);
+        ResultTargetTimeLabel = FormatResultDuration(_lessonTargetSeconds);
         if (SelectedLessonMode == LessonMode.TimedPlay)
             _audioService.StopPreview();
         _preparedPerformanceWave = null;
@@ -3445,6 +3522,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             ? $"Lesson complete. Correct {_correctCount}, missed {_missedCount}, extra {_extraCount}."
             : "Lesson stopped. The selected score and input remain ready.";
         RaiseLessonStateProperties();
+        OnPropertyChanged(nameof(LessonCountdownLabel));
         UpdateLessonMetrics();
         var assessmentBlocked = _score?.HasBlockingAssessmentWarning(FocusStartMeasure, FocusEndMeasure) == true;
         if (completed && _correctCount > 0 && !assessmentBlocked)
@@ -3683,6 +3761,27 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         OnPropertyChanged(nameof(CanStartLesson));
     }
 
+    private double CalculateLessonTargetSeconds() => _score is null
+        ? 0
+        : _score.PerformanceDurationSeconds(
+            SelectedPreviewStartBeat,
+            SelectedPreviewEndBeat,
+            EffectiveLessonTempoBpm);
+
+    private static string FormatCountdown(double seconds)
+    {
+        var isOvertime = seconds < -0.0001;
+        var totalSeconds = (long)Math.Ceiling(Math.Abs(seconds));
+        return $"{(isOvertime ? "-" : string.Empty)}{totalSeconds / 60}:{totalSeconds % 60:00}";
+    }
+
+    private static string FormatResultDuration(double seconds)
+    {
+        var totalTenths = (long)Math.Round(Math.Max(0, seconds) * 10, MidpointRounding.AwayFromZero);
+        var wholeSeconds = totalTenths / 10;
+        return $"{wholeSeconds / 60}:{wholeSeconds % 60:00}.{totalTenths % 10}";
+    }
+
     private void RaiseLessonStateProperties()
     {
         OnPropertyChanged(nameof(CanChooseInput));
@@ -3703,6 +3802,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         OnPropertyChanged(nameof(CanUseTransport));
         OnPropertyChanged(nameof(CanPlayMidiReference));
         OnPropertyChanged(nameof(CanSwitchLessonMode));
+        OnPropertyChanged(nameof(LessonCountdownLabel));
     }
 
     private void SaveProfileSettings()
