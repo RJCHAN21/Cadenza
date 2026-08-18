@@ -1,0 +1,11 @@
+* text=auto
+
+# Deterministic fixture inputs must retain byte-identical LF line endings.
+TestData/Fixtures/*.musicxml text eol=lf
+TestData/Fixtures/*.json text eol=lf
+
+# Generated and bundled binary assets must never receive text conversion.
+*.mid binary
+*.mxl binary
+*.otf binary
+LICENSE text eol=lf

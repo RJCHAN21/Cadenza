@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose a focused improvement consistent with Cadenza's local-first scope.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Scope check
+      options:
+        - label: I read README.md and docs/LIMITATIONS.md and searched existing requests.
+          required: true
+        - label: This request does not require a proprietary score catalogue, advertising, subscriptions, engagement mechanics, or a mandatory cloud account.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Describe the sight-reading or contributor problem without assuming a particular implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: State observable behavior and who benefits. Avoid claims of unproven educational effectiveness.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Boundaries and risks
+      description: Note platform, MusicXML, MIDI, accessibility, privacy, security, licensing, and compatibility effects.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Acceptance and validation
+      description: Suggest deterministic evidence and any necessary manual hardware/UI checks.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

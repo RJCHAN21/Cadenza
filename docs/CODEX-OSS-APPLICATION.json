@@ -1,0 +1,47 @@
+{
+  "submissionStatus": "ready_to_submit",
+  "projectName": "Cadenza",
+  "repositoryUrl": "https://github.com/RJCHAN21/Cadenza",
+  "personalGitHubUrl": "https://github.com/RJCHAN21",
+  "repositoryDescription": "Early-stage, local-first Windows piano sight-reading practice for user-provided MusicXML/MXL scores, with optional MIDI-controller input.",
+  "preparedBranch": "main",
+  "officialApplicationUrl": "https://openai.com/form/codex-for-oss/",
+  "licence": "GPL-3.0-only",
+  "interestSelections": [
+    "Codex Security",
+    "API credits for my project"
+  ],
+  "responses": [
+    {
+      "id": "A",
+      "question": "Why does this repository qualify?",
+      "answer": "Cadenza is an early-stage, incomplete GPL-3.0-only Windows piano-practice project for user-owned MusicXML/MXL scores. It matters as a small, inspectable testbed for notation parsing, repeat-aware timelines, WebView2 engraving, and optional MIDI input. It has no significant adoption or proven educational outcomes. The maintainer reviews all AI-assisted changes.",
+      "characterCount": 362
+    },
+    {
+      "id": "B",
+      "question": "How will API credits be used?",
+      "answer": "Cadenza is early-stage and incomplete. API credits would support maintainer-reviewed work on minimal MusicXML compatibility cases, repeat/volta regressions, accessibility, documentation, issue triage, and bounded malformed-input tests. They would not fund a song catalogue or autonomous merges. The maintainer reviews all AI-assisted changes.",
+      "characterCount": 342
+    },
+    {
+      "id": "C",
+      "question": "Why does the project need Codex Security?",
+      "answer": "Cadenza is early-stage and incomplete. It processes untrusted MusicXML/MXL and MIDI, stores local user data, bridges .NET to WebView2, and accepts optional WinMM input. Codex Security could help model these boundaries and propose regression-backed fixes without implying a production security audit. The maintainer reviews all AI-assisted changes.",
+      "characterCount": 347
+    },
+    {
+      "id": "D",
+      "question": "Anything else we should know?",
+      "answer": "Cadenza is early-stage and incomplete, Windows-first, pre-release, and not significantly adopted. Clean-clone validation passes without MIDI or audio hardware; real devices, WebView2 UI, audio, accessibility, and release packaging still need manual work. No production-readiness or educational-effectiveness claim is made. The maintainer reviews all AI-assisted changes.",
+      "characterCount": 370
+    }
+  ],
+  "maintainerSuppliedFieldsStillRequired": [
+    "first name",
+    "last name",
+    "email associated with the maintainer's ChatGPT account",
+    "maintainer role selection: primary maintainer or core maintainer",
+    "OpenAI Organization ID"
+  ]
+}

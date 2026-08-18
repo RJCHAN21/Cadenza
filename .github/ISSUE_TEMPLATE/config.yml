@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Private security report
+    url: https://github.com/RJCHAN21/Cadenza/security/advisories/new
+    about: Report vulnerabilities privately; do not disclose active issues publicly.
+  - name: Support boundaries
+    url: https://github.com/RJCHAN21/Cadenza/blob/main/SUPPORT.md
+    about: Read setup, privacy, and support expectations before filing.

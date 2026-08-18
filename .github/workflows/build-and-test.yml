@@ -4,8 +4,8 @@ on:
   push:
     branches:
       - main
+      - release/**
       - fix/**
-      - feat/**
   pull_request:
 
 permissions:
@@ -14,43 +14,23 @@ permissions:
 jobs:
   build-and-test:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Validate notation runtime JavaScript
-        shell: pwsh
-        run: |
-          node --check PianoPractice.Desktop/Assets/Verovio/cadenza-runtime-patch.js
-          node --check PianoPractice.Desktop/Assets/Verovio/cadenza-runtime-edge-patch.js
-          node --check PianoPractice.Desktop/Assets/Verovio/cadenza-bar-boundary-bridge-patch.js
-          node --check PianoPractice.Desktop/Assets/Verovio/cadenza-listen-highlight-patch.js
-          node --check PianoPractice.Desktop/Assets/Verovio/cadenza-continuous-motion-patch.js
-          node PianoPractice.RendererSmoke/bar-boundary-bridge-smoke.cjs
-          node PianoPractice.RendererSmoke/listen-highlight-smoke.cjs
-          node PianoPractice.RendererSmoke/listen-highlight-halo-smoke.cjs
-          node PianoPractice.RendererSmoke/continuous-motion-smoke.cjs
-          node PianoPractice.RendererSmoke/renderer-smoke.cjs
+        uses: actions/checkout@v6
 
       - name: Set up .NET 8
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 8.0.x
 
-      - name: Restore desktop project
-        run: dotnet restore PianoPractice.Desktop/PianoPractice.Desktop.csproj
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
 
-      - name: Build desktop project (Debug and Release)
-        run: |
-          dotnet build PianoPractice.Desktop/PianoPractice.Desktop.csproj --configuration Debug --no-restore
-          dotnet build PianoPractice.Desktop/PianoPractice.Desktop.csproj --configuration Release --no-restore
-
-      - name: Run deterministic MusicXML, timeline, persistence, and audio tests
-        run: dotnet run --project PianoPractice.ParserSmoke/PianoPractice.ParserSmoke.csproj --configuration Release
-
-      - name: Run hardware-independent application simulations
-        run: |
-          dotnet run --project PianoPractice.ShortcutSmoke/PianoPractice.ShortcutSmoke.csproj --configuration Release
-          dotnet run --project PianoPractice.SimulationSmoke/PianoPractice.SimulationSmoke.csproj --configuration Release
+      - name: Run clean-clone validation
+        shell: pwsh
+        run: ./scripts/Validate.ps1

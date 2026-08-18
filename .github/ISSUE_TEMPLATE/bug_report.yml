@@ -1,0 +1,78 @@
+name: Bug report
+description: Report a reproducible Cadenza defect with safe, shareable evidence.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach copyrighted/private scores, personal profile data, device serials, or active vulnerability details. Report security issues through SECURITY.md.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Preflight
+      options:
+        - label: I reproduced this on the current default branch or identified the exact commit.
+          required: true
+        - label: I searched existing issues and read docs/LIMITATIONS.md.
+          required: true
+        - label: Any attached fixture is original, public-domain, or licensed for repository redistribution.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit and environment
+      description: Commit SHA, Windows version, .NET SDK, Node, and WebView2 version when relevant.
+      placeholder: "commit abc1234; Windows 11 24H2; .NET 8.0.x; Node 22.x"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - MusicXML/MXL import
+        - Repeat or ending timeline
+        - Renderer or cursor
+        - Guided practice or timed performance
+        - MIDI file reference
+        - Live MIDI device
+        - Audio preview
+        - Library or persistence
+        - Build, validation, or CI
+        - Accessibility or keyboard navigation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: For timeline bugs, include manually derived written measures, occurrence order, and beats.
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Include the exact error and earliest incorrect state if known.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal ordered steps and frequency. Link a reduced, legally redistributable fixture if needed.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation output
+      description: Paste the relevant concise output from scripts/Validate.ps1 or explain why it cannot run.
+      render: shell
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Redacted logs, screenshots, device model, or a suspected regression commit.

@@ -1,51 +1,113 @@
-# Cadenza (Piano Practice Studio)
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
 
-Piano Practice Studio is a local Windows desktop piano-learning prototype. The app shell and lesson engine are native WPF/.NET 8. Standard score engraving is performed locally by bundled Verovio 6.2 and the Bravura SMuFL font inside WebView2; no score data is uploaded.
+# Cadenza
 
-## Run
+Cadenza is an early-stage, local-first Windows piano sight-reading practice
+application. It imports user-provided MusicXML or MXL scores, engraves them
+locally, and supports computer-keyboard or optional MIDI-controller practice.
+It does not include a commercial song catalogue or upload scores to a service.
+
+## Licence
+
+Cadenza-authored source and repository documentation are free software under
+the GNU General Public License version 3.0 only
+(`SPDX-License-Identifier: GPL-3.0-only`). See [LICENSE](LICENSE). Bundled
+third-party components retain their own copyright and licence terms; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). User-provided scores remain
+the property and responsibility of their respective rights holders.
+
+## Status
+
+Cadenza is pre-release software under active development. It is not a proven
+curriculum, a professional performance assessor, or production-ready. MusicXML
+coverage, assessment behavior, accessibility, hardware compatibility, and UI
+polish remain incomplete. See [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+
+## Verified capabilities
+
+- Local MusicXML, XML, and compressed MXL import with bounded archive/XML
+  processing.
+- Written-score parsing plus an explicit repeat/volta-aware performance plan.
+- Local grand-staff engraving through bundled Verovio and Bravura assets.
+- Page and continuous reading modes with occurrence-aware cursor mapping.
+- Listen, guided practice, and timed performance prototypes.
+- Both-hand, left-hand, and right-hand expected-note groups.
+- Computer-keyboard input and optional Windows MIDI input through WinMM.
+- Local synthesized previews; optional MIDI files are listen/reference sources.
+- User-local library, preferences, and completed-attempt records.
+
+These are implementation capabilities, not claims of educational effectiveness
+or complete format support.
+
+## Requirements
+
+- Windows 11 (Windows 10 may work but is not part of current validation)
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+- Node.js 22 for renderer validation
+- Microsoft Edge WebView2 Runtime for the desktop UI
+- Optional: a class-compliant or vendor-supported Windows MIDI keyboard
+
+The SDK selection is recorded in `global.json`. No MIDI or audio hardware is
+required by the automated validation.
+
+## Build and run
 
 ```powershell
-dotnet run --project .\PianoPractice.Desktop\PianoPractice.Desktop.csproj
+git clone https://github.com/RJCHAN21/Cadenza.git
+cd Cadenza
+dotnet restore Cadenza.sln
+dotnet build Cadenza.sln --configuration Release --no-restore
+dotnet run --project PianoPractice.Desktop --configuration Release --no-build
 ```
 
-On startup the app looks for `Downloads\olivia-rodrigo-drivers-license.mxl` and imports it automatically when present. Import MusicXML accepts `.mxl`, `.musicxml`, and `.xml`.
+The app starts with an empty library. Use **Import MusicXML** to choose a score
+you own or are permitted to use. The repository's original synthetic fixture
+at `TestData/Fixtures/cadenza-timeline.musicxml` is suitable for testing.
 
-## Implemented vertical slice
+## Validate
 
-- Dashboard/library and dedicated notation-first lesson player.
-- MusicXML/MXL import with editable title. The supplied sample displays exactly `drivers license`.
-- Verovio/SMuFL grand-staff engraving with canonical clefs, notes, rests, beams, ties, key/time signatures, chord symbols, and lyrics from authoritative MusicXML.
-- High-contrast ivory notation on charcoal, cyan rendered-position playhead, Page and Continuous layouts, zoom, directional page transitions, focused bar range, and 50-120% lesson tempo.
-- Listen transport with previous/next-measure cueing, restart from the selected range start, real pause/resume, stop, and local piano-like score audio.
-- Generic WinMM device discovery and persistent callback capture. Device Settings separates open/start state from real `MIM_DATA` callbacks and exposes last key, monitor/thru, volume, audio test, latency calibration, sustain setup, and a bounded diagnostic trace.
-- Practice/Wait keeps the playhead anchored on the expected onset and advances only after the expected note/chord. Performance/Timed runs continuously with metronome and grades correct, missed, extra, timing, and hold duration.
-- Safe app controls use `Ctrl+1`, `Ctrl+2`, and `Ctrl+3` to select Listen, Practice, and Performance without starting them. `Space` controls the selected mode, `Esc` stops, and `Ctrl+R` restarts. Mode selection is locked during active, paused, preparing, and results states.
-- The optional MIDI Remote preserves note-key shortcuts without treating ordinary playing as commands: tap and release the reserved Remote key (`C6` by default) with no other notes held, then press one bound command key within three seconds. Commands are context-gated, held/repeated notes cannot retrigger, and `C4` restarts by default. Bindings can be learned or cleared in Settings.
-- Immediate score feedback uses shape plus color: green check for correct, red diamond/cross for missed or extra, cyan hold guidance, and amber early-release feedback. Markers persist for static post-run score review.
-- Left, right, and both-hand practice; CC64 monitoring; pedal grading only when the source contains pedal data.
-- MIDI and PDF reference import. PDF is opened as a review source; it is not falsely converted by unreliable recognition.
-- Clearly labeled computer-keyboard input is available without MIDI hardware. `A S D F G H J K L ;` are consecutive white keys and `W E T Y U O P` are the applicable black keys; both feed the same lesson/scoring pipeline while remaining visibly distinct from MIDI.
-- Verovio time output uses the same non-expanded 50-measure timeline as the MusicXML lesson engine. WPF's monotonic clock is authoritative for audio, metronome, scoring, and the coalesced renderer cursor.
-- Versioned user-local preferences persist MIDI device identity, monitor/audio controls, tempo, hand and reading modes, hints, zoom, lesson range, pedal setup, and latency calibration. A saved device is reopened only when a matching enumerated device is present; absence and disconnect are explicit states.
-- Finalized practice attempts persist per song and date with mode, hand/range, accuracy, timing, hold, missed/extra counts, duration, streak, and last position. Interrupted or empty runs are not recorded. Dashboard and library summaries survive restart, and absent or malformed profile data falls back safely.
-
-## Validation
+From a clean clone:
 
 ```powershell
-dotnet build .\PianoPractice.Desktop\PianoPractice.Desktop.csproj
-dotnet run --project .\PianoPractice.ShortcutSmoke\PianoPractice.ShortcutSmoke.csproj
-dotnet run --project .\PianoPractice.ParserSmoke\PianoPractice.ParserSmoke.csproj -- "C:\Users\RJ Chan\Downloads\olivia-rodrigo-drivers-license.mxl"
-dotnet run --project .\PianoPractice.SimulationSmoke\PianoPractice.SimulationSmoke.csproj -- "C:\Users\RJ Chan\Downloads\olivia-rodrigo-drivers-license.mxl"
-node .\PianoPractice.RendererSmoke\renderer-smoke.cjs "C:\Users\RJ Chan\Downloads\olivia-rodrigo-drivers-license.mxl" 306
+./scripts/Validate.ps1
 ```
 
-The supplied score imports as 50 written measures and an authoritative 70-occurrence, 278-beat performance plan. The simulation smoke covers selected-range transport, pause/resume/restart, home-row mapping, preview audio, metronome, WinMM discovery and input open/close, piano output, MIDI-reference import, wait-for-you scoring, timed scoring, note hold/release, settings restart persistence, finalized-attempt persistence, partial-run exclusion, preferred-device matching, and malformed-profile recovery. The broad renderer regression separately exercises Verovio's 306-beat repeat-expanded timemap, requiring no unresolved SVG IDs or backward page transitions.
+That command regenerates and verifies the deterministic fixtures, performs a
+NuGet vulnerability audit, restores and builds the Release solution, checks
+JavaScript syntax, and runs parser, malformed-input, simulation, and renderer
+regressions for both MusicXML and MXL. It fails if validation dirties the
+worktree or if generated `bin`/`obj` output is tracked.
 
-## Honest limits
+Hardware input, audible output, WebView2 interaction, and accessibility remain
+manual checks documented in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
-Verovio provides established engraving rather than a custom approximation, but this prototype is not a substitute for manual edition review of malformed or unusually complex MusicXML. PDF recognition is not implemented; PDF is a working visual review/reference workflow. Pedal is monitored but not graded when the source has no pedal marks. Latency can be calibrated, but zero or perfect audio latency is not claimed. Vocal-audio alignment and production-grade assessment are not implemented.
+## Deterministic timeline fixture
 
-## Bundled notation licenses
+`TestData/Fixtures/cadenza-timeline.musicxml` was composed for this project. Its
+five written measures and 18 written quarter-note beats expand to seven
+performed occurrences in the order `1, 2, 3, 1, 2, 4, 5`, totaling 26
+performance beats. The parser, simulator, and renderer all verify this
+independently documented contract. See
+[TestData/Fixtures/README.md](TestData/Fixtures/README.md) and
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-- Verovio is bundled under LGPL-3.0; see `Assets/Verovio/COPYING.txt` and `COPYING.LESSER.txt`.
-- Bravura is bundled under the SIL Open Font License; see `Assets/Bravura/LICENSE.txt`.
+## Local data
+
+Cadenza stores imported library copies, the library manifest, preferences, and
+practice history under `%LOCALAPPDATA%\CadenzaPianoStudio`. WebView2 browser data
+uses `%LOCALAPPDATA%\CadenzaPianoStudio\WebView2`. Renderer diagnostics use
+`%LOCALAPPDATA%\Cadenza\Diagnostics`. Deleting these folders resets local state;
+back up user-owned scores first.
+
+## Contributing
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md), then read
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Useful entry points include the
+MusicXML importer in `PianoPractice.Desktop/Services`, the occurrence model in
+`PianoPractice.Desktop/Models/ScoreDocument.cs`, and the deterministic smoke
+projects. Compatibility reports should contain a minimal, legally shareable
+score rather than a copyrighted composition.
+
+Community expectations, support boundaries, and security reporting are in
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SUPPORT.md](SUPPORT.md), and
+[SECURITY.md](SECURITY.md).
