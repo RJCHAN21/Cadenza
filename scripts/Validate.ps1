@@ -102,6 +102,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Renderer runtime patch syntax validation failed.' }
     node --check PianoPractice.Desktop/Assets/Verovio/cadenza-runtime-edge-patch.js
     if ($LASTEXITCODE -ne 0) { throw 'Renderer edge patch syntax validation failed.' }
+    node --check PianoPractice.Desktop/Assets/Verovio/cadenza-playable-position-patch.js
+    if ($LASTEXITCODE -ne 0) { throw 'Playable-position renderer patch syntax validation failed.' }
     node --check PianoPractice.Desktop/Assets/Verovio/cadenza-bar-boundary-bridge-patch.js
     if ($LASTEXITCODE -ne 0) { throw 'Bar-boundary renderer patch syntax validation failed.' }
     node --check PianoPractice.Desktop/Assets/Verovio/cadenza-listen-highlight-patch.js
@@ -112,6 +114,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Renderer smoke syntax validation failed.' }
 
     Write-Host '==> Focused renderer regressions'
+    node PianoPractice.RendererSmoke/playable-position-smoke.cjs
+    if ($LASTEXITCODE -ne 0) { throw 'Playable-position renderer regression failed.' }
     node PianoPractice.RendererSmoke/bar-boundary-bridge-smoke.cjs
     if ($LASTEXITCODE -ne 0) { throw 'Bar-boundary renderer regression failed.' }
     node PianoPractice.RendererSmoke/listen-highlight-smoke.cjs
