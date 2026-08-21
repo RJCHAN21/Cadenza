@@ -411,16 +411,12 @@ using (var waitViewModel = new MainWindowViewModel(Path.Combine(transientProfile
     if (waitViewModel.MissedLabel != "0")
         throw new InvalidOperationException("Practice incorrectly counted a pending expected tone as missed.");
     var firstChordTone = firstGroup.MidiNotes[0];
-    waitViewModel.SimulateNoteOn(firstChordTone);
-    waitViewModel.SimulateNoteOff(firstChordTone);
-    if (firstGroup.NoteCount > 1)
-    {
-        waitViewModel.SimulateNoteOn(firstChordTone);
-        waitViewModel.SimulateNoteOff(firstChordTone);
-    }
-    foreach (var note in firstGroup.MidiNotes.Skip(1))
-    {
+    foreach (var note in firstGroup.MidiNotes)
         waitViewModel.SimulateNoteOn(note);
+    if (firstGroup.NoteCount > 1)
+        waitViewModel.SimulateNoteOn(firstChordTone);
+    foreach (var note in firstGroup.MidiNotes)
+    {
         Thread.Sleep(35);
         waitViewModel.SimulateNoteOff(note);
     }
@@ -579,13 +575,12 @@ using (var chordFeedbackViewModel = new MainWindowViewModel(Path.Combine(transie
 
     var correctBeforeChord = int.Parse(chordFeedbackViewModel.CorrectLabel);
     var extraBeforeChord = int.Parse(chordFeedbackViewModel.ExtraLabel);
+    var missedBeforeChord = int.Parse(chordFeedbackViewModel.MissedLabel);
     var first = threeToneGroup.MidiNotes[0];
     var second = threeToneGroup.MidiNotes[1];
     var final = threeToneGroup.MidiNotes[2];
     chordFeedbackViewModel.SimulateNoteOn(first);
-    chordFeedbackViewModel.SimulateNoteOff(first);
     chordFeedbackViewModel.SimulateNoteOn(second);
-    chordFeedbackViewModel.SimulateNoteOff(second);
     if (int.Parse(chordFeedbackViewModel.CorrectLabel) != correctBeforeChord + 2 ||
         Math.Abs(chordFeedbackViewModel.CursorBeat - threeToneGroup.OnsetBeats) > 0.0001)
     {
@@ -594,7 +589,6 @@ using (var chordFeedbackViewModel = new MainWindowViewModel(Path.Combine(transie
     }
 
     chordFeedbackViewModel.SimulateNoteOn(first);
-    chordFeedbackViewModel.SimulateNoteOff(first);
     if (int.Parse(chordFeedbackViewModel.CorrectLabel) != correctBeforeChord + 2 ||
         int.Parse(chordFeedbackViewModel.ExtraLabel) != extraBeforeChord ||
         Math.Abs(chordFeedbackViewModel.CursorBeat - threeToneGroup.OnsetBeats) > 0.0001)
@@ -603,23 +597,38 @@ using (var chordFeedbackViewModel = new MainWindowViewModel(Path.Combine(transie
             "A duplicate accepted chord tone stacked correctness or advanced the pending Practice chord.");
     }
 
+    chordFeedbackViewModel.SimulateNoteOff(first);
+    chordFeedbackViewModel.SimulateNoteOff(second);
+    if (int.Parse(chordFeedbackViewModel.MissedLabel) != missedBeforeChord + 1 ||
+        Math.Abs(chordFeedbackViewModel.CursorBeat - threeToneGroup.OnsetBeats) > 0.0001)
+    {
+        throw new InvalidOperationException(
+            "Releasing an incomplete three-tone Practice chord did not record the missing tone and reset the attempt.");
+    }
+
+    chordFeedbackViewModel.SimulateNoteOn(first);
+    chordFeedbackViewModel.SimulateNoteOn(second);
+    if (Math.Abs(chordFeedbackViewModel.CursorBeat - threeToneGroup.OnsetBeats) > 0.0001)
+        throw new InvalidOperationException("Practice advanced before the complete chord retry was played.");
     chordFeedbackViewModel.SimulateNoteOn(final);
+    chordFeedbackViewModel.SimulateNoteOff(first);
+    chordFeedbackViewModel.SimulateNoteOff(second);
     chordFeedbackViewModel.SimulateNoteOff(final);
     var chordCorrectEvents = chordFeedback
         .Where(message => message.Kind == "correct" &&
                           Math.Abs(message.Beat - threeToneGroup.OnsetBeats) < 0.0001)
         .ToArray();
-    if (int.Parse(chordFeedbackViewModel.CorrectLabel) != correctBeforeChord + 3 ||
-        chordCorrectEvents.Length != 3 ||
+    if (int.Parse(chordFeedbackViewModel.CorrectLabel) != correctBeforeChord + 5 ||
+        chordCorrectEvents.Length != 5 ||
         chordCorrectEvents.Select(message => message.MidiNoteNumber).Distinct().Count() != 3 ||
-        chordFeedbackViewModel.MissedLabel != "0")
+        int.Parse(chordFeedbackViewModel.MissedLabel) != missedBeforeChord + 1)
     {
         throw new InvalidOperationException(
-            "Three-tone Practice completion did not emit exactly one accepted event per chord tone.");
+            "Three-tone Practice completion did not require a full retry after the incomplete attempt.");
     }
     chordFeedbackViewModel.StopLesson();
     Console.WriteLine(
-        $"Three-tone chord regression passed: accepted=3, duplicateIgnored=true, pendingMisses=0, measure={threeToneMeasure}.");
+        $"Three-tone chord regression passed: incompleteMisses=1, fullRetryRequired=true, duplicateIgnored=true, measure={threeToneMeasure}.");
 }
 
 using (var fullRepeatWaitViewModel = new MainWindowViewModel(Path.Combine(transientProfileRoot, "full-repeat-wait.json")))

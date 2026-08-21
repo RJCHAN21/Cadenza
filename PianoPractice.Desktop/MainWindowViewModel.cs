@@ -15,6 +15,7 @@ namespace PianoPractice.Desktop;
 
 public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 {
+    private static readonly TimeSpan LoopAudioReleaseTail = TimeSpan.FromMilliseconds(750);
     private readonly MusicXmlImporter _importer = new();
     private readonly MidiDeviceService _midiDeviceService = new();
     private readonly MidiDeviceService _midiControlSurfaceService = new();
@@ -445,11 +446,12 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
                 ResetMidiShortcutState();
                 if (!value) CancelMidiShortcutLearning();
                 OnPropertyChanged(nameof(IsDashboardVisible));
+                OnPropertyChanged(nameof(IsMusicalWorkspaceVisible));
                 OnPropertyChanged(nameof(CanSwitchLessonMode));
             }
         }
     }
-    public bool IsDashboardVisible => !IsPlayerVisible;
+    public bool IsDashboardVisible => !IsPlayerVisible && !IsSightReadingVisible;
     public string DashboardScoreSummary => _score is null
         ? "No songs imported yet"
         : $"{_score.MeasureCount} measures · {_score.TempoBpm:0} BPM · {_score.TimeSignature}";
@@ -831,7 +833,10 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             if (remaining <= 0)
             {
                 StopAutoRepeatCountdown();
-                DismissResults();
+                if (IsLoopEnabled)
+                    _ = TriggerAutoRepeatAsync();
+                else
+                    DismissResults();
             }
         };
         _autoRepeatTimer.Start();
@@ -839,7 +844,9 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
 
     private void UpdateAutoRepeatLabel(double remainingSeconds)
     {
-        AutoRepeatStatusText = $"Auto-closing in {remainingSeconds:0.0}s · Press C4 or Space to repeat now";
+        AutoRepeatStatusText = IsLoopEnabled
+            ? $"Next loop in {remainingSeconds:0.0}s · Press C4 or Space to repeat now"
+            : $"Auto-closing in {remainingSeconds:0.0}s · Press C4 or Space to repeat now";
     }
 
     public void StopAutoRepeatCountdown()
@@ -1475,6 +1482,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     public void LoadLibraryItem(LibraryItemViewModel? item)
     {
         if (item is null || !File.Exists(item.StoredFilePath)) return;
+        IsSightReadingVisible = false;
         LoadScore(item.StoredFilePath, item.Id);
         _libraryStore.RecordPlayed(item.Id);
         RefreshLibrary();
@@ -2558,6 +2566,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             StatusMessage = "Import a MusicXML song before opening the lesson player.";
             return;
         }
+        IsSightReadingVisible = false;
         IsPlayerVisible = true;
         StatusMessage = $"Ready to practice {ScoreTitle}.";
     }
@@ -2566,6 +2575,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     {
         if (IsLessonActive) StopLesson();
         StopPreview();
+        StopSightReadingTest();
+        IsSightReadingVisible = false;
         IsPlayerVisible = false;
         StatusMessage = "Dashboard ready.";
     }
@@ -2774,6 +2785,18 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         }
     }
 
+    public bool SkipResultsWhenLooping
+    {
+        get => _profile.Settings.SkipResultsWhenLooping;
+        set
+        {
+            if (_profile.Settings.SkipResultsWhenLooping == value) return;
+            _profile.Settings.SkipResultsWhenLooping = value;
+            OnPropertyChanged();
+            SaveProfileSettings();
+        }
+    }
+
     public event EventHandler<string>? CountdownStepRequested;
     public event EventHandler? HideCountdownRequested;
 
@@ -2971,6 +2994,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         Interlocked.Increment(ref _midiControllerSaveGeneration);
         ResetMidiShortcutState();
         CancelMidiShortcutLearning();
+        CancelSightReadingAdvance();
         StopPreview();
         if (IsLessonActive) EndLesson(false);
         SaveProfileSettings();
@@ -3316,7 +3340,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         if (Application.Current is null) return;
         _ = Application.Current.Dispatcher.InvokeAsync(() =>
         {
-            if (TryHandleMidiShortcutNoteOff(note.NoteNumber))
+            if (IsPlayerVisible && TryHandleMidiShortcutNoteOff(note.NoteNumber))
             {
                 InputActivityLabel = $"Protected MIDI control released: {MidiNoteFormatter.Format(note.NoteNumber)}";
                 return;
@@ -3361,18 +3385,18 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
 
         // Dashboard MIDI input may still update connection diagnostics through
         // RawMessage, but it must never sound lessons or act as an app command.
-        if (!IsPlayerVisible)
+        if (!IsMusicalWorkspaceVisible)
         {
             InputActivityLabel =
                 $"MIDI note ignored while dashboard is active: {MidiNoteFormatter.Format(midiNoteNumber)}";
             return;
         }
 
-        if (TryHandleMidiShortcutNoteOn(midiNoteNumber, simulation)) return;
+        if (IsPlayerVisible && TryHandleMidiShortcutNoteOn(midiNoteNumber, simulation)) return;
 
         // MIDI notes and computer-piano notes are musical input only. They may
         // provide optional visual feedback, but never dispatch transport or mode actions.
-        if (!IsLessonActive && !ResultsVisible && AlwaysShowLiveNoteFeedback)
+        if (IsPlayerVisible && !IsLessonActive && !ResultsVisible && AlwaysShowLiveNoteFeedback)
         {
             var currentBeat = CursorBeat;
             var notesAtCurrentBeat = _score is not null ? GetNotesAtBeat(currentBeat) : new List<int>();
@@ -3398,6 +3422,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
                     : $"Audio monitor error: {monitorResult.Message}";
             }
         }
+        if (TryHandleSightReadingNote(midiNoteNumber)) return;
         if (IsCalibrationActive && _calibrationClickIndex >= 0 && _calibrationCapturedForClick != _calibrationClickIndex)
         {
             var milliseconds = Stopwatch.GetElapsedTime(_lastCalibrationClickTimestamp).TotalMilliseconds;
@@ -3484,9 +3509,15 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             var preferFlats = _score?.KeySignature.Contains("b", StringComparison.OrdinalIgnoreCase) == true;
             var playedName = MidiNoteFormatter.Format(midiNoteNumber, preferFlats);
             var expectedNames = string.Join(" + ", expected.MidiNotes.Select(note => MidiNoteFormatter.Format(note, preferFlats)));
-            LessonStatusLabel = expected.NoteCount > 1
-                ? $"Wrong note ({playedName}, expected {expectedNames}). Accepted chord tones were kept — play the remaining expected notes."
-                : $"Wrong note ({playedName}, expected {expectedNames}). Strike the correct key to proceed.";
+            if (expected.NoteCount > 1 && _matchedNotes.Count > 0)
+            {
+                FailIncompletePracticeChord(expected);
+                LessonStatusLabel = $"Wrong note ({playedName}, expected {expectedNames}). Replay the whole chord.";
+            }
+            else
+            {
+                LessonStatusLabel = $"Wrong note ({playedName}, expected {expectedNames}). Strike the correct key to proceed.";
+            }
         }
     }
 
@@ -3514,7 +3545,22 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     private void ResetPartialChord(ScoreNoteGroup expected)
     {
         _matchedNotes.Clear();
+        _chordHitsInGroup = 0;
         PartialChordReset?.Invoke(this, expected.PerformanceOccurrence);
+    }
+
+    private int FailIncompletePracticeChord(ScoreNoteGroup expected)
+    {
+        var missedNotes = expected.MidiNotes.Except(_matchedNotes).ToArray();
+        if (missedNotes.Length == 0) return 0;
+
+        _missedCount += missedNotes.Length;
+        CurrentStreak = 0;
+        ResetPartialChord(expected);
+        foreach (var missedNote in missedNotes)
+            EmitNoteFeedback("missed", expected.OnsetBeats, missedNote);
+        UpdateLessonMetrics();
+        return missedNotes.Length;
     }
 
     private void PlayPracticeGuidance(ScoreNoteGroup acceptedGroup)
@@ -3680,6 +3726,9 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     public void EndLesson(bool completed)
     {
         if (!IsLessonActive) return;
+        var preserveLoopAudioTail = completed && IsLoopEnabled;
+        var completedMode = SelectedLessonMode;
+        var completedRunGeneration = _lessonRunGeneration;
         foreach (var note in _activeHolds.Keys.ToArray()) CompleteHold(note);
         if (completed && SelectedLessonMode == LessonMode.TimedPlay)
         {
@@ -3703,11 +3752,12 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         _resumePracticeClockOnResume = false;
         ResultElapsedTimeLabel = FormatResultDuration(_practiceSessionClock.Elapsed.TotalSeconds);
         ResultTargetTimeLabel = FormatResultDuration(_lessonTargetSeconds);
-        if (SelectedLessonMode == LessonMode.TimedPlay)
+        if (SelectedLessonMode == LessonMode.TimedPlay && !preserveLoopAudioTail)
             _audioService.StopPreview();
         _preparedPerformanceWave = null;
         _performanceAudioOwnsMetronome = false;
-        _accompanimentSynth.AllNotesOff();
+        if (!preserveLoopAudioTail)
+            _accompanimentSynth.AllNotesOff();
         SetNativeInputActive(_midiDeviceService.IsCapturing);
         IsLessonActive = false;
         LessonRunStateChanged?.Invoke(this, new LessonRunStateEvent(completed ? "completed" : "stopped", SelectedLessonMode, _lessonStartBeat, _lessonRunGeneration));
@@ -3741,19 +3791,12 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
                 BestStreak >= 8 ? $"Silver cadence · best streak {BestStreak}" :
                 $"First phrase · best streak {BestStreak}";
             CursorBeat = SelectedPreviewStartBeat;
-            if (IsLoopEnabled)
+            if (IsLoopEnabled && SkipResultsWhenLooping)
             {
                 ResultsVisible = false;
                 StopAutoRepeatCountdown();
-                StatusMessage = "Looping the selected range without showing results.";
-                if (SelectedLessonMode == LessonMode.WaitForYou)
-                {
-                    StartLesson();
-                }
-                else
-                {
-                    _ = RestartPreviewAsync();
-                }
+                StatusMessage = "Final notes are ringing out before the next loop.";
+                _ = RestartLoopAfterAudioReleaseAsync(completedMode, completedRunGeneration);
                 return;
             }
 
@@ -3761,6 +3804,25 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             StartAutoRepeatCountdown();
             ResultsPresented?.Invoke(this, EventArgs.Empty);
         }
+    }
+
+    private async Task RestartLoopAfterAudioReleaseAsync(LessonMode completedMode, long completedRunGeneration)
+    {
+        await Task.Delay(LoopAudioReleaseTail);
+        if (!IsLoopEnabled ||
+            IsLessonActive ||
+            _score is null ||
+            _lessonRunGeneration != completedRunGeneration ||
+            SelectedLessonMode != completedMode)
+        {
+            return;
+        }
+
+        StatusMessage = "Looping the selected range without showing results.";
+        if (completedMode == LessonMode.WaitForYou)
+            StartLesson();
+        else
+            await RestartPreviewAsync();
     }
 
     private void RegisterCorrect(double beat, int midiNoteNumber)
@@ -3875,6 +3937,18 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         HeldNoteNumbers = _activeHolds.Keys.ToHashSet();
         OnPropertyChanged(nameof(HoldCategoryLabel));
         EmitNoteFeedback(quality < .72 ? "early" : "release", hold.OnsetBeat, midiNoteNumber);
+
+        if (IsLessonActive &&
+            SelectedLessonMode == LessonMode.WaitForYou &&
+            _lessonGroupIndex < _lessonGroups.Count &&
+            _matchedNotes.Count > 0 &&
+            _matchedNotes.Count < _lessonGroups[_lessonGroupIndex].NoteCount &&
+            !_matchedNotes.Any(_activeHolds.ContainsKey))
+        {
+            var expected = _lessonGroups[_lessonGroupIndex];
+            var missed = FailIncompletePracticeChord(expected);
+            LessonStatusLabel = $"Incomplete chord. {missed} tone(s) were missed — replay the whole chord.";
+        }
     }
 
     private void ScorePedalEvent(bool isDown)

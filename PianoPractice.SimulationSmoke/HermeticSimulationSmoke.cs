@@ -23,6 +23,113 @@ internal static class HermeticSimulationSmoke
                 "The deterministic fixture no longer exercises best-effort Listen playback.");
             Assert(!new CadenzaUserSettings().AutoDismissResultsEnabled,
                 "Results auto-dismiss must be disabled for new profiles.");
+            Assert(!new CadenzaUserSettings().SkipResultsWhenLooping,
+                "Looping must show Results by default for new profiles.");
+
+            var guidedSightReading = SightReadingExerciseGenerator.CreateSession(
+                SightReadingTestKind.GuidedNotes,
+                seed: 17);
+            Assert(guidedSightReading.Count == 16 &&
+                   guidedSightReading.Take(8).All(prompt => prompt.ShowsNoteLabels) &&
+                   guidedSightReading.Skip(8).All(prompt => !prompt.ShowsNoteLabels),
+                "Guided sight reading did not introduce labeled notes before label-free review.");
+            Assert(guidedSightReading.Take(8).Select(prompt => prompt.MidiNotes[0]).Order().SequenceEqual(
+                       guidedSightReading.Skip(8).Select(prompt => prompt.MidiNotes[0]).Order()),
+                "Guided sight reading did not review the same introduced notes without labels.");
+            Assert(guidedSightReading.Take(8).All(prompt =>
+                       System.Text.Encoding.UTF8.GetString(prompt.MusicXml).Contains(
+                           "<lyric relative-x=\"45\" placement=\"below\">",
+                           StringComparison.Ordinal)) &&
+                   guidedSightReading.Skip(8).All(prompt =>
+                       !System.Text.Encoding.UTF8.GetString(prompt.MusicXml).Contains("<lyric", StringComparison.Ordinal)),
+                "Sight-reading labels were not offset from the playhead or isolated to the introduction stage.");
+            var nextGuidedSightReading = SightReadingExerciseGenerator.CreateSession(
+                SightReadingTestKind.GuidedNotes,
+                seed: 18);
+            Assert(!guidedSightReading.Select(prompt => Convert.ToHexString(prompt.MusicXml)).SequenceEqual(
+                       nextGuidedSightReading.Select(prompt => Convert.ToHexString(prompt.MusicXml))),
+                "Guided sight-reading sessions still generate the same notes every time.");
+
+            var accidentalXml = string.Join(string.Empty,
+                SightReadingExerciseGenerator.CreateSession(SightReadingTestKind.Accidentals, seed: 19)
+                    .Select(prompt => System.Text.Encoding.UTF8.GetString(prompt.MusicXml)));
+            Assert(accidentalXml.Contains("<accidental>sharp</accidental>", StringComparison.Ordinal) &&
+                   accidentalXml.Contains("<accidental>flat</accidental>", StringComparison.Ordinal) &&
+                   accidentalXml.Contains("<accidental>natural</accidental>", StringComparison.Ordinal),
+                "Accidental sight reading does not include sharps, flats, and naturals.");
+            var keySignatureXml = string.Join(string.Empty,
+                SightReadingExerciseGenerator.CreateSession(SightReadingTestKind.KeySignatures, seed: 20)
+                    .Select(prompt => System.Text.Encoding.UTF8.GetString(prompt.MusicXml)));
+            Assert(keySignatureXml.Contains("<fifths>3</fifths>", StringComparison.Ordinal) &&
+                   keySignatureXml.Contains("<fifths>-3</fifths>", StringComparison.Ordinal),
+                "Key-signature sight reading does not cover both sharp and flat keys.");
+            var mixedReading = SightReadingExerciseGenerator.CreateSession(
+                SightReadingTestKind.MixedChallenge,
+                seed: 21);
+            Assert(mixedReading.Count == 12 &&
+                   mixedReading.Any(prompt => prompt.MidiNotes.Count > 1) &&
+                   mixedReading.Any(prompt => System.Text.Encoding.UTF8.GetString(prompt.MusicXml)
+                       .Contains("<accidental>", StringComparison.Ordinal)) &&
+                   mixedReading.Any(prompt => !System.Text.Encoding.UTF8.GetString(prompt.MusicXml)
+                       .Contains("<fifths>0</fifths>", StringComparison.Ordinal)),
+                "Mixed Reading Challenge does not combine patterns, accidentals, and key signatures.");
+
+            foreach (var kind in Enum.GetValues<SightReadingTestKind>())
+            {
+                var prompts = SightReadingExerciseGenerator.CreateSession(kind, seed: 23);
+                Assert(prompts.Count > 0 && prompts.All(prompt => prompt.MidiNotes.Count == prompt.Beats.Count),
+                    $"{kind} did not produce a complete sight-reading response plan.");
+                var generatedPath = Path.Combine(root, $"sight-reading-{kind}.musicxml");
+                await File.WriteAllBytesAsync(generatedPath, prompts[0].MusicXml);
+                var generatedScore = new MusicXmlImporter().Import(generatedPath);
+                Assert(generatedScore.TotalNoteCount == prompts[0].MidiNotes.Count,
+                    $"{kind} generated notation and expected MIDI notes disagree.");
+            }
+
+            var sightReadingProfilePath = Path.Combine(root, "sight-reading-profile", "profile.json");
+            using (var sightReading = new MainWindowViewModel(sightReadingProfilePath))
+            {
+                Assert(!sightReading.AutoRestartSightReading,
+                    "Sight-reading auto-restart must remain opt-in so completed results stay visible.");
+                sightReading.MidiMonitorEnabled = false;
+                sightReading.UseKeyboardSimulation = true;
+                sightReading.OpenSightReading();
+                Assert(sightReading.IsSightReadingActive &&
+                       sightReading.CurrentSightReadingPrompt is { ShowsNoteLabels: true },
+                    "Opening Sight Reading did not start the visibly selected guided test.");
+                sightReading.SelectSightReadingTest(SightReadingTestKind.NoteRecognition);
+                var sightFeedback = new List<SightReadingFeedbackEvent>();
+                var sightPrompts = new List<SightReadingPrompt>();
+                sightReading.SightReadingFeedback += (_, message) => sightFeedback.Add(message);
+                sightReading.SightReadingPromptChanged += (_, prompt) => sightPrompts.Add(prompt);
+                Assert(sightReading.StartSightReadingTest(seed: 31), sightReading.SightReadingStatus);
+                var recognitionPrompt = sightReading.CurrentSightReadingPrompt!;
+                var expectedNote = recognitionPrompt.MidiNotes[0];
+                sightReading.SimulateNoteOn(expectedNote == 127 ? 126 : expectedNote + 1);
+                Assert(ReferenceEquals(recognitionPrompt, sightReading.CurrentSightReadingPrompt) &&
+                       sightReading.SightReadingScoreLabel.Contains("1 mistakes", StringComparison.Ordinal),
+                    "An incorrect sight-reading note advanced the prompt or escaped scoring.");
+                sightReading.SimulateNoteOn(expectedNote);
+                Assert(sightFeedback.Select(message => message.Kind).SequenceEqual(["wrong", "correct"]),
+                    "Sight-reading input did not emit ordered red and green renderer feedback.");
+                await Task.Delay(750);
+                Assert(!ReferenceEquals(recognitionPrompt, sightReading.CurrentSightReadingPrompt) && sightPrompts.Count >= 2,
+                    "A completed single-note sight-reading prompt did not advance to new notation.");
+
+                sightReading.StopSightReadingTest();
+                sightReading.SelectSightReadingTest(SightReadingTestKind.LookAheadSequences);
+                Assert(sightReading.StartSightReadingTest(seed: 37), sightReading.SightReadingStatus);
+                var sequencePrompt = sightReading.CurrentSightReadingPrompt!;
+                Assert(sequencePrompt.MidiNotes.Count == 4 && !sequencePrompt.ShowsNoteLabels,
+                    "Look-ahead sight reading did not present an unlabeled four-note sequence.");
+                foreach (var note in sequencePrompt.MidiNotes)
+                {
+                    sightReading.SimulateNoteOn(note);
+                    sightReading.SimulateNoteOff(note);
+                }
+                Assert(sightReading.SightReadingScoreLabel.StartsWith("4 correct", StringComparison.Ordinal),
+                    "The sight-reading sequence did not require and score every displayed note in order.");
+            }
 
             using (var audio = new PianoAudioService())
             {
@@ -73,27 +180,33 @@ internal static class HermeticSimulationSmoke
                 viewModel.NoteFeedback += (_, message) => feedback.Add(message);
                 viewModel.PartialChordReset += (_, _) => partialChordResets++;
                 var acceptedTone = firstGroup.MidiNotes[0];
-                var extraTone = Enumerable.Range(0, 128).First(note => !firstGroup.MidiNotes.Contains(note));
                 viewModel.SimulateNoteOn(acceptedTone);
                 viewModel.SimulateNoteOff(acceptedTone);
-                viewModel.SimulateNoteOn(extraTone);
-                viewModel.SimulateNoteOff(extraTone);
 
-                Assert(viewModel.CorrectLabel == "1" && viewModel.ExtraLabel == "1",
-                    "A correct-plus-extra Practice input was not scored as one accepted and one extra note.");
-                Assert(partialChordResets == 0 && feedback.Count(message => message.Kind == "correct") == 1,
-                    "An extra Practice note revoked the accepted chord tone's green-feedback event.");
+                Assert(viewModel.CorrectLabel == "1" &&
+                       viewModel.MissedLabel == (firstGroup.NoteCount - 1).ToString(),
+                    "An incomplete Practice chord did not score its unplayed tones as misses.");
+                Assert(partialChordResets == 1 &&
+                       feedback.Count(message => message.Kind == "correct") == 1 &&
+                       feedback.Count(message => message.Kind == "missed") == firstGroup.NoteCount - 1,
+                    "An incomplete Practice chord did not reset its accepted visual tones and emit missing-note feedback.");
                 Assert(Math.Abs(viewModel.CursorBeat - firstGroup.OnsetBeats) < 0.001,
-                    "An incomplete Practice chord advanced after a correct-plus-extra input.");
+                    "An incomplete Practice chord advanced instead of waiting for a complete retry.");
 
-                foreach (var note in firstGroup.MidiNotes.Skip(1))
-                {
+                foreach (var note in firstGroup.MidiNotes.SkipLast(1))
                     viewModel.SimulateNoteOn(note);
-                    viewModel.SimulateNoteOff(note);
-                }
+                Assert(viewModel.CorrectLabel == firstGroup.NoteCount.ToString() &&
+                       Math.Abs(viewModel.CursorBeat - firstGroup.OnsetBeats) < 0.001,
+                    "Practice progressed before every tone of the retried chord was played.");
 
-                Assert(viewModel.CorrectLabel == firstGroup.NoteCount.ToString(),
-                    "Deterministic keyboard input did not score the first chord exactly once.");
+                viewModel.SimulateNoteOn(firstGroup.MidiNotes[^1]);
+                Assert(viewModel.CorrectLabel == (firstGroup.NoteCount + 1).ToString(),
+                    "Practice did not accept the complete chord retry after the failed attempt.");
+                foreach (var note in firstGroup.MidiNotes)
+                    viewModel.SimulateNoteOff(note);
+
+                Assert(partialChordResets == 1,
+                    "Completing the full chord retry unexpectedly reset it again.");
                 viewModel.StopLesson();
 
                 viewModel.SetLessonMode(LessonMode.TimedPlay);
@@ -146,7 +259,8 @@ internal static class HermeticSimulationSmoke
                     "Restored score identity does not match the validated imported document.");
             }
 
-            using (var looping = new MainWindowViewModel(Path.Combine(root, "loop-profile.json")))
+            var loopProfilePath = Path.Combine(root, "loop-profile.json");
+            using (var looping = new MainWindowViewModel(loopProfilePath))
             {
                 var startedRuns = 0;
                 var presentedResults = 0;
@@ -164,27 +278,49 @@ internal static class HermeticSimulationSmoke
                 looping.SetPracticeMode(PracticeMode.BothHands);
                 looping.SetLessonMode(LessonMode.WaitForYou);
                 looping.IsLoopEnabled = true;
-                Assert(looping.StartLesson(), looping.StatusMessage);
+                var loopStartBeat = looping.CursorBeat;
 
-                foreach (var group in score.GetPracticeGroups(PracticeMode.BothHands)
-                             .Where(group => group.MeasureNumber == "1"))
+                void CompleteSelectedMeasure()
                 {
-                    foreach (var note in group.MidiNotes)
+                    foreach (var group in score.GetPracticeGroups(PracticeMode.BothHands)
+                                 .Where(group => group.MeasureNumber == "1"))
                     {
-                        looping.SimulateNoteOn(note);
-                        looping.SimulateNoteOff(note);
+                        foreach (var note in group.MidiNotes)
+                            looping.SimulateNoteOn(note);
+                        foreach (var note in group.MidiNotes)
+                            looping.SimulateNoteOff(note);
                     }
                 }
 
-                Assert(startedRuns == 2 && looping.IsLessonActive,
-                    $"Loop mode did not restart the selected Practice range in the completion event: " +
+                Assert(looping.StartLesson(), looping.StatusMessage);
+                CompleteSelectedMeasure();
+                Assert(startedRuns == 1 && !looping.IsLessonActive && looping.ResultsVisible &&
+                       presentedResults == 1,
+                    "Loop mode skipped Results even though Skip Results while looping was disabled.");
+                await Task.Delay(900);
+                Assert(startedRuns == 1 && !looping.IsLessonActive,
+                    "Loop mode restarted automatically while its Results screen was waiting for review.");
+                looping.DismissResults();
+
+                looping.SkipResultsWhenLooping = true;
+                Assert(looping.StartLesson(), looping.StatusMessage);
+                CompleteSelectedMeasure();
+                Assert(startedRuns == 2 && !looping.IsLessonActive &&
+                       Math.Abs(looping.CursorBeat - loopStartBeat) < 0.001,
+                    $"Loop mode did not reset the visual position while preserving the final audio tail: " +
                     $"started={startedRuns}, active={looping.IsLessonActive}, status={looping.StatusMessage}");
-                Assert(!looping.ResultsVisible && presentedResults == 0,
+                Assert(!looping.ResultsVisible && presentedResults == 1,
                     "Loop mode presented a results summary between runs.");
                 Assert(looping.IsLoopEnabled,
                     "Completing a looped run unexpectedly disabled loop mode.");
+                await Task.Delay(900);
+                Assert(startedRuns == 3 && looping.IsLessonActive,
+                    $"Loop mode did not restart Practice after the final audio release tail: " +
+                    $"started={startedRuns}, active={looping.IsLessonActive}, status={looping.StatusMessage}");
                 looping.StopLesson();
             }
+            Assert(new UserProfileStore(loopProfilePath).Load().Settings.SkipResultsWhenLooping,
+                "Skip Results while looping did not persist after restart.");
 
             var delayedHandPath = Path.Combine(root, "delayed-right-hand.musicxml");
             await File.WriteAllTextAsync(delayedHandPath, DelayedRightHandFixture);

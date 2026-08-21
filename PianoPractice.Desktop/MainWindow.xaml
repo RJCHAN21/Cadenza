@@ -801,6 +801,19 @@
       <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
 
+    <Style x:Key="SightReadingIcon" TargetType="TextBlock">
+      <Setter Property="Width" Value="46" />
+      <Setter Property="Height" Value="28" />
+      <Setter Property="Foreground" Value="{StaticResource Gold}" />
+      <Setter Property="FontFamily" Value="Segoe UI Symbol" />
+      <Setter Property="FontSize" Value="21" />
+      <Setter Property="TextAlignment" Value="Center" />
+      <Setter Property="LineHeight" Value="26" />
+      <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+      <Setter Property="HorizontalAlignment" Value="Center" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
     <Style x:Key="SegmentRadio" TargetType="RadioButton">
       <Setter Property="Foreground" Value="{StaticResource Ink}" />
       <Setter Property="Background" Value="#171D26" />
@@ -810,13 +823,14 @@
       <Setter Property="Margin" Value="2,0" />
       <Setter Property="VerticalAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="RadioButton">
             <Border x:Name="Pill" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
                     BorderThickness="0" CornerRadius="9" Padding="{TemplateBinding Padding}"
                     Height="{TemplateBinding Height}">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True" />
+              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" RecognizesAccessKey="True" />
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
@@ -890,6 +904,7 @@
             </StackPanel>
           </StackPanel>
           <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+            <Button Content="Sight Reading" Click="OpenSightReading_Click" Style="{StaticResource HeaderButton}" Margin="0,0,8,0" ToolTip="Open generated note-reading tests" />
             <Button Content="⚙ Settings" Click="OpenDeviceSettings_Click" Style="{StaticResource HeaderButton}" Margin="0,0,8,0" ToolTip="Open Application Settings (MIDI, shortcuts, latency &amp; preferences)" />
             <Button Content="Import MusicXML" Style="{StaticResource GoldButton}" Click="ImportScore_Click" />
             <Button Content="MIDI reference" Click="ImportMidi_Click" />
@@ -1085,6 +1100,28 @@
                   </Grid>
                 </Border>
               </Grid>
+
+            <!-- SIGHT READING SECTION -->
+            <Border Background="#141A23" BorderBrush="#33404E" BorderThickness="1" CornerRadius="16" Padding="22" Margin="0,0,0,24">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Border Width="54" Height="54" Background="#283422" CornerRadius="13" Margin="0,0,16,0">
+                  <TextBlock Text="𝄞" Foreground="{StaticResource Gold}" FontSize="29" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                  <TextBlock Text="SIGHT READING TESTS" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" />
+                  <TextBlock Text="Read unfamiliar notes, intervals, and short patterns" FontSize="18" FontWeight="SemiBold" Margin="0,3,0,2" />
+                  <TextBlock Text="Start with labels printed directly beneath new notes, then remove them and progress to unlabeled patterns and look-ahead sequences."
+                             Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" />
+                </StackPanel>
+                <Button Grid.Column="2" Content="Open Sight Reading" Click="OpenSightReading_Click" Style="{StaticResource GoldButton}"
+                        Height="38" Padding="18,0" Margin="18,0,0,0" VerticalAlignment="Center" />
+              </Grid>
+            </Border>
 
             <!-- MUSIC LIBRARY MANAGEMENT HEADER -->
             <Grid Margin="0,8,0,14">
@@ -1305,6 +1342,151 @@
         </Grid>
       </Grid>
     </ScrollViewer>
+    </Grid>
+
+    <!-- SIGHT READING TESTS -->
+    <Grid Visibility="{Binding IsSightReadingVisible, Converter={StaticResource BoolToVisibility}}">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="72" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="92" />
+      </Grid.RowDefinitions>
+
+      <Border Grid.Row="0" Background="#0F1218">
+        <Grid Margin="22,0">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+          <Button Click="BackFromSightReading_Click" Style="{StaticResource HeaderButton}" Height="44" Padding="16,0" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal"><TextBlock Text="‹" FontSize="25" Margin="0,-2,9,0" /><TextBlock Text="Home" FontSize="14" VerticalAlignment="Center" /></StackPanel>
+          </Button>
+          <StackPanel Grid.Column="1" Margin="20,0" VerticalAlignment="Center">
+            <TextBlock Text="SIGHT READING" Foreground="{StaticResource Gold}" FontSize="11" FontWeight="Bold" />
+            <TextBlock Text="{Binding SightReadingTestName}" FontSize="22" FontWeight="SemiBold" />
+          </StackPanel>
+          <Border Grid.Column="2" Background="#122428" CornerRadius="10" Padding="14,0" Height="44" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal">
+              <Ellipse Width="8" Height="8" Fill="#42D9F5" Margin="0,0,8,0" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding MidiLiveIndicator}" Foreground="#A8EDF7" FontSize="11" VerticalAlignment="Center" />
+            </StackPanel>
+          </Border>
+        </Grid>
+      </Border>
+
+      <Grid Grid.Row="1" Margin="24,20">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="330" /><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+
+        <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
+          <StackPanel>
+            <TextBlock Text="Choose a test" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4" />
+            <TextBlock Text="Each session generates unseen notation and never adds it to your Music Library." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,14" />
+
+            <RadioButton x:Name="GuidedSightReadingRadio" GroupName="SightReadingTest" Tag="GuidedNotes" IsChecked="True" Click="SightReadingTest_Click" Style="{StaticResource SegmentRadio}" Height="54" Margin="0,0,0,8" HorizontalContentAlignment="Stretch">
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="46" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="♩" Style="{StaticResource SightReadingIcon}" /><StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Guided Note Discovery" FontWeight="SemiBold" /><TextBlock Text="Labels first, then label-free review" Foreground="{StaticResource Muted}" FontSize="9.5" /></StackPanel></Grid>
+            </RadioButton>
+            <RadioButton GroupName="SightReadingTest" Tag="NoteRecognition" Click="SightReadingTest_Click" Style="{StaticResource SegmentRadio}" Height="54" Margin="0,0,0,8" HorizontalContentAlignment="Stretch">
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="46" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="𝄞" Style="{StaticResource SightReadingIcon}" /><StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Unlabeled Note Test" FontWeight="SemiBold" /><TextBlock Text="Random treble and bass staff notes" Foreground="{StaticResource Muted}" FontSize="9.5" /></StackPanel></Grid>
+            </RadioButton>
+            <RadioButton GroupName="SightReadingTest" Tag="IntervalReading" Click="SightReadingTest_Click" Style="{StaticResource SegmentRadio}" Height="54" Margin="0,0,0,8" HorizontalContentAlignment="Stretch">
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="46" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="↗" Style="{StaticResource SightReadingIcon}" /><StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Interval Patterns" FontWeight="SemiBold" /><TextBlock Text="Read distances from a landmark note" Foreground="{StaticResource Muted}" FontSize="9.5" /></StackPanel></Grid>
+            </RadioButton>
+            <RadioButton GroupName="SightReadingTest" Tag="LookAheadSequences" Click="SightReadingTest_Click" Style="{StaticResource SegmentRadio}" Height="54" Margin="0,0,0,8" HorizontalContentAlignment="Stretch">
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="46" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="♫" Style="{StaticResource SightReadingIcon}" /><StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Look-Ahead Sequences" FontWeight="SemiBold" /><TextBlock Text="Scan and play four-note phrases" Foreground="{StaticResource Muted}" FontSize="9.5" /></StackPanel></Grid>
+            </RadioButton>
+            <RadioButton GroupName="SightReadingTest" Tag="Accidentals" Click="SightReadingTest_Click" Style="{StaticResource SegmentRadio}" Height="54" Margin="0,0,0,8" HorizontalContentAlignment="Stretch">
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="46" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="♯♭" Style="{StaticResource SightReadingIcon}" FontSize="18" /><StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Accidentals" FontWeight="SemiBold" /><TextBlock Text="Sharps, flats, and naturals" Foreground="{StaticResource Muted}" FontSize="9.5" /></StackPanel></Grid>
+            </RadioButton>
+            <RadioButton GroupName="SightReadingTest" Tag="KeySignatures" Click="SightReadingTest_Click" Style="{StaticResource SegmentRadio}" Height="54" Margin="0,0,0,8" HorizontalContentAlignment="Stretch">
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="46" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="𝄞" Style="{StaticResource SightReadingIcon}" /><StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Key Signatures" FontWeight="SemiBold" /><TextBlock Text="Read keys from one to three sharps or flats" Foreground="{StaticResource Muted}" FontSize="9.5" /></StackPanel></Grid>
+            </RadioButton>
+            <RadioButton GroupName="SightReadingTest" Tag="LedgerLines" Click="SightReadingTest_Click" Style="{StaticResource SegmentRadio}" Height="54" Margin="0,0,0,8" HorizontalContentAlignment="Stretch">
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="46" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="≡" Style="{StaticResource SightReadingIcon}" /><StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Ledger Lines" FontWeight="SemiBold" /><TextBlock Text="Notes beyond the normal staff" Foreground="{StaticResource Muted}" FontSize="9.5" /></StackPanel></Grid>
+            </RadioButton>
+            <RadioButton GroupName="SightReadingTest" Tag="MixedChallenge" Click="SightReadingTest_Click" Style="{StaticResource SegmentRadio}" Height="54" Margin="0,0,0,16" HorizontalContentAlignment="Stretch">
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="46" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="✦" Style="{StaticResource SightReadingIcon}" /><StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Mixed Reading Challenge" FontWeight="SemiBold" /><TextBlock Text="All reading skills in one set" Foreground="{StaticResource Muted}" FontSize="9.5" /></StackPanel></Grid>
+            </RadioButton>
+
+            <Border Background="#131A22" CornerRadius="12" Padding="15">
+              <StackPanel>
+                <TextBlock Text="WHY THIS PROGRESSION" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" />
+                <TextBlock Text="Randomized landmarks and unlabeled review build recall. Intervals and sequences develop pattern reading, then accidentals and key signatures expand chromatic fluency."
+                           Foreground="{StaticResource Muted}" FontSize="10" TextWrapping="Wrap" Margin="0,7,0,0" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+
+        <Grid Grid.Column="2">
+          <Grid.RowDefinitions><RowDefinition Height="92" /><RowDefinition Height="12" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+
+          <UniformGrid Columns="5">
+            <Border Background="#131A22" CornerRadius="11" Padding="15,10" Margin="0,0,8,0"><StackPanel><TextBlock Text="PROGRESS" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Muted}" /><TextBlock Text="{Binding SightReadingProgressLabel}" FontSize="17" FontWeight="SemiBold" Margin="0,5,0,5" /><ProgressBar Minimum="0" Maximum="100" Value="{Binding SightReadingProgressPercent, Mode=OneWay}" Height="4" Foreground="{StaticResource Gold}" Background="#27313D" /></StackPanel></Border>
+            <Border Background="#131A22" CornerRadius="11" Padding="15,10" Margin="0,0,8,0"><StackPanel><TextBlock Text="CORRECT" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Muted}" /><TextBlock Text="{Binding SightReadingCorrectValue}" Foreground="#55E39B" FontSize="25" FontWeight="Bold" Margin="0,5,0,0" /></StackPanel></Border>
+            <Border Background="#131A22" CornerRadius="11" Padding="15,10" Margin="0,0,8,0"><StackPanel><TextBlock Text="MISTAKES" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Muted}" /><TextBlock Text="{Binding SightReadingMistakesValue}" Foreground="#FF7B7B" FontSize="25" FontWeight="Bold" Margin="0,5,0,0" /></StackPanel></Border>
+            <Border Background="#131A22" CornerRadius="11" Padding="15,10" Margin="0,0,8,0"><StackPanel><TextBlock Text="ACCURACY" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Muted}" /><TextBlock Text="{Binding SightReadingAccuracyValue}" Foreground="#8BEAFF" FontSize="25" FontWeight="Bold" Margin="0,5,0,0" /></StackPanel></Border>
+            <Border Background="#131A22" CornerRadius="11" Padding="15,10"><StackPanel><TextBlock Text="BEST STREAK" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Muted}" /><TextBlock Text="{Binding SightReadingBestStreakValue}" Foreground="{StaticResource Gold}" FontSize="25" FontWeight="Bold" Margin="0,5,0,0" /></StackPanel></Border>
+          </UniformGrid>
+
+          <Border Grid.Row="2" Background="#101318" BorderBrush="#2C3744" BorderThickness="1" CornerRadius="16" ClipToBounds="True">
+            <Grid>
+              <wv2:WebView2 x:Name="SightReadingWebView" DefaultBackgroundColor="#101318">
+                <wv2:WebView2.Style>
+                  <Style TargetType="wv2:WebView2">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Style.Triggers><DataTrigger Binding="{Binding IsSightReadingComplete}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers>
+                  </Style>
+                </wv2:WebView2.Style>
+              </wv2:WebView2>
+              <Border Background="#E812171E" CornerRadius="12" Padding="18,10" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="20">
+                <Border.Style>
+                  <Style TargetType="Border"><Setter Property="Visibility" Value="Visible" /><Style.Triggers><DataTrigger Binding="{Binding IsSightReadingComplete}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style>
+                </Border.Style>
+                <StackPanel HorizontalAlignment="Center">
+                  <TextBlock Text="{Binding SightReadingPromptTitle}" Foreground="#8BEAFF" FontSize="15" FontWeight="Bold" HorizontalAlignment="Center" />
+                  <TextBlock Text="{Binding SightReadingInstruction}" Foreground="{StaticResource Ink}" FontSize="11" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="650" Margin="0,3,0,0" />
+                </StackPanel>
+              </Border>
+
+              <Border Background="#151B24" BorderBrush="#384655" BorderThickness="1" CornerRadius="18" Padding="32" Width="570" HorizontalAlignment="Center" VerticalAlignment="Center"
+                      Visibility="{Binding IsSightReadingComplete, Converter={StaticResource BoolToVisibility}}">
+                <StackPanel>
+                  <TextBlock Text="TEST COMPLETE" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" HorizontalAlignment="Center" />
+                  <TextBlock Text="{Binding SightReadingResultRating}" FontSize="28" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,8,0,2" />
+                  <TextBlock Text="{Binding SightReadingAccuracyValue}" Foreground="#8BEAFF" FontSize="48" FontWeight="Bold" HorizontalAlignment="Center" />
+                  <TextBlock Text="{Binding SightReadingResultMessage}" Foreground="{StaticResource Muted}" FontSize="11" TextAlignment="Center" TextWrapping="Wrap" Margin="20,3,20,20" />
+                  <UniformGrid Columns="4">
+                    <Border Background="#10151C" CornerRadius="9" Padding="12" Margin="0,0,6,0"><StackPanel><TextBlock Text="CORRECT" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" /><TextBlock Text="{Binding SightReadingCorrectValue}" Foreground="#55E39B" FontSize="21" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,4,0,0" /></StackPanel></Border>
+                    <Border Background="#10151C" CornerRadius="9" Padding="12" Margin="2,0,4,0"><StackPanel><TextBlock Text="MISTAKES" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" /><TextBlock Text="{Binding SightReadingMistakesValue}" Foreground="#FF7B7B" FontSize="21" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,4,0,0" /></StackPanel></Border>
+                    <Border Background="#10151C" CornerRadius="9" Padding="12" Margin="4,0,2,0"><StackPanel><TextBlock Text="BEST STREAK" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" /><TextBlock Text="{Binding SightReadingBestStreakValue}" Foreground="{StaticResource Gold}" FontSize="21" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,4,0,0" /></StackPanel></Border>
+                    <Border Background="#10151C" CornerRadius="9" Padding="12" Margin="6,0,0,0"><StackPanel><TextBlock Text="TIME" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" /><TextBlock Text="{Binding SightReadingElapsedLabel}" Foreground="{StaticResource Ink}" FontSize="21" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,4,0,0" /></StackPanel></Border>
+                  </UniformGrid>
+                  <Button Content="Start another unseen set" Click="StartSightReading_Click" Style="{StaticResource GoldButton}" Height="42" Padding="24,0" HorizontalAlignment="Center" Margin="0,22,0,0" />
+                  <TextBlock Text="Auto-restart is enabled; a new set will begin shortly." Foreground="{StaticResource Muted}" FontSize="10" HorizontalAlignment="Center" Margin="0,9,0,0"
+                             Visibility="{Binding AutoRestartSightReading, Converter={StaticResource BoolToVisibility}}" />
+                </StackPanel>
+              </Border>
+            </Grid>
+          </Border>
+        </Grid>
+      </Grid>
+
+      <Border Grid.Row="2" Background="#121720" BorderBrush="#27313D" BorderThickness="0,1,0,0">
+        <Grid Margin="24,0">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+          <StackPanel VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="{Binding SightReadingProgressLabel}" Foreground="{StaticResource Gold}" FontWeight="SemiBold" Margin="0,0,18,0" />
+              <TextBlock Text="{Binding SightReadingScoreLabel}" Foreground="{StaticResource Ink}" Margin="0,0,18,0" />
+              <TextBlock Text="{Binding SightReadingAccuracyLabel}" Foreground="#8BEAFF" Margin="0,0,18,0" />
+              <TextBlock Text="{Binding SightReadingStreakLabel}" Foreground="{StaticResource Muted}" />
+            </StackPanel>
+            <TextBlock Text="{Binding SightReadingStatus}" Foreground="{StaticResource Muted}" FontSize="10.5" Margin="0,5,0,0" />
+          </StackPanel>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+            <CheckBox Content="Auto-restart next set" IsChecked="{Binding AutoRestartSightReading, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,18,0" ToolTip="Show results briefly, then generate another unseen set of the same test." />
+            <Button Content="Stop" Click="StopSightReading_Click" Height="40" Padding="16,0" Margin="0,0,8,0" />
+            <Button Content="Start new test" Click="StartSightReading_Click" Style="{StaticResource GoldButton}" Height="40" Padding="20,0" />
+          </StackPanel>
+        </Grid>
+      </Border>
     </Grid>
 
     <!-- FOCUSED LESSON PLAYER -->
@@ -1816,45 +1998,72 @@
                 </Border>
 
                 <TextBlock Text="INPUT BINDINGS" Foreground="{StaticResource Gold}" FontWeight="Bold" FontSize="12" Margin="0,8,0,4" />
-                <TextBlock Text="Select a Keyboard or MIDI binding to learn a replacement. Protected piano-note MIDI bindings still require Remote Arm; controller buttons act directly."
+                <TextBlock Text="Select a binding, then press a keyboard key or move a MIDI control. Press Backspace while listening to unbind it."
                            Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,8" />
                 <Border Background="#11161C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="16,10" Margin="0,0,0,14">
-                  <StackPanel>
-                    <Grid Margin="0,2,0,6">
+                  <Border.Resources>
+                    <DataTemplate x:Key="DiscreteInputBindingTemplate">
+                      <Grid Width="560" Margin="0,5">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="220" />
+                          <ColumnDefinition Width="170" />
+                          <ColumnDefinition Width="170" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding Label}" Foreground="{StaticResource Ink}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="{Binding KeyboardText}" Tag="{Binding KeyboardLearningActionId}" Click="RebindMidiShortcut_Click"
+                                Height="32" Padding="10,0" Margin="4,0" ToolTip="Select to reassign. Backspace unassigns while Listening." />
+                        <Button Grid.Column="2" Content="{Binding MidiText}" Tag="{Binding MidiActionId}" Click="RebindMidiShortcut_Click"
+                                Height="32" Padding="10,0" Margin="4,0" ToolTip="Select to reassign. Escape cancels; Backspace unassigns while Listening." />
+                      </Grid>
+                    </DataTemplate>
+                    <DataTemplate x:Key="ContinuousMidiBindingTemplate">
+                      <Grid Width="390" Margin="0,5">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="220" />
+                          <ColumnDefinition Width="170" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding Label}" Foreground="{StaticResource Ink}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="{Binding MidiText}" Tag="{Binding MidiActionId}" Click="RebindMidiShortcut_Click"
+                                Height="32" Padding="10,0" Margin="4,0" ToolTip="Select to reassign. Escape cancels; Backspace unassigns while Listening." />
+                      </Grid>
+                    </DataTemplate>
+                  </Border.Resources>
+                  <StackPanel HorizontalAlignment="Center">
+                    <Grid Width="560" Margin="0,2,0,2">
                       <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="220" />
                         <ColumnDefinition Width="170" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="145" />
-                        <ColumnDefinition Width="145" />
+                        <ColumnDefinition Width="170" />
                       </Grid.ColumnDefinitions>
-                      <TextBlock Grid.Column="2" Text="KEYBOARD" Foreground="{StaticResource Gold}" FontSize="10.5" FontWeight="Bold" HorizontalAlignment="Center" />
-                      <TextBlock Grid.Column="3" Text="MIDI" Foreground="{StaticResource Gold}" FontSize="10.5" FontWeight="Bold" HorizontalAlignment="Center" />
+                      <TextBlock Grid.Column="1" Text="KEYBOARD" Foreground="{StaticResource Gold}" FontSize="10.5" FontWeight="Bold" HorizontalAlignment="Center" />
+                      <TextBlock Grid.Column="2" Text="MIDI" Foreground="{StaticResource Gold}" FontSize="10.5" FontWeight="Bold" HorizontalAlignment="Center" />
                     </Grid>
-                    <ItemsControl ItemsSource="{Binding MidiShortcutBindings}">
-                      <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                          <Grid Margin="0,5">
-                          <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="170" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="145" />
-                            <ColumnDefinition Width="145" />
-                          </Grid.ColumnDefinitions>
-                          <TextBlock Text="{Binding Label}" Foreground="{StaticResource Ink}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
-                          <TextBlock Grid.Column="1" Text="{Binding Contexts}" Foreground="{StaticResource Muted}" FontSize="10.5" VerticalAlignment="Center" />
-                          <Button Grid.Column="2" Content="{Binding KeyboardText}" Tag="{Binding KeyboardLearningActionId}" Click="RebindMidiShortcut_Click"
-                                  IsEnabled="{Binding CanUseKeyboardBinding}" Height="32" Padding="10,0" ToolTip="Select to reassign. Backspace unassigns while Listening." />
-                          <Button Grid.Column="3" Content="{Binding MidiText}" Tag="{Binding MidiActionId}" Click="RebindMidiShortcut_Click"
-                                  Height="32" Padding="10,0" Margin="8,0,0,0" ToolTip="Select to reassign. Escape cancels; Backspace unassigns while Listening." />
-                          </Grid>
-                        </DataTemplate>
-                      </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+
+                    <TextBlock Text="MODE SELECTION" Foreground="{StaticResource Gold}" FontSize="10.5" FontWeight="Bold" Margin="0,10,0,2" />
+                    <ItemsControl ItemsSource="{Binding ModeShortcutBindings}" ItemTemplate="{StaticResource DiscreteInputBindingTemplate}" />
+
+                    <TextBlock Text="TRANSPORT &amp; LOOP" Foreground="{StaticResource Gold}" FontSize="10.5" FontWeight="Bold" Margin="0,12,0,2" />
+                    <ItemsControl ItemsSource="{Binding TransportShortcutBindings}" ItemTemplate="{StaticResource DiscreteInputBindingTemplate}" />
+
+                    <TextBlock Text="NAVIGATION" Foreground="{StaticResource Gold}" FontSize="10.5" FontWeight="Bold" Margin="0,12,0,2" />
+                    <ItemsControl ItemsSource="{Binding NavigationShortcutBindings}" ItemTemplate="{StaticResource DiscreteInputBindingTemplate}" />
+
+                    <TextBlock Text="RESULTS" Foreground="{StaticResource Gold}" FontSize="10.5" FontWeight="Bold" Margin="0,12,0,2" />
+                    <ItemsControl ItemsSource="{Binding ResultsShortcutBindings}" ItemTemplate="{StaticResource DiscreteInputBindingTemplate}" />
+
+                    <TextBlock Text="MIDI VALUE CONTROLS" Foreground="{StaticResource Gold}" FontSize="10.5" FontWeight="Bold" Margin="0,16,0,2" />
+                    <TextBlock Text="Tempo, zoom, and volume use continuous MIDI values, so they do not have keyboard slots."
+                               Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,5" />
+                    <Grid Width="390" Margin="0,0,0,2">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="220" />
+                        <ColumnDefinition Width="170" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Grid.Column="1" Text="MIDI" Foreground="{StaticResource Gold}" FontSize="10.5" FontWeight="Bold" HorizontalAlignment="Center" />
+                    </Grid>
+                    <ItemsControl ItemsSource="{Binding ContinuousMidiBindings}" ItemTemplate="{StaticResource ContinuousMidiBindingTemplate}" />
                   </StackPanel>
                 </Border>
-
-                <TextBlock Text="Context rules are enforced when the action key is pressed. Mode switching cannot interrupt a run; navigation cannot move a running performance; results actions only work on the results screen."
-                           Foreground="{StaticResource Muted}" FontSize="11.5" FontStyle="Italic" TextWrapping="Wrap" />
               </StackPanel>
               <!-- TAB 2: MIDI & HARDWARE SETUP -->
               <StackPanel Visibility="{Binding IsSettingsTabMidiVisible, Converter={StaticResource BoolToVisibility}}">
@@ -2015,6 +2224,13 @@
                                FontSize="13.5" FontWeight="SemiBold" Margin="0,0,0,4"
                                ToolTip="When checked, the session summary modal auto-dismisses after 10s. When unchecked, it stays open until manual dismissal." />
                     <TextBlock Text="Allows hands-free review or manual dismissal of performance results."
+                               Foreground="{StaticResource Muted}" FontSize="11.5" TextWrapping="Wrap" Margin="24,0,0,16" />
+
+                    <CheckBox Content="Skip Results screen while looping"
+                               IsChecked="{Binding SkipResultsWhenLooping, Mode=TwoWay}"
+                               FontSize="13.5" FontWeight="SemiBold" Margin="0,0,0,4"
+                               ToolTip="When enabled, Loop starts the next run without opening Results. When disabled, Results remains available between loops." />
+                    <TextBlock Text="Off by default. Leave it off to review each loop result; enable it for uninterrupted repetition."
                                Foreground="{StaticResource Muted}" FontSize="11.5" TextWrapping="Wrap" Margin="24,0,0,16" />
 
                     <CheckBox Content="Match Listen Mode Sound Engine" IsChecked="{Binding MatchPlaybackSynthEnabled, Mode=TwoWay}" FontSize="13.5" FontWeight="SemiBold" Margin="0,0,0,4" />

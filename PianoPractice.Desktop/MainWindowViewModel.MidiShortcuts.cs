@@ -130,28 +130,53 @@ public sealed partial class MainWindowViewModel
         OnPropertyChanged(nameof(MidiShortcutLearningText));
     }
 
-    public IReadOnlyList<MidiShortcutBindingItem> MidiShortcutBindings =>
+    public IReadOnlyList<MidiShortcutBindingItem> ModeShortcutBindings =>
     [
         BindingItem(MidiShortcutAction.StartListen, "Ready only"),
         BindingItem(MidiShortcutAction.StartPractice, "Ready only"),
-        BindingItem(MidiShortcutAction.StartPerformance, "Ready only"),
+        BindingItem(MidiShortcutAction.StartPerformance, "Ready only")
+    ];
+
+    public IReadOnlyList<MidiShortcutBindingItem> TransportShortcutBindings =>
+    [
         BindingItem(MidiShortcutAction.TogglePlayback, "Ready, running, or paused"),
         BindingItem(MidiShortcutAction.Restart, "Ready, running, or paused"),
+        BindingItem(MidiShortcutAction.Stop, "Any player state"),
+        BindingItem(MidiShortcutAction.ToggleLoop, "Any player state")
+    ];
+
+    public IReadOnlyList<MidiShortcutBindingItem> NavigationShortcutBindings =>
+    [
         BindingItem(MidiShortcutAction.PreviousMeasure, "Ready or paused"),
         BindingItem(MidiShortcutAction.NextMeasure, "Ready or paused"),
         BindingItem(MidiShortcutAction.PreviousPage, "Ready or paused"),
         BindingItem(MidiShortcutAction.NextPage, "Ready or paused"),
-        BindingItem(MidiShortcutAction.ReturnToLivePage, "Any player state"),
+        BindingItem(MidiShortcutAction.ReturnToLivePage, "Any player state")
+    ];
+
+    public IReadOnlyList<MidiShortcutBindingItem> ResultsShortcutBindings =>
+    [
         BindingItem(MidiShortcutAction.DismissResults, "Results only"),
-        BindingItem(MidiShortcutAction.RepeatResults, "Results only"),
-        BindingItem(MidiShortcutAction.Stop, "Any player state"),
-        BindingItem(MidiShortcutAction.ToggleLoop, "Any player state"),
+        BindingItem(MidiShortcutAction.RepeatResults, "Results only")
+    ];
+
+    public IReadOnlyList<MidiShortcutBindingItem> ContinuousMidiBindings =>
+    [
         BindingItem(MidiShortcutAction.SetLessonTempo, "Ready, running, or paused"),
         BindingItem(MidiShortcutAction.SetNotationZoom, "Any player state"),
         BindingItem(MidiShortcutAction.SetOverallVolume, "Any player state"),
         BindingItem(MidiShortcutAction.SetInstrumentalVolume, "Any player state"),
         BindingItem(MidiShortcutAction.SetMetronomeVolume, "Any player state"),
         BindingItem(MidiShortcutAction.SetMonitorVolume, "Any player state")
+    ];
+
+    public IReadOnlyList<MidiShortcutBindingItem> MidiShortcutBindings =>
+    [
+        .. ModeShortcutBindings,
+        .. TransportShortcutBindings,
+        .. NavigationShortcutBindings,
+        .. ResultsShortcutBindings,
+        .. ContinuousMidiBindings
     ];
 
     public void StartMidiShortcutLearning(string actionId)
@@ -1009,6 +1034,11 @@ public sealed partial class MainWindowViewModel
         OnPropertyChanged(nameof(MidiRemoteArmControlText));
         OnPropertyChanged(nameof(MidiRemoteInstructions));
         OnPropertyChanged(nameof(MidiShortcutBindings));
+        OnPropertyChanged(nameof(ModeShortcutBindings));
+        OnPropertyChanged(nameof(TransportShortcutBindings));
+        OnPropertyChanged(nameof(NavigationShortcutBindings));
+        OnPropertyChanged(nameof(ResultsShortcutBindings));
+        OnPropertyChanged(nameof(ContinuousMidiBindings));
     }
 
     private static int ValidMidiNoteOrDefault(int noteNumber, int fallback) =>
@@ -1062,6 +1092,7 @@ public sealed partial class MainWindowViewModel
         MidiShortcutAction.PreviousPage => AppShortcutAction.PreviousPage,
         MidiShortcutAction.NextPage => AppShortcutAction.NextPage,
         MidiShortcutAction.ReturnToLivePage => AppShortcutAction.ReturnToLivePage,
+        MidiShortcutAction.ToggleLoop => AppShortcutAction.ToggleLoop,
         MidiShortcutAction.DismissResults => AppShortcutAction.DismissResults,
         MidiShortcutAction.RepeatResults => AppShortcutAction.RepeatResults,
         _ => null
@@ -1074,6 +1105,7 @@ public sealed partial class MainWindowViewModel
         AppShortcutAction.SelectPerformance => "Select Performance",
         AppShortcutAction.TogglePlayback => "Play / Pause",
         AppShortcutAction.ReturnToLivePage => "Return to Live Page",
+        AppShortcutAction.ToggleLoop => "Toggle Loop",
         _ => action.ToString().Replace("Measure", " Measure").Replace("Page", " Page").Replace("Results", " Results")
     };
 

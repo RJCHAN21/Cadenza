@@ -16,6 +16,7 @@ public enum AppShortcutAction
     PreviousPage,
     NextPage,
     ReturnToLivePage,
+    ToggleLoop,
     DismissResults,
     RepeatResults
 }
@@ -36,6 +37,7 @@ public static class AppShortcutRouter
             [AppShortcutAction.PreviousPage] = "Control+PageUp",
             [AppShortcutAction.NextPage] = "Control+PageDown",
             [AppShortcutAction.ReturnToLivePage] = "Control+Home",
+            [AppShortcutAction.ToggleLoop] = string.Empty,
             [AppShortcutAction.DismissResults] = "Escape",
             [AppShortcutAction.RepeatResults] = "Enter"
         };

@@ -29,6 +29,7 @@
       transform: translateX(-1px); pointer-events: none; opacity: 0;
       will-change: left, top, height; transition: opacity 120ms ease;
     }
+    html.sight-reading-test #playhead { display: none !important; }
     #notation g.note.playing,
     #notation g.note.playing *,
     #notation g.syl.playing,
@@ -576,6 +577,8 @@
     </div>
   </div>
   <script>
+    const isSightReadingTest = new URLSearchParams(window.location.search).get("mode") === "sight-reading";
+    if (isSightReadingTest) document.documentElement.classList.add("sight-reading-test");
     let toolkit = null;
     let timemap = [];
     let currentPage = 1;
@@ -662,6 +665,7 @@
     let lessonGeneration = 0;
     let feedbackGlyphCloneId = 0;
     const persistentCorrectFeedback = new Map();
+    const partialChordFeedbackDurationMs = 1400;
     const tiedNoteIndex = new Map();
     let activeWrongFeedback = null;
     let feedbackTelemetry = {
@@ -3152,26 +3156,45 @@
             paintNotehead(node);
           });
           reapplyLessonFeedback();
-        }, kind === "wrong" || kind === "extra" ? 420 : 700);
+        }, kind === "missed" && lessonMode === "WaitForYou"
+          ? partialChordFeedbackDurationMs
+          : kind === "wrong" || kind === "extra" ? 420 : 700);
       }
     }
 
-    function clearPartialFeedback(occurrenceIndex) {
+    function clearPartialFeedback(occurrenceIndex, beat) {
       const idx = Number(occurrenceIndex || 0);
-      const keysToDelete = [];
+      const targetBeat = Number(beat || 0);
+      const feedbackToClear = [];
       for (const [key, item] of persistentCorrectFeedback) {
-        if (Number(item.occurrenceIndex || 0) === idx) {
-          keysToDelete.push(key);
+        if (Number(item.occurrenceIndex || 0) === idx &&
+            Math.abs(Number(item.beat || 0) - targetBeat) <= 0.0001) {
+          feedbackToClear.push([key, item]);
         }
       }
-      for (const key of keysToDelete) {
-        persistentCorrectFeedback.delete(key);
+
+      if (activeWrongFeedback &&
+          Number(activeWrongFeedback.occurrenceIndex || 0) === idx &&
+          Math.abs(Number(activeWrongFeedback.beat || 0) - targetBeat) <= 0.0001) {
+        activeWrongFeedback.expiresAt = performance.now() + partialChordFeedbackDurationMs;
+        clearTimeout(wrongNoteTimer);
+        wrongNoteTimer = setTimeout(
+          () => clearPracticeWrongNote(true),
+          partialChordFeedbackDurationMs);
       }
-      document.querySelectorAll("g.note.feedback-correct").forEach(node => {
-        node.classList.remove("feedback-correct");
-        paintNotehead(node);
-      });
-      reapplyLessonFeedback();
+
+      setTimeout(() => {
+        for (const [key, item] of feedbackToClear) {
+          if (persistentCorrectFeedback.get(key) === item) {
+            persistentCorrectFeedback.delete(key);
+          }
+        }
+        document.querySelectorAll("g.note.feedback-correct").forEach(node => {
+          node.classList.remove("feedback-correct");
+          paintNotehead(node);
+        });
+        reapplyLessonFeedback();
+      }, partialChordFeedbackDurationMs);
     }
 
     function showCountdownStep(text) {
@@ -3367,10 +3390,13 @@
     window.CadenzaNotation = { loadScore, setPerformanceTimeline, setReadingMode, setHintMode, setHandMode, setScoreAppearance, startPlayback, stopPlayback, beginTimeline, endTimeline, setCursorBeat, setZoom, setTempo, changePage, returnToLivePage, resetAudit, beginLesson, finishLesson, showFeedback, showTemporaryLiveNoteFeedback, clearPartialFeedback, showCountdownStep, hideCountdown, showResultsModal, updateResultsAutoRepeat, hideResultsModal, showHoldProgress, hideHoldProgress, getState, elementsAtBeat, validateRendererLayout, validateFeedbackGeometry };
 
     document.addEventListener("DOMContentLoaded", () => {
-      verovio.module.onRuntimeInitialized = () => {
+      const initializeToolkit = () => {
         toolkit = new verovio.toolkit();
         post("ready", { version: toolkit.getVersion() });
       };
+
+      if (verovio.module.calledRun) initializeToolkit();
+      else verovio.module.onRuntimeInitialized = initializeToolkit;
     });
   </script>
 </body>

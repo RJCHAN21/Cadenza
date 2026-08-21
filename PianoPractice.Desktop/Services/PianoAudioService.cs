@@ -9,6 +9,7 @@ namespace PianoPractice.Desktop.Services;
 
 public sealed class PianoAudioService : IDisposable
 {
+    private static readonly TimeSpan CompletedPlaybackReleaseTail = TimeSpan.FromMilliseconds(900);
     private const int CompatibilitySampleRate = 22050;
     private const double MaximumPlaybackSeconds = 30 * 60;
     private const int MaximumPlaybackEvents = 2_000_000;
@@ -627,9 +628,11 @@ public sealed class PianoAudioService : IDisposable
         long generation,
         CancellationTokenSource cancellation)
     {
+        var completedNaturally = false;
         try
         {
             await RunPlaybackPlanAsync(plan, generation, cancellation.Token);
+            completedNaturally = true;
         }
         catch (OperationCanceledException)
         {
@@ -653,14 +656,37 @@ public sealed class PianoAudioService : IDisposable
 
             if (ownsOutput)
             {
-                lock (_synthGate)
+                if (completedNaturally)
                 {
-                    _previewSynth.AllNotesOff();
-                    _metronomeSynth.AllNotesOff();
+                    _ = SilenceCompletedPlaybackAfterReleaseAsync(generation);
+                }
+                else
+                {
+                    lock (_synthGate)
+                    {
+                        _previewSynth.AllNotesOff();
+                        _metronomeSynth.AllNotesOff();
+                    }
                 }
             }
 
             cancellation.Dispose();
+        }
+    }
+
+    private async Task SilenceCompletedPlaybackAfterReleaseAsync(long generation)
+    {
+        await Task.Delay(CompletedPlaybackReleaseTail);
+        lock (_previewGate)
+        {
+            if (_playbackGeneration != generation || _realtimePlaybackActive)
+                return;
+        }
+
+        lock (_synthGate)
+        {
+            _previewSynth.AllNotesOff();
+            _metronomeSynth.AllNotesOff();
         }
     }
 

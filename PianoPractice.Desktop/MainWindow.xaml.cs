@@ -17,6 +17,7 @@ public partial class MainWindow : Window
 {
     private readonly MainWindowViewModel _viewModel = new();
     private bool _notationReady;
+    private bool _sightReadingRendererReady;
     private int _notationZoom = 100;
     private int _displayedScorePage = 1;
     private int _displayedScorePageCount = 1;
@@ -26,6 +27,7 @@ public partial class MainWindow : Window
     private double? _pendingCursorBeat;
     private double _lastQueuedCursorBeat;
     private long _rendererFeedbackDispatchId;
+    private long _sightReadingFeedbackDispatchId;
     private bool _rendererClosed;
     private readonly HashSet<Key> _pressedComputerPianoKeys = [];
 
@@ -57,6 +59,8 @@ public partial class MainWindow : Window
         _viewModel.ResultsDismissed += ViewModel_ResultsDismissed;
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
         _viewModel.OnLiveNoteFeedbackTriggered += ViewModel_LiveNoteFeedbackTriggered;
+        _viewModel.SightReadingPromptChanged += ViewModel_SightReadingPromptChanged;
+        _viewModel.SightReadingFeedback += ViewModel_SightReadingFeedback;
         CompositionTarget.Rendering += CompositionTarget_Rendering;
     }
 
@@ -122,6 +126,10 @@ public partial class MainWindow : Window
             var playerPath = Path.Combine(assetsFolder, "player.html");
             var rendererVersion = File.GetLastWriteTimeUtc(playerPath).Ticks;
             NotationWebView.Source = new Uri($"https://cadenza.local/player.html?v={rendererVersion}");
+
+            await SightReadingWebView.EnsureCoreWebView2Async(environment);
+            ConfigureSightReadingRenderer(SightReadingWebView.CoreWebView2, assetsFolder);
+            SightReadingWebView.Source = new Uri($"https://cadenza.local/player.html?v={rendererVersion}&mode=sight-reading");
         }
         catch (Exception exception)
         {
@@ -477,7 +485,135 @@ public partial class MainWindow : Window
         NotationWebView.Visibility = Visibility.Visible;
     }
 
+    private void ConfigureSightReadingRenderer(CoreWebView2 core, string assetsFolder)
+    {
+        core.Settings.AreHostObjectsAllowed = false;
+        core.Settings.AreDefaultContextMenusEnabled = false;
+        core.Settings.AreDefaultScriptDialogsEnabled = false;
+        core.Settings.AreDevToolsEnabled = false;
+        core.Settings.IsStatusBarEnabled = false;
+        core.Settings.IsZoomControlEnabled = false;
+        core.Settings.IsWebMessageEnabled = true;
+        core.SetVirtualHostNameToFolderMapping(
+            "cadenza.local",
+            assetsFolder,
+            CoreWebView2HostResourceAccessKind.DenyCors);
+        core.NavigationStarting += SightReadingNavigationStarting;
+        core.FrameNavigationStarting += SightReadingNavigationStarting;
+        core.NewWindowRequested += SightReadingNewWindowRequested;
+        core.PermissionRequested += SightReadingPermissionRequested;
+        core.DownloadStarting += SightReadingDownloadStarting;
+        core.WebMessageReceived += SightReadingWebMessageReceived;
+    }
+
+    private static void SightReadingNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
+    {
+        if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(uri.Host, "cadenza.local", StringComparison.OrdinalIgnoreCase))
+        {
+            e.Cancel = true;
+        }
+    }
+
+    private static void SightReadingNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e) =>
+        e.Handled = true;
+
+    private static void SightReadingPermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
+    {
+        e.State = CoreWebView2PermissionState.Deny;
+        e.Handled = true;
+    }
+
+    private static void SightReadingDownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs e) =>
+        e.Cancel = true;
+
+    private async void SightReadingWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(e.WebMessageAsJson);
+            var root = document.RootElement;
+            var type = root.TryGetProperty("type", out var typeProperty) ? typeProperty.GetString() : null;
+            if (type == "ready")
+            {
+                _sightReadingRendererReady = true;
+                await LoadSightReadingPromptAsync();
+            }
+            else if (type == "rendered")
+            {
+                await ExecuteSightReadingScriptAsync(
+                    $"window.CadenzaNotation.beginLesson('WaitForYou', 0, false, {_viewModel.SightReadingSessionGeneration}, false);");
+            }
+            else if (type == "error")
+            {
+                var message = root.TryGetProperty("message", out var property)
+                    ? property.GetString()
+                    : "Unknown sight-reading engraving error.";
+                _viewModel.SetSightReadingRendererError(message ?? "Unknown sight-reading engraving error.");
+            }
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+        {
+            _viewModel.SetSightReadingRendererError(exception.Message);
+        }
+    }
+
+    private async void ViewModel_SightReadingPromptChanged(object? sender, SightReadingPrompt prompt) =>
+        await LoadSightReadingPromptAsync();
+
+    private async void ViewModel_SightReadingFeedback(object? sender, SightReadingFeedbackEvent e)
+    {
+        if (!_sightReadingRendererReady || SightReadingWebView.CoreWebView2 is null) return;
+        var dispatchId = Interlocked.Increment(ref _sightReadingFeedbackDispatchId);
+        await ExecuteSightReadingScriptAsync(
+            $"window.CadenzaNotation.showFeedback({JsonSerializer.Serialize(e.Kind)}, {e.Beat.ToString(System.Globalization.CultureInfo.InvariantCulture)}, {e.MidiNoteNumber}, {dispatchId}, {e.SessionGeneration}, {e.EventId}, 0, {e.StaffNumber});");
+    }
+
+    private async Task LoadSightReadingPromptAsync()
+    {
+        if (!_sightReadingRendererReady ||
+            SightReadingWebView.CoreWebView2 is null ||
+            _viewModel.CurrentSightReadingPrompt is not { } prompt)
+            return;
+
+        var base64 = Convert.ToBase64String(prompt.MusicXml);
+        await ExecuteSightReadingScriptAsync(
+            $"window.CadenzaNotation.loadScore({JsonSerializer.Serialize(base64)}, false, 'Page', 80, 'C major'); window.CadenzaNotation.setHintMode(false); window.CadenzaNotation.setZoom(115);");
+    }
+
+    private async Task<string?> ExecuteSightReadingScriptAsync(string script)
+    {
+        if (_rendererClosed || SightReadingWebView.CoreWebView2 is not { } core) return null;
+        try
+        {
+            return await core.ExecuteScriptAsync(script);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ObjectDisposedException or COMException)
+        {
+            return null;
+        }
+    }
+
     private void BackToDashboard_Click(object sender, RoutedEventArgs e) => _viewModel.ShowDashboard();
+
+    private void OpenSightReading_Click(object sender, RoutedEventArgs e) => _viewModel.OpenSightReading();
+
+    private void BackFromSightReading_Click(object sender, RoutedEventArgs e) => _viewModel.ShowDashboard();
+
+    private void SightReadingTest_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string tag } &&
+            Enum.TryParse<SightReadingTestKind>(tag, out var kind))
+        {
+            _viewModel.SelectSightReadingTest(kind);
+            _viewModel.StartSightReadingTest();
+        }
+    }
+
+    private void StartSightReading_Click(object sender, RoutedEventArgs e) => _viewModel.StartSightReadingTest();
+
+    private void StopSightReading_Click(object sender, RoutedEventArgs e) => _viewModel.StopSightReadingTest();
 
     private void OpenDeviceSettings_Click(object sender, RoutedEventArgs e)
     {
@@ -681,7 +817,7 @@ public partial class MainWindow : Window
             if (_viewModel.UnbindCurrentMidiShortcutLearning()) e.Handled = true;
             return;
         }
-        if (!_viewModel.IsPlayerVisible) return;
+        if (!_viewModel.IsMusicalWorkspaceVisible) return;
         if (IsModalOverlayVisible()) return;
 
         // Preserve normal keyboard activation for a focused WPF button.
@@ -689,16 +825,19 @@ public partial class MainWindow : Window
             e.Key is Key.Space or Key.Enter)
             return;
 
-        var shortcut = AppShortcutRouter.Resolve(
-            pressedKey,
-            Keyboard.Modifiers,
-            _viewModel.ResultsVisible,
-            _viewModel.KeyboardShortcutOverrides);
-        if (shortcut != AppShortcutAction.None)
+        if (_viewModel.IsPlayerVisible)
         {
-            e.Handled = true;
-            if (!e.IsRepeat) await ExecuteAppShortcutAsync(shortcut);
-            return;
+            var shortcut = AppShortcutRouter.Resolve(
+                pressedKey,
+                Keyboard.Modifiers,
+                _viewModel.ResultsVisible,
+                _viewModel.KeyboardShortcutOverrides);
+            if (shortcut != AppShortcutAction.None)
+            {
+                e.Handled = true;
+                if (!e.IsRepeat) await ExecuteAppShortcutAsync(shortcut);
+                return;
+            }
         }
 
         if (!e.IsRepeat &&
@@ -755,6 +894,9 @@ public partial class MainWindow : Window
                 break;
             case AppShortcutAction.ReturnToLivePage:
                 await ReturnToLivePageAsync();
+                break;
+            case AppShortcutAction.ToggleLoop:
+                _viewModel.IsLoopEnabled = !_viewModel.IsLoopEnabled;
                 break;
             case AppShortcutAction.DismissResults:
                 _viewModel.DismissResults();
@@ -849,11 +991,12 @@ public partial class MainWindow : Window
     private async void ViewModel_PartialChordReset(object? sender, int occurrenceIndex)
     {
         if (!_notationReady || NotationWebView.CoreWebView2 is null) return;
+        var beat = _viewModel.CursorBeat.ToString(System.Globalization.CultureInfo.InvariantCulture);
         await _rendererLifecycleGate.WaitAsync();
         try
         {
             await ExecuteRendererScriptAsync(
-                $"window.CadenzaNotation.clearPartialFeedback({occurrenceIndex});");
+                $"window.CadenzaNotation.clearPartialFeedback({occurrenceIndex}, {beat});");
         }
         finally
         {
@@ -1135,10 +1278,21 @@ public partial class MainWindow : Window
         _viewModel.AutoRepeatUpdated -= ViewModel_AutoRepeatUpdated;
         _viewModel.ResultsDismissed -= ViewModel_ResultsDismissed;
         _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        _viewModel.SightReadingPromptChanged -= ViewModel_SightReadingPromptChanged;
+        _viewModel.SightReadingFeedback -= ViewModel_SightReadingFeedback;
         CompositionTarget.Rendering -= CompositionTarget_Rendering;
         if (NotationWebView.CoreWebView2 is not null)
         {
             RemoveRuntimeHardeningHandlers(NotationWebView.CoreWebView2);
+        }
+        if (SightReadingWebView.CoreWebView2 is { } sightReadingCore)
+        {
+            sightReadingCore.NavigationStarting -= SightReadingNavigationStarting;
+            sightReadingCore.FrameNavigationStarting -= SightReadingNavigationStarting;
+            sightReadingCore.NewWindowRequested -= SightReadingNewWindowRequested;
+            sightReadingCore.PermissionRequested -= SightReadingPermissionRequested;
+            sightReadingCore.DownloadStarting -= SightReadingDownloadStarting;
+            sightReadingCore.WebMessageReceived -= SightReadingWebMessageReceived;
         }
         _viewModel.Dispose();
     }

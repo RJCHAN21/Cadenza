@@ -4,6 +4,7 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const assetRoot = path.join(root, "PianoPractice.Desktop", "Assets", "Verovio");
 const playerSource = fs.readFileSync(path.join(assetRoot, "player.html"), "utf8");
+const mainWindowXaml = fs.readFileSync(path.join(root, "PianoPractice.Desktop", "MainWindow.xaml"), "utf8");
 const verovio = require(path.join(assetRoot, "verovio-toolkit-wasm.js"));
 
 function assert(condition, message) {
@@ -58,6 +59,16 @@ async function main() {
     else verovio.module.onRuntimeInitialized = resolve;
   });
 
+  assert(/if \(verovio\.module\.calledRun\) initializeToolkit\(\);[\s\S]*else verovio\.module\.onRuntimeInitialized = initializeToolkit;/.test(playerSource),
+    "The renderer can miss its ready notification when cached WebAssembly initializes before DOMContentLoaded.");
+  assert(mainWindowXaml.includes('Value="{Binding SightReadingProgressPercent, Mode=OneWay}"'),
+    "The read-only sight-reading progress property must use a one-way binding at startup.");
+  assert((mainWindowXaml.match(/HorizontalContentAlignment="Stretch"/g) || []).length >= 8 &&
+         mainWindowXaml.includes('HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"'),
+    "Sight-reading test icons and labels are not using one shared two-column alignment grid.");
+  assert(playerSource.includes('html.sight-reading-test #playhead { display: none !important; }') &&
+         playerSource.includes('get("mode") === "sight-reading"'),
+    "Sight-reading tests can still show the lesson playhead.");
   assert(/function feedbackEventAtBeat[\s\S]*exactPerformanceEvent/.test(playerSource),
     "Practice feedback does not prefer the exact rendered performance occurrence.");
   assert(/const targetPage = elementPageIndex\.get\(item\.noteIdentity\)/.test(playerSource),
@@ -66,6 +77,11 @@ async function main() {
     "Accepted Practice notes do not persist tied continuation identities.");
   assert(/function clearPracticeWrongNote[\s\S]*?:scope > g\.wrong-feedback[\s\S]*?updatePracticeFeedbackOverlayVisibility\(\)/.test(playerSource),
     "Clearing an extra Practice note can still remove accepted green noteheads.");
+  assert(/function clearPartialFeedback\(occurrenceIndex, beat\)[\s\S]*?Number\(item\.occurrenceIndex \|\| 0\) === idx &&[\s\S]*?Math\.abs\(Number\(item\.beat \|\| 0\) - targetBeat\) <= 0\.0001/.test(playerSource),
+    "Resetting an incomplete Practice chord can still remove earlier correct notes from the same measure occurrence.");
+  assert(/const partialChordFeedbackDurationMs = 1400/.test(playerSource) &&
+         /function clearPartialFeedback[\s\S]*?persistentCorrectFeedback\.get\(key\) === item[\s\S]*?partialChordFeedbackDurationMs/.test(playerSource),
+    "Incomplete Practice chord feedback is not retained safely long enough to inspect before a retry.");
   assert(/function beginTimeline[\s\S]*?if \(!lessonRunning\) clearLessonFeedbackForPlayback\(\)/.test(playerSource) &&
          /function clearLessonFeedbackForPlayback[\s\S]*?persistentCorrectFeedback\.clear\(\)[\s\S]*?clearPracticeCorrectNotes\(\)[\s\S]*?resetAudit\(\)/.test(playerSource),
     "Starting Listen does not clear retained correct and incorrect lesson feedback.");

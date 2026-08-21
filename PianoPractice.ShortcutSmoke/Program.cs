@@ -12,6 +12,12 @@ Assert(AppShortcutRouter.Resolve(Key.D3, ModifierKeys.Control, false) == AppShor
     "Ctrl+3 did not select Performance mode.");
 Assert(AppShortcutRouter.Resolve(Key.Home, ModifierKeys.Control, false) == AppShortcutAction.ReturnToLivePage,
     "Ctrl+Home did not return to the live score page.");
+var configurableLoopBinding = new Dictionary<string, string>
+{
+    [nameof(AppShortcutAction.ToggleLoop)] = "Control+L"
+};
+Assert(AppShortcutRouter.Resolve(Key.L, ModifierKeys.Control, false, configurableLoopBinding) == AppShortcutAction.ToggleLoop,
+    "A configured Toggle Loop keyboard binding was not routed.");
 
 foreach (var pianoKey in ComputerKeyboardPianoMap.MidiNotes.Keys)
 {
