@@ -31,6 +31,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     private bool _isSelectAllLibraryItemsChecked;
     private bool _isRenameOverlayVisible;
     private string _renameItemTitleInput = string.Empty;
+    private string _renameItemComposerInput = string.Empty;
+    private string _renameItemArrangerInput = string.Empty;
     private LibraryItemViewModel? _itemBeingRenamed;
     private readonly DispatcherTimer _lessonTimer;
     private readonly DispatcherTimer _midiRefreshTimer;
@@ -60,6 +62,9 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     private bool _isPreviewBuilding;
     private bool _isPreviewPaused;
     private bool _isStartingLesson;
+    private bool _isPerformancePaused;
+    private bool _isPracticePaused;
+    private bool _resumePracticeClockOnResume;
     private bool _previewUsesScore;
     private string _scoreTitle = "No score loaded";
     private string _scoreByline = "Import a MusicXML or MXL score to begin.";
@@ -248,6 +253,14 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     public event EventHandler? ResultsPresented;
     public event EventHandler<LessonNoteFeedbackEvent>? NoteFeedback;
     public event EventHandler<LessonRunStateEvent>? LessonRunStateChanged;
+    public event EventHandler<int>? DisplayPageChangeRequested;
+    public event EventHandler? ReturnToLivePageRequested;
+
+    private void RequestDisplayPageChange(int delta) =>
+        DisplayPageChangeRequested?.Invoke(this, Math.Sign(delta));
+
+    private void RequestReturnToLivePage() =>
+        ReturnToLivePageRequested?.Invoke(this, EventArgs.Empty);
     public event EventHandler? AutoRepeatUpdated;
     public event EventHandler? ResultsDismissed;
 
@@ -476,6 +489,9 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     public bool IsPreviewPlaying { get => _isPreviewPlaying; private set => SetField(ref _isPreviewPlaying, value); }
     public bool IsPreviewBuilding { get => _isPreviewBuilding; private set => SetField(ref _isPreviewBuilding, value); }
     public bool IsPreviewPaused { get => _isPreviewPaused; private set => SetField(ref _isPreviewPaused, value); }
+    public bool IsPerformancePaused { get => _isPerformancePaused; private set => SetField(ref _isPerformancePaused, value); }
+    public bool IsPracticePaused { get => _isPracticePaused; private set => SetField(ref _isPracticePaused, value); }
+    public bool IsLessonPaused => IsPerformancePaused || IsPracticePaused;
     public bool CanSwitchLessonMode => IsPlayerVisible &&
                                        !IsLessonActive &&
                                        !IsPreviewPlaying &&
@@ -592,7 +608,9 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
     public string NoteLyricLabel => $"{NoteLabel} / {LyricLabel}";
     public string PreviewButtonLabel =>
         IsPreviewBuilding ? "Preparing..." :
-        (ResultsVisible || (IsLessonActive && SelectedLessonMode != LessonMode.Listen)) ? "Restart" :
+        ResultsVisible ? "Restart" :
+        IsLessonPaused ? "Resume" :
+        IsLessonActive && SelectedLessonMode != LessonMode.Listen ? "Pause" :
         IsPreviewPlaying ? "Pause" :
         IsPreviewPaused ? "Resume" : "Play";
     public bool CanUseTransport => HasScore;
@@ -793,7 +811,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             return;
         }
 
-        _autoRepeatTotalSeconds = IsLoopEnabled ? 5.0 : 10.0;
+        _autoRepeatTotalSeconds = Math.Max(1.0, _profile.Settings.AutoDismissResultsSeconds);
         _autoRepeatStartTime = DateTime.UtcNow;
         AutoRepeatProgress = 1.0;
         UpdateAutoRepeatLabel(_autoRepeatTotalSeconds);
@@ -813,7 +831,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             if (remaining <= 0)
             {
                 StopAutoRepeatCountdown();
-                _ = TriggerAutoRepeatAsync();
+                DismissResults();
             }
         };
         _autoRepeatTimer.Start();
@@ -821,9 +839,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
 
     private void UpdateAutoRepeatLabel(double remainingSeconds)
     {
-        AutoRepeatStatusText = IsLoopEnabled
-            ? $"Loop active · Auto-restarting in {remainingSeconds:0.0}s..."
-            : $"Auto-restarting in {remainingSeconds:0.0}s · Press C4 or Space to restart now";
+        AutoRepeatStatusText = $"Auto-closing in {remainingSeconds:0.0}s · Press C4 or Space to repeat now";
     }
 
     public void StopAutoRepeatCountdown()
@@ -1279,6 +1295,18 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         set => SetField(ref _renameItemTitleInput, value);
     }
 
+    public string RenameItemComposerInput
+    {
+        get => _renameItemComposerInput;
+        set => SetField(ref _renameItemComposerInput, value);
+    }
+
+    public string RenameItemArrangerInput
+    {
+        get => _renameItemArrangerInput;
+        set => SetField(ref _renameItemArrangerInput, value);
+    }
+
     public LibraryItemViewModel? ItemBeingRenamed
     {
         get => _itemBeingRenamed;
@@ -1296,7 +1324,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             return LibraryItems.Where(item =>
                 item.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                 item.OriginalFileName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                item.Composer.Contains(query, StringComparison.OrdinalIgnoreCase)
+                item.Composer.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                item.Arranger.Contains(query, StringComparison.OrdinalIgnoreCase)
             ).ToList();
         }
     }
@@ -1413,20 +1442,27 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         if (item is null) return;
         ItemBeingRenamed = item;
         RenameItemTitleInput = item.DisplayName;
+        RenameItemComposerInput = item.Composer;
+        RenameItemArrangerInput = item.Arranger;
         IsRenameOverlayVisible = true;
     }
 
     public void SaveRenameItem()
     {
         if (ItemBeingRenamed is null || string.IsNullOrWhiteSpace(RenameItemTitleInput)) return;
-        var trimmed = RenameItemTitleInput.Trim();
-        _libraryStore.RenameItem(ItemBeingRenamed.Id, trimmed);
-        ItemBeingRenamed.DisplayName = trimmed;
+        var title = RenameItemTitleInput.Trim();
+        var composer = string.IsNullOrWhiteSpace(RenameItemComposerInput)
+            ? "Unknown Composer"
+            : RenameItemComposerInput.Trim();
+        var arranger = RenameItemArrangerInput.Trim();
+        _libraryStore.UpdateMetadata(ItemBeingRenamed.Id, title, composer, arranger);
         if (_score is not null && string.Equals(ItemBeingRenamed.StoredFilePath, _score.SourcePath, StringComparison.OrdinalIgnoreCase))
         {
-            ScoreTitle = trimmed;
+            ScoreTitle = title;
+            ScoreByline = FormatScoreByline(composer, arranger);
         }
         IsRenameOverlayVisible = false;
+        ItemBeingRenamed = null;
         RefreshLibrary();
     }
 
@@ -1640,6 +1676,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
                     _score.ContentSha256);
             _currentLibraryItemId = libItem.Id;
             ScoreTitle = libItem.DisplayName;
+            ScoreByline = FormatScoreByline(libItem.Composer, libItem.Arranger);
             _libraryStore.RecordPlayed(libItem.Id);
             RefreshLibrary();
             ScoreStatusLabel = $"{_score.FormatVersion} | {_score.SourceContainer} | authoritative notation source";
@@ -1914,9 +1951,25 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         }
         else
         {
+            if (SelectedLessonMode == LessonMode.TimedPlay && IsPerformancePaused)
+            {
+                await ResumePerformanceAsync();
+                return;
+            }
+            if (SelectedLessonMode == LessonMode.WaitForYou && IsPracticePaused)
+            {
+                ResumePractice();
+                return;
+            }
+
             if (IsLessonActive)
             {
-                await RestartPreviewAsync();
+                if (SelectedLessonMode == LessonMode.TimedPlay)
+                {
+                    PausePerformanceForPageNavigation(forPageNavigation: false);
+                    return;
+                }
+                PausePractice();
                 return;
             }
 
@@ -2593,6 +2646,134 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         return await StartSelectedModeCoreAsync(CancellationToken.None, null);
     }
 
+    /// <summary>
+    /// Pauses an active timed performance before the displayed score page is changed.
+    /// The assessed position and accumulated elapsed time are retained for resume.
+    /// </summary>
+    public bool PausePerformanceForPageNavigation(bool forPageNavigation = true)
+    {
+        if (!IsLessonActive || SelectedLessonMode != LessonMode.TimedPlay || IsPerformancePaused)
+            return false;
+
+        CursorBeat = Math.Clamp(CursorBeat, SelectedPreviewStartBeat, SelectedPreviewEndBeat);
+        AdvanceTimedMisses(CursorBeat);
+        _lessonClock.Stop();
+        _practiceSessionClock.Stop();
+        _lessonTimer.Stop();
+        _audioService.StopPreview();
+        _accompanimentSynth.AllNotesOff();
+        IsPerformancePaused = true;
+        LessonStatusLabel = forPageNavigation
+            ? $"Performance paused at {CurrentBarLabel}. Browse freely, then resume when ready."
+            : $"Performance paused at {CurrentBarLabel}. Resume when ready.";
+        StatusMessage = forPageNavigation
+            ? "Performance paused for score-page browsing."
+            : "Performance paused.";
+        LessonRunStateChanged?.Invoke(this,
+            new LessonRunStateEvent("paused", SelectedLessonMode, CursorBeat, _lessonRunGeneration));
+        RaiseLessonStateProperties();
+        OnPropertyChanged(nameof(LessonCountdownLabel));
+        return true;
+    }
+
+    /// <summary>Pauses wait-for-you Practice without changing its expected note or score position.</summary>
+    public bool PausePractice()
+    {
+        if (!IsLessonActive || SelectedLessonMode != LessonMode.WaitForYou || IsPracticePaused)
+            return false;
+
+        _resumePracticeClockOnResume = _practiceSessionClock.IsRunning;
+        _practiceSessionClock.Stop();
+        _lessonTimer.Stop();
+        _accompanimentSynth.AllNotesOff();
+        IsPracticePaused = true;
+        LessonStatusLabel = $"Practice paused at {CurrentBarLabel}. Resume when ready.";
+        StatusMessage = "Practice paused.";
+        LessonRunStateChanged?.Invoke(this,
+            new LessonRunStateEvent("paused", SelectedLessonMode, CursorBeat, _lessonRunGeneration));
+        RaiseLessonStateProperties();
+        OnPropertyChanged(nameof(LessonCountdownLabel));
+        return true;
+    }
+
+    /// <summary>Resumes wait-for-you Practice at the same expected note.</summary>
+    public bool ResumePractice()
+    {
+        if (!IsLessonActive || SelectedLessonMode != LessonMode.WaitForYou || !IsPracticePaused)
+            return false;
+
+        IsPracticePaused = false;
+        if (_resumePracticeClockOnResume)
+            _practiceSessionClock.Start();
+        _resumePracticeClockOnResume = false;
+        _lessonTimer.Start();
+        LessonStatusLabel = $"Practice resumed at {CurrentBarLabel}.";
+        StatusMessage = "Practice resumed.";
+        LessonRunStateChanged?.Invoke(this,
+            new LessonRunStateEvent("resumed", SelectedLessonMode, CursorBeat, _lessonRunGeneration));
+        RaiseLessonStateProperties();
+        OnPropertyChanged(nameof(LessonCountdownLabel));
+        return true;
+    }
+
+    /// <summary>
+    /// Resumes a paused timed performance from its exact assessed beat after a fresh count-in.
+    /// </summary>
+    public async Task<bool> ResumePerformanceAsync()
+    {
+        if (!IsLessonActive || SelectedLessonMode != LessonMode.TimedPlay || !IsPerformancePaused)
+            return false;
+
+        var generation = _modeSwitchGeneration;
+        var pausedBeat = CursorBeat;
+        await _modeTransitionGate.WaitAsync();
+        try
+        {
+            if (generation != _modeSwitchGeneration || !IsPerformancePaused || !IsLessonActive)
+                return false;
+
+            using var cancellation = new CancellationTokenSource();
+            _modeStartCancellation = cancellation;
+            _isStartingLesson = true;
+            RaiseLessonStateProperties();
+            LessonRunStateChanged?.Invoke(this,
+                new LessonRunStateEvent("resume-countdown", SelectedLessonMode, pausedBeat, _lessonRunGeneration));
+            await PreparePerformanceAudioAsync(cancellation.Token, pausedBeat);
+            await RunPerformanceCountdownAsync(cancellation.Token);
+            cancellation.Token.ThrowIfCancellationRequested();
+            if (generation != _modeSwitchGeneration || !IsLessonActive) return false;
+
+            _lessonStartBeat = pausedBeat;
+            _nextMetronomeBeat = pausedBeat;
+            if (_preparedPerformanceWave is not null)
+                _audioService.PlayPreview(_preparedPerformanceWave);
+            _preparedPerformanceWave = null;
+            _lessonClock.Restart();
+            _practiceSessionClock.Start();
+            IsPerformancePaused = false;
+            _lessonTimer.Start();
+            LessonStatusLabel = $"Performance resumed from {CurrentBarLabel}.";
+            StatusMessage = "Performance resumed after count-in.";
+            LessonRunStateChanged?.Invoke(this,
+                new LessonRunStateEvent("resumed", SelectedLessonMode, pausedBeat, _lessonRunGeneration));
+            RaiseLessonStateProperties();
+            OnPropertyChanged(nameof(LessonCountdownLabel));
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        finally
+        {
+            _isStartingLesson = false;
+            if (generation == _modeSwitchGeneration)
+                _modeStartCancellation = null;
+            RaiseLessonStateProperties();
+            _modeTransitionGate.Release();
+        }
+    }
+
     public event EventHandler<string>? CountdownStepRequested;
     public event EventHandler? HideCountdownRequested;
 
@@ -2672,7 +2853,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         }
     }
 
-    private async Task PreparePerformanceAudioAsync(CancellationToken cancellationToken)
+    private async Task PreparePerformanceAudioAsync(CancellationToken cancellationToken, double? startBeatOverride = null)
     {
         _preparedPerformanceWave = null;
         _performanceAudioOwnsMetronome = false;
@@ -2698,7 +2879,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
 
         if (pianoVolume <= 0 && !IsMetronomeAudible) return;
         StatusMessage = "Preparing synchronized lesson audio...";
-        var startBeat = SelectedPreviewStartBeat;
+        var startBeat = startBeatOverride ?? SelectedPreviewStartBeat;
         _preparedPerformanceWave = await _audioService.BuildPreviewAsync(
             _score,
             IsMetronomeAudible,
@@ -2753,7 +2934,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
                 _previewEndBeat,
                 PerformanceBeatAtElapsed(_previewStartBeat, _previewClock.Elapsed));
         }
-        else if (_score is not null && IsLessonActive && SelectedLessonMode == LessonMode.TimedPlay)
+        else if (_score is not null && IsLessonActive && SelectedLessonMode == LessonMode.TimedPlay && !IsPerformancePaused)
         {
             CursorBeat = Math.Min(
                 SelectedPreviewEndBeat,
@@ -2787,10 +2968,12 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
 
     public void Dispose()
     {
+        Interlocked.Increment(ref _midiControllerSaveGeneration);
         ResetMidiShortcutState();
         CancelMidiShortcutLearning();
         StopPreview();
         if (IsLessonActive) EndLesson(false);
+        SaveProfileSettings();
         _lessonTimer.Stop();
         _midiRefreshTimer.Stop();
         _midiRefreshTimer.Tick -= MidiRefreshTimer_Tick;
@@ -2912,6 +3095,11 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         int.TryParse(_score?.OccurrenceAtBeat(beat)?.MeasureNumber, out var measure)
             ? measure
             : FocusStartMeasure;
+
+    private static string FormatScoreByline(string composer, string arranger) =>
+        string.IsNullOrWhiteSpace(arranger)
+            ? composer
+            : $"{composer} · Arranged by {arranger}";
 
     private static int MeasureNumberOf(ScoreNote note) =>
         int.TryParse(note.MeasureNumber, out var measure) ? measure : 0;
@@ -3220,7 +3408,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
                 StatusMessage = $"Calibration captured {milliseconds:0} ms after click {_calibrationClickIndex + 1}.";
             }
         }
-        if (!IsLessonActive || _lessonGroups.Count == 0) return;
+        if (!IsLessonActive || IsLessonPaused || _lessonGroups.Count == 0) return;
 
         if (SelectedLessonMode == LessonMode.WaitForYou)
         {
@@ -3273,8 +3461,8 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
                 {
                     _practiceSessionClock.Stop();
                     OnPropertyChanged(nameof(LessonCountdownLabel));
-                    var generation = _modeSwitchGeneration;
-                    _ = CompletePracticeLessonAsync(generation);
+                    var runGeneration = _lessonRunGeneration;
+                    _ = CompletePracticeLessonAsync(runGeneration);
                 }
                 else
                 {
@@ -3289,11 +3477,6 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         }
         else
         {
-            if (_matchedNotes.Count > 0 && expected.NoteCount > 1)
-            {
-                ResetPartialChord(expected);
-            }
-
             _extraCount++;
             CurrentStreak = 0;
             OnPropertyChanged(nameof(StreakProgress));
@@ -3302,16 +3485,25 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             var playedName = MidiNoteFormatter.Format(midiNoteNumber, preferFlats);
             var expectedNames = string.Join(" + ", expected.MidiNotes.Select(note => MidiNoteFormatter.Format(note, preferFlats)));
             LessonStatusLabel = expected.NoteCount > 1
-                ? $"Wrong note ({playedName}, expected {expectedNames}). Resetting chord — strike expected notes together."
+                ? $"Wrong note ({playedName}, expected {expectedNames}). Accepted chord tones were kept — play the remaining expected notes."
                 : $"Wrong note ({playedName}, expected {expectedNames}). Strike the correct key to proceed.";
         }
     }
 
-    private async Task CompletePracticeLessonAsync(int generation)
+    private async Task CompletePracticeLessonAsync(long runGeneration)
     {
+        if (IsLoopEnabled)
+        {
+            if (runGeneration == _lessonRunGeneration && IsLessonActive &&
+                SelectedLessonMode == LessonMode.WaitForYou)
+                EndLesson(true);
+            return;
+        }
+
         LessonStatusLabel = "Piece complete! Ringing out final chord...";
         await Task.Delay(1800);
-        if (generation == _modeSwitchGeneration && IsLessonActive)
+        if (runGeneration == _lessonRunGeneration && IsLessonActive &&
+            SelectedLessonMode == LessonMode.WaitForYou)
         {
             EndLesson(true);
         }
@@ -3433,6 +3625,7 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             }
             return;
         }
+        if (IsLessonPaused) return;
         var beat = PerformanceBeatAtElapsed(_lessonStartBeat, _lessonClock.Elapsed);
         while (_nextMetronomeBeat <= beat)
         {
@@ -3505,6 +3698,9 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
         _lessonTimer.Stop();
         _lessonClock.Stop();
         _practiceSessionClock.Stop();
+        IsPerformancePaused = false;
+        IsPracticePaused = false;
+        _resumePracticeClockOnResume = false;
         ResultElapsedTimeLabel = FormatResultDuration(_practiceSessionClock.Elapsed.TotalSeconds);
         ResultTargetTimeLabel = FormatResultDuration(_lessonTargetSeconds);
         if (SelectedLessonMode == LessonMode.TimedPlay)
@@ -3544,8 +3740,24 @@ public sealed partial class MainWindowViewModel : INotifyPropertyChanged, IDispo
             RewardLabel = BestStreak >= 20 ? $"Gold cadence · best streak {BestStreak}" :
                 BestStreak >= 8 ? $"Silver cadence · best streak {BestStreak}" :
                 $"First phrase · best streak {BestStreak}";
-            ResultsVisible = true;
             CursorBeat = SelectedPreviewStartBeat;
+            if (IsLoopEnabled)
+            {
+                ResultsVisible = false;
+                StopAutoRepeatCountdown();
+                StatusMessage = "Looping the selected range without showing results.";
+                if (SelectedLessonMode == LessonMode.WaitForYou)
+                {
+                    StartLesson();
+                }
+                else
+                {
+                    _ = RestartPreviewAsync();
+                }
+                return;
+            }
+
+            ResultsVisible = true;
             StartAutoRepeatCountdown();
             ResultsPresented?.Invoke(this, EventArgs.Empty);
         }

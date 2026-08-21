@@ -10,6 +10,26 @@ const patchPath = path.join(
   "Verovio",
   "cadenza-playable-position-patch.js");
 const source = fs.readFileSync(patchPath, "utf8");
+const playerSource = fs.readFileSync(path.join(
+  root,
+  "PianoPractice.Desktop",
+  "Assets",
+  "Verovio",
+  "player.html"), "utf8");
+const hostSource = fs.readFileSync(path.join(
+  root,
+  "PianoPractice.Desktop",
+  "MainWindow.xaml.cs"), "utf8");
+const xamlSource = fs.readFileSync(path.join(
+  root,
+  "PianoPractice.Desktop",
+  "MainWindow.xaml"), "utf8");
+const edgePatchSource = fs.readFileSync(path.join(
+  root,
+  "PianoPractice.Desktop",
+  "Assets",
+  "Verovio",
+  "cadenza-runtime-edge-patch.js"), "utf8");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -41,7 +61,9 @@ const context = {
   userZoom: 1,
   continuousOffsetX: 24,
   pendingPage: 0,
-  timelineRunning: true
+  timelineRunning: true,
+  lessonRunning: true,
+  lessonMode: "WaitForYou"
 };
 
 function rect(baseLeft, width = 10, height = 12, top = 100) {
@@ -216,6 +238,51 @@ vm.createContext(context);
 vm.runInContext(source, context, { filename: patchPath });
 const api = context.window.CadenzaNotation;
 
+assert(!playerSource.includes('if (lessonMode === "WaitForYou") setCursorBeat(beat);'),
+  "Practice feedback can still move the authoritative playhead backward.");
+assert(playerSource.includes("let manualPageBrowsing = false;") &&
+  playerSource.includes("function returnToLivePage(") &&
+  playerSource.includes('post("manualPageBrowsing", { active,'),
+  "The renderer does not expose an explicit detached/live page state.");
+assert(edgePatchSource.includes("if (shouldHoldManualPage(desiredPage))"),
+  "The authoritative performance cursor can still force a manually selected page away.");
+assert(source.includes('typeof manualPageBrowsing !== "undefined" && manualPageBrowsing'),
+  "The final playable-position layer can still draw a playhead on a detached page.");
+assert(xamlSource.includes('x:Name="ReturnToLivePageButton"') &&
+  xamlSource.includes('Visibility="Collapsed"'),
+  "The return-to-live-page control is not hidden by default.");
+assert(hostSource.includes('"manualPageBrowsing"') &&
+  hostSource.includes("active ? Visibility.Visible : Visibility.Collapsed"),
+  "The host does not show the return-to-live-page control only while detached.");
+
+const playLibraryStart = hostSource.indexOf("private void PlayLibraryItem_Click");
+const playLibraryEnd = hostSource.indexOf("private void RenameLibraryItem_Click", playLibraryStart);
+const openLessonStart = hostSource.indexOf("private void OpenLesson_Click");
+const openLessonEnd = hostSource.indexOf("private void BackToDashboard_Click", openLessonStart);
+assert(playLibraryStart >= 0 && playLibraryEnd > playLibraryStart &&
+  !hostSource.slice(playLibraryStart, playLibraryEnd).includes("LoadNotationAsync"),
+  "Opening a library item still queues a redundant notation reload.");
+assert(openLessonStart >= 0 && openLessonEnd > openLessonStart &&
+  !hostSource.slice(openLessonStart, openLessonEnd).includes("LoadNotationAsync"),
+  "Opening the lesson player still queues a redundant notation reload.");
+
+const previewTransitionStart = hostSource.indexOf(
+  "if (e.PropertyName == nameof(MainWindowViewModel.IsPreviewPlaying))");
+const previewTransitionEnd = hostSource.indexOf(
+  "else if (e.PropertyName == nameof(MainWindowViewModel.IsLessonActive))",
+  previewTransitionStart);
+const previewTransition = hostSource.slice(previewTransitionStart, previewTransitionEnd);
+const previewSnapshot = previewTransition.indexOf(
+  "var previewStartBeat = _viewModel.CursorBeat;");
+const rendererWait = previewTransition.indexOf(
+  "await _rendererLifecycleGate.WaitAsync();");
+assert(previewSnapshot >= 0 && previewSnapshot < rendererWait,
+  "Preview restart does not snapshot its opening beat before waiting for the renderer.");
+assert(previewTransition.includes("beginTimeline({previewStartBeat.ToString"),
+  "Preview restart can still initialize the renderer from an already-advanced cursor.");
+assert(previewTransition.includes("QueueRendererCursor(previewStartBeat, allowReset: true)"),
+  "Preview restart does not preserve the snapshotted opening beat for its reset cursor.");
+
 api.setCursorBeat(0, true);
 let state = api.getState().playablePositioning;
 assert(state.installed, "Playable-position patch did not install.");
@@ -227,6 +294,13 @@ assert(Math.abs(state.lastTarget.scoreX - 120) < 0.01,
   `Leading rest resolved to ${state.lastTarget.scoreX}px instead of 120px.`);
 assert(Math.abs(Number.parseFloat(playhead.style.left) - 320) < 0.01,
   "Continuous playhead did not anchor the leading rest correctly.");
+
+api.setCursorBeat(3, true);
+state = api.getState().playablePositioning;
+assert(Math.abs(state.lastTarget.scoreX - 430) < 0.01,
+  `Practice playhead interpolated away from the expected note: ${state.lastTarget.scoreX}px.`);
+
+api.setCursorBeat(0, true);
 
 api.setCursorBeat(0.5, false);
 state = api.getState().playablePositioning;

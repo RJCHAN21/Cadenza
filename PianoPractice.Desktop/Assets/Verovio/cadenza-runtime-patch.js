@@ -351,6 +351,7 @@
       const sourceBeat = sourceBeatForOccurrence(beat, occurrence);
       const event = eventNearestSourceBeat(sourceBeat, occurrence) || occurrenceStartEvent(occurrence);
       const desiredPage = pageForEvent(event);
+      if (shouldHoldManualPage(desiredPage)) return;
       if (desiredPage !== currentPage) {
         if (!pendingPage || pendingPage !== desiredPage) {
           const direction = desiredPage > currentPage ? 1 : -1;

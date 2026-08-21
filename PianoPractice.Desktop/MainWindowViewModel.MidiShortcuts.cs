@@ -1,6 +1,7 @@
 using PianoPractice.Desktop.Models;
 using PianoPractice.Desktop.Services;
 using System.Windows;
+using System.Windows.Input;
 
 namespace PianoPractice.Desktop;
 
@@ -9,11 +10,13 @@ public sealed partial class MainWindowViewModel
     private const string MidiRemoteArmActionId = "RemoteArm";
     private const string MidiControlLearningPrefix = "Control:";
     private const string MidiNoteLearningPrefix = "Note:";
+    private const string MidiBindingLearningPrefix = "Midi:";
+    private const string KeyboardLearningPrefix = "Keyboard:";
     private static readonly (MidiShortcutAction Action, string ControlName)[] MidiControllerMapSteps =
     [
         (MidiShortcutAction.ToggleLoop, "Loop"),
         (MidiShortcutAction.Stop, "Stop"),
-        (MidiShortcutAction.Play, "Play"),
+        (MidiShortcutAction.TogglePlayback, "Play / Pause"),
         (MidiShortcutAction.StartPractice, "Record"),
         (MidiShortcutAction.SetLessonTempo, "Knob 1"),
         (MidiShortcutAction.SetNotationZoom, "Knob 2"),
@@ -40,6 +43,7 @@ public sealed partial class MainWindowViewModel
     private readonly HashSet<int> _midiLearningConsumedNotes = [];
     private readonly HashSet<string> _pressedMidiControls = [];
     private string? _midiShortcutLearningActionId;
+    private string? _keyboardShortcutLearningActionId;
     private string _midiRemoteStatusText = "MIDI Remote ready.";
     private bool _isMidiRemoteArmed;
     private int _midiRemoteArmGeneration;
@@ -79,7 +83,7 @@ public sealed partial class MainWindowViewModel
 
     public string MidiRemoteArmControlText => IsLearningTarget($"{MidiControlLearningPrefix}{MidiRemoteArmActionId}")
         ? "Listening…"
-        : FormatControllerBinding(MidiRemoteArmActionId, GetControllerBinding(MidiRemoteArmActionId));
+        : FormatControllerBinding(GetControllerBinding(MidiRemoteArmActionId));
 
     public string MidiRemoteStatusText
     {
@@ -93,7 +97,10 @@ public sealed partial class MainWindowViewModel
         private set => SetField(ref _isMidiRemoteArmed, value);
     }
 
-    public bool IsMidiShortcutLearning => _midiShortcutLearningActionId is not null || IsMidiControllerAutoMapping;
+    public bool IsMidiShortcutLearning =>
+        _midiShortcutLearningActionId is not null || _keyboardShortcutLearningActionId is not null || IsMidiControllerAutoMapping;
+    public bool IsKeyboardShortcutLearning => _keyboardShortcutLearningActionId is not null;
+    public IReadOnlyDictionary<string, string> KeyboardShortcutOverrides => _profile.Settings.KeyboardShortcutBindings;
 
     public bool IsMidiControllerAutoMapping => _midiControllerMapIndex >= 0;
 
@@ -102,7 +109,9 @@ public sealed partial class MainWindowViewModel
             ? $"Step {_midiControllerMapIndex + 1}/{MidiControllerMapSteps.Length}: press or move {MidiControllerMapSteps[_midiControllerMapIndex].ControlName}."
             : $"Detected {MidiControllerMapSteps[_midiControllerMapIndex].ControlName}; release the control."
         : _midiShortcutLearningActionId is null
-            ? "Select a binding to change it."
+            ? _keyboardShortcutLearningActionId is null
+                ? "Select a binding to change it."
+                : $"Press the keyboard shortcut for {KeyboardLearningActionLabel(_keyboardShortcutLearningActionId)}."
         : IsControlLearning(_midiShortcutLearningActionId)
             ? $"Move or press the MIDI control for {LearningActionLabel(_midiShortcutLearningActionId)}."
             : $"Press a piano key for {MidiShortcutRouter.GetActionLabel(ParseLearningAction(_midiShortcutLearningActionId))}.";
@@ -126,13 +135,13 @@ public sealed partial class MainWindowViewModel
         BindingItem(MidiShortcutAction.StartListen, "Ready only"),
         BindingItem(MidiShortcutAction.StartPractice, "Ready only"),
         BindingItem(MidiShortcutAction.StartPerformance, "Ready only"),
-        BindingItem(MidiShortcutAction.Play, "Ready or paused"),
-        BindingItem(MidiShortcutAction.Pause, "Listen playback only"),
+        BindingItem(MidiShortcutAction.TogglePlayback, "Ready, running, or paused"),
         BindingItem(MidiShortcutAction.Restart, "Ready, running, or paused"),
         BindingItem(MidiShortcutAction.PreviousMeasure, "Ready or paused"),
         BindingItem(MidiShortcutAction.NextMeasure, "Ready or paused"),
         BindingItem(MidiShortcutAction.PreviousPage, "Ready or paused"),
         BindingItem(MidiShortcutAction.NextPage, "Ready or paused"),
+        BindingItem(MidiShortcutAction.ReturnToLivePage, "Any player state"),
         BindingItem(MidiShortcutAction.DismissResults, "Results only"),
         BindingItem(MidiShortcutAction.RepeatResults, "Results only"),
         BindingItem(MidiShortcutAction.Stop, "Any player state"),
@@ -157,7 +166,7 @@ public sealed partial class MainWindowViewModel
         CancelMidiControllerAutoMapping();
         ResetMidiShortcutState();
         _midiShortcutLearningActionId = actionId;
-        MidiRemoteStatusText = IsControlLearning(actionId)
+        MidiRemoteStatusText = IsControlLearning(actionId) || IsMidiBindingLearning(actionId)
             ? "MIDI learn is listening for one button, knob, or fader movement."
             : "MIDI learn is listening for one piano key press.";
         RefreshMidiShortcutPresentation();
@@ -167,8 +176,9 @@ public sealed partial class MainWindowViewModel
 
     public void CancelMidiShortcutLearning()
     {
-        if (_midiShortcutLearningActionId is null && !IsMidiControllerAutoMapping) return;
+        if (_midiShortcutLearningActionId is null && _keyboardShortcutLearningActionId is null && !IsMidiControllerAutoMapping) return;
         _midiShortcutLearningActionId = null;
+        _keyboardShortcutLearningActionId = null;
         CancelMidiControllerAutoMapping();
         _midiLearningConsumedNotes.Clear();
         MidiRemoteStatusText = MidiShortcutsEnabled
@@ -176,11 +186,68 @@ public sealed partial class MainWindowViewModel
             : "MIDI shortcuts are off; every MIDI key is musical input.";
         RefreshMidiShortcutPresentation();
         OnPropertyChanged(nameof(IsMidiShortcutLearning));
+        OnPropertyChanged(nameof(IsKeyboardShortcutLearning));
         OnPropertyChanged(nameof(MidiShortcutLearningText));
+    }
+
+    public void StartKeyboardShortcutLearning(string actionId)
+    {
+        if (!Enum.TryParse<AppShortcutAction>(actionId, out var action) || action == AppShortcutAction.None) return;
+        CancelMidiControllerAutoMapping();
+        ResetMidiShortcutState();
+        _midiShortcutLearningActionId = null;
+        _keyboardShortcutLearningActionId = action.ToString();
+        MidiRemoteStatusText = $"Keyboard learn is listening for {KeyboardActionLabel(action)}.";
+        RefreshMidiShortcutPresentation();
+        OnPropertyChanged(nameof(IsMidiShortcutLearning));
+        OnPropertyChanged(nameof(IsKeyboardShortcutLearning));
+        OnPropertyChanged(nameof(MidiShortcutLearningText));
+    }
+
+    public bool TryAssignKeyboardShortcut(Key key, ModifierKeys modifiers)
+    {
+        if (_keyboardShortcutLearningActionId is null ||
+            !Enum.TryParse<AppShortcutAction>(_keyboardShortcutLearningActionId, out var action)) return false;
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or
+            Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin) return true;
+        if (modifiers == ModifierKeys.None && ComputerKeyboardPianoMap.MidiNotes.ContainsKey(key))
+        {
+            MidiRemoteStatusText = $"{key} is reserved for the computer piano. Add a modifier or choose another key.";
+            return true;
+        }
+
+        var serialized = AppShortcutRouter.SerializeGesture(key, modifiers);
+        foreach (var existing in AppShortcutRouter.DefaultBindings.Keys.Where(existing => existing != action))
+        {
+            if (string.Equals(EffectiveKeyboardBinding(existing), serialized, StringComparison.OrdinalIgnoreCase))
+                _profile.Settings.KeyboardShortcutBindings[existing.ToString()] = string.Empty;
+        }
+        _profile.Settings.KeyboardShortcutBindings[action.ToString()] = serialized;
+        _keyboardShortcutLearningActionId = null;
+        MidiRemoteStatusText = $"{AppShortcutRouter.FormatGesture(serialized)} now triggers {KeyboardActionLabel(action)}.";
+        RefreshMidiShortcutPresentation();
+        SaveProfileSettings();
+        OnPropertyChanged(nameof(IsMidiShortcutLearning));
+        OnPropertyChanged(nameof(IsKeyboardShortcutLearning));
+        OnPropertyChanged(nameof(MidiShortcutLearningText));
+        return true;
     }
 
     public bool UnbindCurrentMidiShortcutLearning()
     {
+        if (_keyboardShortcutLearningActionId is not null)
+        {
+            var keyboardActionId = _keyboardShortcutLearningActionId;
+            _keyboardShortcutLearningActionId = null;
+            _profile.Settings.KeyboardShortcutBindings[keyboardActionId] = string.Empty;
+            MidiRemoteStatusText = $"{KeyboardLearningActionLabel(keyboardActionId)} keyboard shortcut is now unassigned.";
+            RefreshMidiShortcutPresentation();
+            SaveProfileSettings();
+            OnPropertyChanged(nameof(IsMidiShortcutLearning));
+            OnPropertyChanged(nameof(IsKeyboardShortcutLearning));
+            OnPropertyChanged(nameof(MidiShortcutLearningText));
+            return true;
+        }
         if (_midiShortcutLearningActionId is null) return false;
 
         var learningActionId = _midiShortcutLearningActionId;
@@ -229,9 +296,24 @@ public sealed partial class MainWindowViewModel
 
     public void UnbindMidiShortcut(string actionId)
     {
+        if (actionId.StartsWith(KeyboardLearningPrefix, StringComparison.Ordinal))
+        {
+            var keyboardActionId = actionId[KeyboardLearningPrefix.Length..];
+            _profile.Settings.KeyboardShortcutBindings[keyboardActionId] = string.Empty;
+            MidiRemoteStatusText = $"{KeyboardLearningActionLabel(keyboardActionId)} keyboard shortcut is now unassigned.";
+            RefreshMidiShortcutPresentation();
+            SaveProfileSettings();
+            return;
+        }
         var action = ParseAction(StripLearningPrefix(actionId));
         if (action == MidiShortcutAction.None) return;
-        if (IsControlLearning(actionId))
+        if (IsMidiBindingLearning(actionId))
+        {
+            _profile.Settings.MidiControllerBindings[action.ToString()] = string.Empty;
+            SetMidiShortcutNote(action, -1);
+            MidiRemoteStatusText = $"{MidiShortcutRouter.GetActionLabel(action)} MIDI binding is now unassigned.";
+        }
+        else if (IsControlLearning(actionId))
         {
             _profile.Settings.MidiControllerBindings[action.ToString()] = string.Empty;
             MidiRemoteStatusText = $"Direct {MidiShortcutRouter.GetActionLabel(action)} control is now unassigned.";
@@ -249,6 +331,7 @@ public sealed partial class MainWindowViewModel
     {
         var settings = _profile.Settings;
         settings.MidiControllerBindings ??= new Dictionary<string, string>(StringComparer.Ordinal);
+        settings.KeyboardShortcutBindings ??= new Dictionary<string, string>(StringComparer.Ordinal);
         var changed = false;
         if (settings.MidiControllerMappingVersion < 1)
         {
@@ -273,18 +356,25 @@ public sealed partial class MainWindowViewModel
             settings.MidiControllerMappingVersion = 2;
             changed = true;
         }
-        changed |= settings.MidiRemoteArmNote != -1;
-        settings.MidiRemoteArmNote = -1;
-
-        var usedNotes = new HashSet<int>();
-        foreach (var action in BindingPriority())
+        if (settings.MidiControllerMappingVersion < 3)
         {
-            var note = GetMidiShortcutNote(action);
-            if (note is < 0 or > 127) continue;
-            if (usedNotes.Add(note)) continue;
-            SetMidiShortcutNote(action, -1);
+            if (settings.MidiControllerBindings.TryGetValue(nameof(MidiShortcutAction.Play), out var playBinding) &&
+                !string.IsNullOrWhiteSpace(playBinding) &&
+                (!settings.MidiControllerBindings.TryGetValue(nameof(MidiShortcutAction.TogglePlayback), out var toggleBinding) ||
+                 string.IsNullOrWhiteSpace(toggleBinding)))
+                settings.MidiControllerBindings[nameof(MidiShortcutAction.TogglePlayback)] = playBinding;
+            settings.MidiControllerBindings[nameof(MidiShortcutAction.Play)] = string.Empty;
+            settings.MidiControllerBindings[nameof(MidiShortcutAction.Pause)] = string.Empty;
+            foreach (var action in Enum.GetValues<MidiShortcutAction>().Where(SupportsProtectedNoteBinding))
+            {
+                if (!string.IsNullOrWhiteSpace(settings.MidiControllerBindings.GetValueOrDefault(action.ToString())))
+                    SetMidiShortcutNote(action, -1);
+            }
+            settings.MidiControllerMappingVersion = 3;
             changed = true;
         }
+        changed |= settings.MidiRemoteArmNote != -1;
+        settings.MidiRemoteArmNote = -1;
 
         MidiRemoteStatusText = settings.MidiShortcutsEnabled
             ? "MIDI Remote ready. Use the assigned hardware control to arm protected note shortcuts."
@@ -311,18 +401,16 @@ public sealed partial class MainWindowViewModel
             return true;
         }
 
-        var previousAction = FindActionForNote(midiNoteNumber);
-        if (previousAction != MidiShortcutAction.None && previousAction != action)
-        {
-            SetMidiShortcutNote(previousAction, -1);
-        }
-
+        var sharedActions = FindActionsForNote(midiNoteNumber)
+            .Where(existingAction => existingAction != action)
+            .Select(MidiShortcutRouter.GetActionLabel)
+            .ToArray();
         SetMidiShortcutNote(action, midiNoteNumber);
-        var replacement = previousAction == MidiShortcutAction.None || previousAction == action
-            ? string.Empty
-            : $" {MidiShortcutRouter.GetActionLabel(previousAction)} was unassigned to prevent a conflict.";
+        if (IsMidiBindingLearning(_midiShortcutLearningActionId))
+            _profile.Settings.MidiControllerBindings[action.ToString()] = string.Empty;
         CompleteMidiShortcutLearning(
-            $"{FormatMidiShortcutNote(midiNoteNumber)} now triggers {MidiShortcutRouter.GetActionLabel(action)} after arming.{replacement}");
+            $"{FormatMidiShortcutNote(midiNoteNumber)} now triggers {MidiShortcutRouter.GetActionLabel(action)} after arming." +
+            SharedBindingWarning(sharedActions));
         return true;
     }
 
@@ -411,20 +499,36 @@ public sealed partial class MainWindowViewModel
                     if (await SwitchLessonModeAsync(LessonMode.TimedPlay)) await StartSelectedModeAsync();
                     break;
                 case MidiShortcutAction.TogglePlayback:
-                    if (IsLessonActive)
+                    if (IsPerformancePaused)
+                        await ResumePerformanceAsync();
+                    else if (IsPracticePaused)
+                        ResumePractice();
+                    else if (IsLessonActive && SelectedLessonMode == LessonMode.TimedPlay)
+                        PausePerformanceForPageNavigation(forPageNavigation: false);
+                    else if (IsLessonActive && SelectedLessonMode == LessonMode.WaitForYou)
+                        PausePractice();
+                    else if (IsLessonActive)
                         StatusMessage = "Play / Pause does not stop an active practice or performance. Use Stop instead.";
                     else
                         await TogglePreviewAsync();
                     break;
                 case MidiShortcutAction.Play:
-                    if (IsLessonActive)
+                    if (IsPerformancePaused)
+                        await ResumePerformanceAsync();
+                    else if (IsPracticePaused)
+                        ResumePractice();
+                    else if (IsLessonActive)
                         StatusMessage = "Play does not stop or restart an active practice or performance. Use Stop first.";
                     else if (!IsPreviewPlaying)
                         await TogglePreviewAsync();
                     break;
                 case MidiShortcutAction.Pause:
-                    if (IsLessonActive)
-                        StatusMessage = "Pause is available for Listen playback. Use Stop to end practice or performance.";
+                    if (IsLessonActive && SelectedLessonMode == LessonMode.TimedPlay)
+                        PausePerformanceForPageNavigation(forPageNavigation: false);
+                    else if (IsLessonActive && SelectedLessonMode == LessonMode.WaitForYou)
+                        PausePractice();
+                    else if (IsLessonActive)
+                        StatusMessage = "Pause is available for Listen playback and timed performance. Use Stop to end practice.";
                     else if (IsPreviewPlaying)
                         await TogglePreviewAsync();
                     break;
@@ -439,10 +543,13 @@ public sealed partial class MainWindowViewModel
                     await SeekDisplayMeasureAsync(1);
                     break;
                 case MidiShortcutAction.PreviousPage:
-                    await SeekDisplayPageAsync(-1);
+                    RequestDisplayPageChange(-1);
                     break;
                 case MidiShortcutAction.NextPage:
-                    await SeekDisplayPageAsync(1);
+                    RequestDisplayPageChange(1);
+                    break;
+                case MidiShortcutAction.ReturnToLivePage:
+                    RequestReturnToLivePage();
                     break;
                 case MidiShortcutAction.DismissResults:
                     DismissResults();
@@ -478,26 +585,20 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
-        if (_midiShortcutLearningActionId is not null && IsControlLearning(_midiShortcutLearningActionId))
+        if (_midiShortcutLearningActionId is not null &&
+            (IsControlLearning(_midiShortcutLearningActionId) || IsMidiBindingLearning(_midiShortcutLearningActionId)))
         {
             if (isNoteRelease || (!controlSurface && binding.Kind == MidiControllerMessageKind.Note)) return;
             var actionId = StripLearningPrefix(_midiShortcutLearningActionId);
-            var existingControl = _profile.Settings.MidiControllerBindings
-                .Select(pair => (pair.Key, Binding: MidiControllerBinding.Parse(pair.Value)))
-                .FirstOrDefault(pair => pair.Binding is not null && SamePhysicalControl(pair.Binding, binding));
             var sharedActions = _profile.Settings.MidiControllerBindings
                 .Where(pair => pair.Key != actionId &&
                                MidiControllerBinding.Parse(pair.Value) is { } saved &&
                                SamePhysicalControl(saved, binding))
                 .Select(pair => LearningActionLabel(pair.Key))
                 .ToArray();
-            var learnedBinding = binding with
-            {
-                DisplayName = existingControl.Binding?.DisplayName ??
-                              PhysicalControlName(existingControl.Key) ??
-                              RecognizePhysicalControl(binding)
-            };
-            _profile.Settings.MidiControllerBindings[actionId] = learnedBinding.Serialize();
+            _profile.Settings.MidiControllerBindings[actionId] = binding.Serialize();
+            if (IsMidiBindingLearning(_midiShortcutLearningActionId))
+                SetMidiShortcutNote(ParseAction(actionId), -1);
             if (actionId == MidiRemoteArmActionId)
             {
                 _profile.Settings.MidiRemoteArmNote = -1;
@@ -576,7 +677,7 @@ public sealed partial class MainWindowViewModel
         }
 
         if (triggeredActions.Count > 0)
-            InputActivityLabel = $"{ControllerDisplayName(matches[0].Key, matches[0].Binding)} · {string.Join(" + ", triggeredActions)}.";
+            InputActivityLabel = $"{matches[0].Binding.Format()} · {string.Join(" + ", triggeredActions)}.";
     }
 
     private void ApplyMidiContinuousControl(
@@ -620,7 +721,7 @@ public sealed partial class MainWindowViewModel
             _applyingMidiContinuousControl = false;
         }
 
-        InputActivityLabel = $"{ControllerDisplayName(action.ToString(), binding)} · {MidiShortcutRouter.GetActionLabel(action)} {CurrentContinuousValue(action)}%.";
+        InputActivityLabel = $"{binding.Format()} · {MidiShortcutRouter.GetActionLabel(action)} {CurrentContinuousValue(action)}%.";
         ScheduleMidiControllerSettingsSave();
     }
 
@@ -664,8 +765,7 @@ public sealed partial class MainWindowViewModel
             var step = MidiControllerMapSteps[_midiControllerMapIndex];
             var learnedBinding = _pendingMidiControllerMapBinding with
             {
-                Relative = IsRelativeControllerMapStep(step.Action, _pendingMidiControllerMapBinding, _pendingMidiControllerMapValues),
-                DisplayName = step.ControlName
+                Relative = IsRelativeControllerMapStep(step.Action, _pendingMidiControllerMapBinding, _pendingMidiControllerMapValues)
             };
             var serialized = learnedBinding.Serialize();
             var sharedActions = _profile.Settings.MidiControllerBindings
@@ -824,23 +924,31 @@ public sealed partial class MainWindowViewModel
         return result;
     }
 
-    private MidiShortcutBindingItem BindingItem(MidiShortcutAction action, string contexts) =>
-        new(
+    private MidiShortcutBindingItem BindingItem(MidiShortcutAction action, string contexts)
+    {
+        var keyboardAction = KeyboardActionFor(action);
+        var controllerText = FormatControllerBinding(GetControllerBinding(action.ToString()));
+        var protectedNoteText = SupportsProtectedNoteBinding(action)
+            ? FormatMidiShortcutNote(GetMidiShortcutNote(action))
+            : "Unassigned";
+        var midiText = controllerText != "Unassigned" ? controllerText : protectedNoteText;
+        return new MidiShortcutBindingItem(
             action.ToString(),
             MidiShortcutRouter.GetActionLabel(action),
             contexts,
-            IsLearningTarget($"{MidiControlLearningPrefix}{action}")
+            keyboardAction?.ToString() ?? string.Empty,
+            keyboardAction is { } shortcut && IsKeyboardLearningTarget(shortcut)
                 ? "Listening…"
-                : FormatControllerBinding(action.ToString(), GetControllerBinding(action.ToString())),
-            IsLearningTarget($"{MidiNoteLearningPrefix}{action}")
-                ? "Listening…"
-                : SupportsProtectedNoteBinding(action) ? FormatMidiShortcutNote(GetMidiShortcutNote(action)) : "—",
-            SupportsProtectedNoteBinding(action) && HasDedicatedMidiRemoteArmControl);
+                : keyboardAction is { } configured ? AppShortcutRouter.FormatGesture(EffectiveKeyboardBinding(configured)) : "—",
+            IsLearningTarget($"{MidiBindingLearningPrefix}{action}") ? "Listening…" : midiText,
+            keyboardAction is not null);
+    }
 
     private static bool SupportsProtectedNoteBinding(MidiShortcutAction action) => action is
         MidiShortcutAction.StartListen or
         MidiShortcutAction.StartPractice or
         MidiShortcutAction.StartPerformance or
+        MidiShortcutAction.TogglePlayback or
         MidiShortcutAction.Play or
         MidiShortcutAction.Pause or
         MidiShortcutAction.Restart or
@@ -848,11 +956,12 @@ public sealed partial class MainWindowViewModel
         MidiShortcutAction.NextMeasure or
         MidiShortcutAction.PreviousPage or
         MidiShortcutAction.NextPage or
+        MidiShortcutAction.ReturnToLivePage or
         MidiShortcutAction.DismissResults or
         MidiShortcutAction.RepeatResults;
 
-    private MidiShortcutAction FindActionForNote(int midiNoteNumber) =>
-        BindingPriority().FirstOrDefault(action => GetMidiShortcutNote(action) == midiNoteNumber);
+    private IEnumerable<MidiShortcutAction> FindActionsForNote(int midiNoteNumber) =>
+        BindingPriority().Where(action => GetMidiShortcutNote(action) == midiNoteNumber);
 
     private int GetMidiShortcutNote(MidiShortcutAction action) => action switch
     {
@@ -860,12 +969,14 @@ public sealed partial class MainWindowViewModel
         MidiShortcutAction.StartPractice => _profile.Settings.MidiShortcutPracticeNote,
         MidiShortcutAction.StartPerformance => _profile.Settings.MidiShortcutPerformanceNote,
         MidiShortcutAction.Play => _profile.Settings.MidiShortcutTogglePlayNote,
+        MidiShortcutAction.TogglePlayback => _profile.Settings.MidiShortcutTogglePlayNote,
         MidiShortcutAction.Pause => _profile.Settings.MidiShortcutPauseNote,
         MidiShortcutAction.Restart => _profile.Settings.MidiShortcutRestartNote,
         MidiShortcutAction.PreviousMeasure => _profile.Settings.MidiShortcutPreviousMeasureNote,
         MidiShortcutAction.NextMeasure => _profile.Settings.MidiShortcutNextMeasureNote,
         MidiShortcutAction.PreviousPage => _profile.Settings.MidiShortcutPreviousPageNote,
         MidiShortcutAction.NextPage => _profile.Settings.MidiShortcutNextPageNote,
+        MidiShortcutAction.ReturnToLivePage => _profile.Settings.MidiShortcutReturnToLivePageNote,
         MidiShortcutAction.DismissResults => _profile.Settings.MidiShortcutDismissResultsNote,
         MidiShortcutAction.RepeatResults => _profile.Settings.MidiShortcutRepeatResultsNote,
         _ => -1
@@ -879,12 +990,14 @@ public sealed partial class MainWindowViewModel
             case MidiShortcutAction.StartPractice: _profile.Settings.MidiShortcutPracticeNote = noteNumber; break;
             case MidiShortcutAction.StartPerformance: _profile.Settings.MidiShortcutPerformanceNote = noteNumber; break;
             case MidiShortcutAction.Play: _profile.Settings.MidiShortcutTogglePlayNote = noteNumber; break;
+            case MidiShortcutAction.TogglePlayback: _profile.Settings.MidiShortcutTogglePlayNote = noteNumber; break;
             case MidiShortcutAction.Pause: _profile.Settings.MidiShortcutPauseNote = noteNumber; break;
             case MidiShortcutAction.Restart: _profile.Settings.MidiShortcutRestartNote = noteNumber; break;
             case MidiShortcutAction.PreviousMeasure: _profile.Settings.MidiShortcutPreviousMeasureNote = noteNumber; break;
             case MidiShortcutAction.NextMeasure: _profile.Settings.MidiShortcutNextMeasureNote = noteNumber; break;
             case MidiShortcutAction.PreviousPage: _profile.Settings.MidiShortcutPreviousPageNote = noteNumber; break;
             case MidiShortcutAction.NextPage: _profile.Settings.MidiShortcutNextPageNote = noteNumber; break;
+            case MidiShortcutAction.ReturnToLivePage: _profile.Settings.MidiShortcutReturnToLivePageNote = noteNumber; break;
             case MidiShortcutAction.DismissResults: _profile.Settings.MidiShortcutDismissResultsNote = noteNumber; break;
             case MidiShortcutAction.RepeatResults: _profile.Settings.MidiShortcutRepeatResultsNote = noteNumber; break;
         }
@@ -915,13 +1028,57 @@ public sealed partial class MainWindowViewModel
             ? actionId[MidiControlLearningPrefix.Length..]
             : actionId.StartsWith(MidiNoteLearningPrefix, StringComparison.Ordinal)
                 ? actionId[MidiNoteLearningPrefix.Length..]
+                : actionId.StartsWith(MidiBindingLearningPrefix, StringComparison.Ordinal)
+                    ? actionId[MidiBindingLearningPrefix.Length..]
                 : actionId;
 
     private static bool IsControlLearning(string actionId) =>
         actionId.StartsWith(MidiControlLearningPrefix, StringComparison.Ordinal);
 
+    private static bool IsMidiBindingLearning(string actionId) =>
+        actionId.StartsWith(MidiBindingLearningPrefix, StringComparison.Ordinal);
+
     private bool IsLearningTarget(string actionId) =>
         string.Equals(_midiShortcutLearningActionId, actionId, StringComparison.Ordinal);
+
+    private bool IsKeyboardLearningTarget(AppShortcutAction action) =>
+        string.Equals(_keyboardShortcutLearningActionId, action.ToString(), StringComparison.Ordinal);
+
+    private string EffectiveKeyboardBinding(AppShortcutAction action) =>
+        _profile.Settings.KeyboardShortcutBindings.TryGetValue(action.ToString(), out var saved)
+            ? saved
+            : AppShortcutRouter.DefaultBindings.GetValueOrDefault(action, string.Empty);
+
+    private static AppShortcutAction? KeyboardActionFor(MidiShortcutAction action) => action switch
+    {
+        MidiShortcutAction.StartListen => AppShortcutAction.SelectListen,
+        MidiShortcutAction.StartPractice => AppShortcutAction.SelectPractice,
+        MidiShortcutAction.StartPerformance => AppShortcutAction.SelectPerformance,
+        MidiShortcutAction.TogglePlayback => AppShortcutAction.TogglePlayback,
+        MidiShortcutAction.Stop => AppShortcutAction.Stop,
+        MidiShortcutAction.Restart => AppShortcutAction.Restart,
+        MidiShortcutAction.PreviousMeasure => AppShortcutAction.PreviousMeasure,
+        MidiShortcutAction.NextMeasure => AppShortcutAction.NextMeasure,
+        MidiShortcutAction.PreviousPage => AppShortcutAction.PreviousPage,
+        MidiShortcutAction.NextPage => AppShortcutAction.NextPage,
+        MidiShortcutAction.ReturnToLivePage => AppShortcutAction.ReturnToLivePage,
+        MidiShortcutAction.DismissResults => AppShortcutAction.DismissResults,
+        MidiShortcutAction.RepeatResults => AppShortcutAction.RepeatResults,
+        _ => null
+    };
+
+    private static string KeyboardActionLabel(AppShortcutAction action) => action switch
+    {
+        AppShortcutAction.SelectListen => "Select Listen",
+        AppShortcutAction.SelectPractice => "Select Practice",
+        AppShortcutAction.SelectPerformance => "Select Performance",
+        AppShortcutAction.TogglePlayback => "Play / Pause",
+        AppShortcutAction.ReturnToLivePage => "Return to Live Page",
+        _ => action.ToString().Replace("Measure", " Measure").Replace("Page", " Page").Replace("Results", " Results")
+    };
+
+    private static string KeyboardLearningActionLabel(string actionId) =>
+        Enum.TryParse<AppShortcutAction>(actionId, out var action) ? KeyboardActionLabel(action) : actionId;
 
     private static string LearningActionLabel(string actionId)
     {
@@ -946,43 +1103,14 @@ public sealed partial class MainWindowViewModel
         }
     }
 
-    private string FormatControllerBinding(string actionId, MidiControllerBinding? binding)
-    {
-        if (binding is null) return "Unassigned";
-        return ControllerDisplayName(actionId, binding);
-    }
+    private static string FormatControllerBinding(MidiControllerBinding? binding) =>
+        binding?.Format() ?? "Unassigned";
 
     private string FormatUserFacingMidiActivity(MidiRawEvent message, bool controlSurface)
     {
-        if (IsMidiControllerAutoMapping)
-            return $"Mapping {MidiControllerMapSteps[_midiControllerMapIndex].ControlName}";
-
         var incoming = MidiControllerBinding.FromRaw(message.Status, message.Data1, controlSurface);
-        if (incoming is not null)
-        {
-            var match = _profile.Settings.MidiControllerBindings
-                .Select(pair => (pair.Key, Binding: MidiControllerBinding.Parse(pair.Value)))
-                .FirstOrDefault(pair => pair.Binding is not null &&
-                                        pair.Binding.ControlSurface == controlSurface &&
-                                        pair.Binding.Matches(message.Status, message.Data1));
-            if (match.Binding is not null)
-            {
-                var action = ParseAction(match.Key);
-                var controlName = ControllerDisplayName(match.Key, match.Binding);
-                return MidiShortcutRouter.IsContinuousAction(action)
-                    ? $"{controlName} · {MidiShortcutRouter.GetActionLabel(action)} {CurrentContinuousValue(action)}%"
-                    : controlName;
-            }
-        }
-
-        return (message.Status & 0xF0) switch
-        {
-            _ when incoming is not null && RecognizePhysicalControl(incoming) is { } controlName => controlName,
-            0xB0 => "Unassigned knob or fader",
-            0xE0 => "Unassigned fader",
-            0x80 or 0x90 => "Unassigned button",
-            _ => "Unassigned MIDI control"
-        };
+        return incoming?.Format() ??
+               $"MIDI status 0x{message.Status:X2} · data {message.Data1}, {message.Data2}";
     }
 
     private static bool SamePhysicalControl(MidiControllerBinding left, MidiControllerBinding right) =>
@@ -991,87 +1119,10 @@ public sealed partial class MainWindowViewModel
         left.Channel == right.Channel &&
         left.Number == right.Number;
 
-    private string ControllerDisplayName(string actionId, MidiControllerBinding binding) =>
-        binding.DisplayName ?? RecognizePhysicalControl(binding) ?? PhysicalControlName(actionId) ?? FriendlyControlType(binding);
-
-    private string? RecognizePhysicalControl(MidiControllerBinding binding)
-    {
-        var deviceName = SelectedMidiDevice?.Name ?? _profile.Settings.PreferredMidiDeviceName;
-        if (string.IsNullOrWhiteSpace(deviceName) ||
-            !deviceName.Contains("Oxygen 49 MKV", StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        if (!binding.ControlSurface &&
-            binding.Kind == MidiControllerMessageKind.ControlChange &&
-            binding.Channel == 0 &&
-            HasConfirmedOxygenPresetTransportLayout())
-        {
-            return binding.Number switch
-            {
-                114 => "Loop",
-                115 => "Rewind",
-                116 => "Fast Forward",
-                117 => "Stop",
-                118 => "Play",
-                119 => "Record",
-                _ => null
-            };
-        }
-
-        if (binding.ControlSurface && binding.Channel == 0 && binding.Kind == MidiControllerMessageKind.Note)
-        {
-            return binding.Number switch
-            {
-                86 => "Loop",
-                91 => "Rewind",
-                92 => "Fast Forward",
-                93 => "Stop",
-                94 => "Play",
-                95 => "Record",
-                _ => null
-            };
-        }
-
-        if (binding.ControlSurface &&
-            binding.Kind == MidiControllerMessageKind.PitchBend &&
-            binding.Channel is >= 0 and <= 8)
-        {
-            return $"Fader {binding.Channel + 1}";
-        }
-
-        return null;
-    }
-
-    private bool HasConfirmedOxygenPresetTransportLayout() =>
-        _profile.Settings.MidiControllerBindings.Values
-            .Select(MidiControllerBinding.Parse)
-            .Any(binding => binding is
-            {
-                ControlSurface: false,
-                Kind: MidiControllerMessageKind.ControlChange,
-                Channel: 0,
-                Number: 119,
-                DisplayName: "Record"
-            });
-
-    private static string FriendlyControlType(MidiControllerBinding binding) => binding.Kind switch
-    {
-        MidiControllerMessageKind.Note => "Assigned button",
-        MidiControllerMessageKind.ControlChange => "Assigned knob or fader",
-        MidiControllerMessageKind.PitchBend => "Assigned fader",
-        _ => "Assigned control"
-    };
-
     private static string SharedBindingWarning(IReadOnlyCollection<string> sharedActions) =>
         sharedActions.Count == 0
             ? string.Empty
             : $" Warning: this control is also assigned to {string.Join(", ", sharedActions)}; every assignment was kept.";
-
-    private static string? PhysicalControlName(string actionId) => MidiControllerMapSteps
-        .FirstOrDefault(step => step.Action.ToString() == actionId)
-        .ControlName;
 
     private static IReadOnlyList<MidiShortcutAction> BindingPriority() =>
     [
@@ -1079,12 +1130,12 @@ public sealed partial class MainWindowViewModel
         MidiShortcutAction.StartListen,
         MidiShortcutAction.StartPractice,
         MidiShortcutAction.StartPerformance,
-        MidiShortcutAction.Play,
-        MidiShortcutAction.Pause,
+        MidiShortcutAction.TogglePlayback,
         MidiShortcutAction.PreviousMeasure,
         MidiShortcutAction.NextMeasure,
         MidiShortcutAction.PreviousPage,
         MidiShortcutAction.NextPage,
+        MidiShortcutAction.ReturnToLivePage,
         MidiShortcutAction.DismissResults,
         MidiShortcutAction.RepeatResults
     ];
@@ -1094,10 +1145,11 @@ public sealed record MidiShortcutBindingItem(
     string ActionId,
     string Label,
     string Contexts,
-    string DirectControlText,
-    string NoteText,
-    bool CanUseNoteBinding)
+    string KeyboardActionId,
+    string KeyboardText,
+    string MidiText,
+    bool CanUseKeyboardBinding)
 {
-    public string ControlActionId => $"Control:{ActionId}";
-    public string NoteActionId => $"Note:{ActionId}";
+    public string KeyboardLearningActionId => $"Keyboard:{KeyboardActionId}";
+    public string MidiActionId => $"Midi:{ActionId}";
 }

@@ -10,6 +10,8 @@ Assert(AppShortcutRouter.Resolve(Key.D2, ModifierKeys.Control, false) == AppShor
     "Ctrl+2 did not select Practice mode.");
 Assert(AppShortcutRouter.Resolve(Key.D3, ModifierKeys.Control, false) == AppShortcutAction.SelectPerformance,
     "Ctrl+3 did not select Performance mode.");
+Assert(AppShortcutRouter.Resolve(Key.Home, ModifierKeys.Control, false) == AppShortcutAction.ReturnToLivePage,
+    "Ctrl+Home did not return to the live score page.");
 
 foreach (var pianoKey in ComputerKeyboardPianoMap.MidiNotes.Keys)
 {
@@ -127,50 +129,64 @@ try
                Path.Combine(smokeRoot, "legacy-library")))
     {
         var migratedBindings = migrated.MidiShortcutBindings.ToDictionary(item => item.ActionId);
-        Assert(migratedBindings[nameof(MidiShortcutAction.ToggleLoop)].DirectControlText == "Unassigned",
+        Assert(migratedBindings[nameof(MidiShortcutAction.ToggleLoop)].MidiText == "Unassigned",
             "The assumption-seeded Loop placeholder survived controller-map migration.");
-        Assert(migratedBindings[nameof(MidiShortcutAction.StartPractice)].DirectControlText == "Record",
-            "A genuinely learned Record message was removed during controller-map migration.");
-        Assert(migratedBindings[nameof(MidiShortcutAction.StartPerformance)].DirectControlText == "Play",
-            "The confirmed Oxygen transport layout did not identify the saved Play button.");
-        Assert(migratedBindings[nameof(MidiShortcutAction.Play)].DirectControlText == "Play" &&
-               !migratedBindings.ContainsKey(nameof(MidiShortcutAction.TogglePlayback)),
-            "The legacy combined transport binding was not migrated to the separate Play action.");
+        Assert(migratedBindings[nameof(MidiShortcutAction.StartPractice)].MidiText == "MIDI CC119",
+            "A learned controller binding did not display its raw MIDI identity.");
+        Assert(migratedBindings[nameof(MidiShortcutAction.StartPerformance)].MidiText == "MIDI CC118",
+            "A saved controller binding did not display its raw MIDI identity.");
+        Assert(migratedBindings[nameof(MidiShortcutAction.TogglePlayback)].MidiText == "MIDI CC118" &&
+               !migratedBindings.ContainsKey(nameof(MidiShortcutAction.Play)),
+            "The saved transport binding was not migrated to the unified Play / Pause action.");
 
         var formatLegacyActivity = typeof(PianoPractice.Desktop.MainWindowViewModel).GetMethod(
             "FormatUserFacingMidiActivity",
             BindingFlags.Instance | BindingFlags.NonPublic);
         var stopActivity = formatLegacyActivity?.Invoke(migrated,
             [new MidiRawEvent(0xB0, 117, 127, DateTimeOffset.UtcNow), false]) as string;
-        Assert(stopActivity == "Stop",
-            $"The live badge did not name the Oxygen Stop button: {stopActivity}");
+        Assert(stopActivity == "MIDI CC117",
+            $"The live badge did not show the raw MIDI input name: {stopActivity}");
+        var rawStatusActivity = formatLegacyActivity?.Invoke(migrated,
+            [new MidiRawEvent(0xF8, 0, 0, DateTimeOffset.UtcNow), false]) as string;
+        Assert(rawStatusActivity == "MIDI status 0xF8 · data 0, 0",
+            $"The live badge replaced an unrecognized raw MIDI status: {rawStatusActivity}");
     }
 
     var smokeProfilePath = Path.Combine(smokeRoot, "profile.json");
     using var viewModel = new PianoPractice.Desktop.MainWindowViewModel(
         smokeProfilePath,
         Path.Combine(smokeRoot, "library"));
-    Assert(viewModel.MidiShortcutBindings.All(item => item.DirectControlText == "Unassigned"),
+    Assert(viewModel.MidiShortcutBindings
+               .Where(item => item.ActionId is nameof(MidiShortcutAction.ToggleLoop) or
+                    nameof(MidiShortcutAction.SetOverallVolume))
+               .All(item => item.MidiText == "Unassigned"),
         "A fresh profile still claims assumption-based controller assignments.");
-    Assert(viewModel.MidiShortcutBindings.Any(item => item.ActionId == nameof(MidiShortcutAction.Play) && item.Label == "Play") &&
-           viewModel.MidiShortcutBindings.Any(item => item.ActionId == nameof(MidiShortcutAction.Pause) && item.Label == "Pause") &&
+    Assert(viewModel.MidiShortcutBindings.Any(item => item.ActionId == nameof(MidiShortcutAction.TogglePlayback) && item.Label == "Play / Pause") &&
            viewModel.MidiShortcutBindings.Any(item => item.ActionId == nameof(MidiShortcutAction.Stop) && item.Label == "Stop") &&
-           viewModel.MidiShortcutBindings.All(item => item.ActionId != nameof(MidiShortcutAction.TogglePlayback)),
-        "Play, Pause, and Stop are not exposed as three separate bindings.");
+           viewModel.MidiShortcutBindings.All(item => item.ActionId is not nameof(MidiShortcutAction.Play) and not nameof(MidiShortcutAction.Pause)),
+        "Play / Pause and Stop are not exposed as unified transport bindings.");
+    var returnToLiveBinding = viewModel.MidiShortcutBindings.Single(
+        item => item.ActionId == nameof(MidiShortcutAction.ReturnToLivePage));
+    Assert(returnToLiveBinding.KeyboardText == "Ctrl+Home" && returnToLiveBinding.MidiText == "Unassigned",
+        "Return to Live Page is missing its default keyboard binding or unified MIDI cell.");
+    viewModel.StartKeyboardShortcutLearning(nameof(AppShortcutAction.ReturnToLivePage));
+    Assert(viewModel.TryAssignKeyboardShortcut(Key.L, ModifierKeys.Control) &&
+           AppShortcutRouter.Resolve(Key.L, ModifierKeys.Control, false, viewModel.KeyboardShortcutOverrides) == AppShortcutAction.ReturnToLivePage,
+        "A configured Return to Live Page keyboard binding was not routed.");
     Assert(!viewModel.IsPlayerVisible, "The app-wide fader fixture unexpectedly opened the score player.");
     var handleControllerMessage = typeof(PianoPractice.Desktop.MainWindowViewModel).GetMethod(
         "HandleMidiControllerMessage",
         BindingFlags.Instance | BindingFlags.NonPublic);
     Assert(handleControllerMessage is not null, "The MIDI controller message route could not be exercised.");
 
-    viewModel.StartMidiShortcutLearning($"Control:{nameof(MidiShortcutAction.StartListen)}");
-    Assert(viewModel.MidiShortcutBindings.Single(item => item.ActionId == nameof(MidiShortcutAction.StartListen)).DirectControlText == "Listening…",
+    viewModel.StartMidiShortcutLearning($"Midi:{nameof(MidiShortcutAction.StartListen)}");
+    Assert(viewModel.MidiShortcutBindings.Single(item => item.ActionId == nameof(MidiShortcutAction.StartListen)).MidiText == "Listening…",
         "The selected controller binding does not visibly show that it is listening.");
     viewModel.CancelMidiShortcutLearning();
 
-    viewModel.StartMidiShortcutLearning($"Control:{nameof(MidiShortcutAction.StartListen)}");
+    viewModel.StartMidiShortcutLearning($"Midi:{nameof(MidiShortcutAction.StartListen)}");
     Assert(viewModel.UnbindCurrentMidiShortcutLearning() &&
-           viewModel.MidiShortcutBindings.Single(item => item.ActionId == nameof(MidiShortcutAction.StartListen)).DirectControlText == "Unassigned" &&
+           viewModel.MidiShortcutBindings.Single(item => item.ActionId == nameof(MidiShortcutAction.StartListen)).MidiText == "Unassigned" &&
            !viewModel.IsMidiShortcutLearning,
         "Backspace-style unbinding did not clear the active learning target and leave learning mode.");
 
@@ -181,24 +197,24 @@ try
         [new MidiRawEvent(0x80, 86, 0, DateTimeOffset.UtcNow), true]);
     await Task.Delay(550);
     var learnedLoop = viewModel.MidiShortcutBindings.Single(item => item.ActionId == nameof(MidiShortcutAction.ToggleLoop));
-    Assert(learnedLoop.DirectControlText == "Loop",
-        $"Live mapping did not retain the exact Loop input message: {learnedLoop.DirectControlText}");
+    Assert(learnedLoop.MidiText == "MIDIIN2 Note 86",
+        $"Live mapping did not retain the exact Loop input message: {learnedLoop.MidiText}");
     viewModel.CancelMidiShortcutLearning();
 
-    viewModel.StartMidiShortcutLearning($"Control:{nameof(MidiShortcutAction.StartListen)}");
+    viewModel.StartMidiShortcutLearning($"Midi:{nameof(MidiShortcutAction.StartListen)}");
     handleControllerMessage.Invoke(viewModel,
         [new MidiRawEvent(0x90, 86, 127, DateTimeOffset.UtcNow), true]);
     var reassignedLoop = viewModel.MidiShortcutBindings.Single(item => item.ActionId == nameof(MidiShortcutAction.StartListen));
-    Assert(reassignedLoop.DirectControlText == "Loop",
-        $"The physical Loop name did not follow its control when reassigned: {reassignedLoop.DirectControlText}");
+    Assert(reassignedLoop.MidiText == "MIDIIN2 Note 86",
+        $"The reassigned control did not show its raw MIDI input name: {reassignedLoop.MidiText}");
 
     var formatActivity = typeof(PianoPractice.Desktop.MainWindowViewModel).GetMethod(
         "FormatUserFacingMidiActivity",
         BindingFlags.Instance | BindingFlags.NonPublic);
     var loopActivity = formatActivity?.Invoke(viewModel,
         [new MidiRawEvent(0x90, 86, 127, DateTimeOffset.UtcNow), true]) as string;
-    Assert(loopActivity == "Loop",
-        $"The live badge did not identify the reassigned physical Loop control: {loopActivity}");
+    Assert(loopActivity == "MIDIIN2 Note 86",
+        $"The live badge did not show the reassigned raw MIDI input name: {loopActivity}");
 
     viewModel.StartMidiShortcutLearning($"Control:{nameof(MidiShortcutAction.SetOverallVolume)}");
     handleControllerMessage!.Invoke(viewModel,
@@ -207,12 +223,12 @@ try
         [new MidiRawEvent(0xE8, 127, 127, DateTimeOffset.UtcNow), true]);
     Assert(viewModel.OverallVolume == 100,
         "The Oxygen master fader cannot control app volume outside the score player.");
-    Assert(viewModel.InputActivityLabel == "Fader 9 · Overall Volume 100%.",
-        $"The detailed activity label did not identify the physical fader: {viewModel.InputActivityLabel}");
+    Assert(viewModel.InputActivityLabel == "MIDIIN2 Pitch Bend · Overall Volume 100%.",
+        $"The detailed activity label did not show the raw MIDI input name: {viewModel.InputActivityLabel}");
     var activity = formatActivity?.Invoke(viewModel,
         [new MidiRawEvent(0xE8, 127, 127, DateTimeOffset.UtcNow), true]) as string;
-    Assert(activity == "Fader 9 · Overall Volume 100%",
-        $"The live controller badge exposed raw MIDI data instead of friendly text: {activity}");
+    Assert(activity == "MIDIIN2 Pitch Bend",
+        $"The live controller badge did not show the raw MIDI input name: {activity}");
     Assert(File.Exists(smokeProfilePath) && File.ReadAllText(smokeProfilePath).Contains("Surface|PitchBend|8|0|Absolute"),
         "The learned physical controller message was not persisted.");
 
@@ -226,6 +242,56 @@ try
         [new MidiRawEvent(0xE8, 127, 127, DateTimeOffset.UtcNow), true]);
     Assert(viewModel.OverallVolume == 100 && viewModel.InstrumentalVolume == 100,
         "A shared fader did not run every assigned action.");
+
+    var sharedNoteProfilePath = Path.Combine(smokeRoot, "shared-note-profile.json");
+    var sharedNoteProfile = CadenzaUserProfile.CreateDefault();
+    sharedNoteProfile.Settings.MidiControllerMappingVersion = 2;
+    sharedNoteProfile.Settings.MidiShortcutListenNote = 48;
+    sharedNoteProfile.Settings.MidiShortcutPracticeNote = 48;
+    sharedNoteProfile.Settings.MidiControllerBindings[nameof(MidiShortcutAction.Play)] =
+        "Keyboard|ControlChange|0|118|Absolute|Play";
+    new UserProfileStore(sharedNoteProfilePath).Save(sharedNoteProfile);
+    using (var sharedNoteViewModel = new PianoPractice.Desktop.MainWindowViewModel(
+               sharedNoteProfilePath,
+               Path.Combine(smokeRoot, "shared-note-library")))
+    {
+        sharedNoteViewModel.StartMidiShortcutLearning($"Midi:{nameof(MidiShortcutAction.StartPerformance)}");
+        var captureNote = typeof(PianoPractice.Desktop.MainWindowViewModel).GetMethod(
+            "TryCaptureMidiShortcutLearning",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert(captureNote?.Invoke(sharedNoteViewModel, [48]) is true,
+            "Protected-note learning did not accept a shared MIDI key.");
+        var noteBindings = sharedNoteViewModel.MidiShortcutBindings.ToDictionary(item => item.ActionId);
+        Assert(noteBindings[nameof(MidiShortcutAction.StartListen)].MidiText == "C3" &&
+               noteBindings[nameof(MidiShortcutAction.StartPractice)].MidiText == "C3" &&
+               noteBindings[nameof(MidiShortcutAction.StartPerformance)].MidiText == "C3",
+            "Startup discarded one of two intentionally shared protected-note bindings.");
+        Assert(sharedNoteViewModel.MidiRemoteStatusText.Contains("every assignment was kept", StringComparison.Ordinal),
+            "Shared protected-note learning did not warn while preserving every assignment.");
+    }
+
+    var reloadedSharedProfile = new UserProfileStore(sharedNoteProfilePath).Load();
+    Assert(reloadedSharedProfile.Settings.MidiShortcutListenNote == 48 &&
+           reloadedSharedProfile.Settings.MidiShortcutPracticeNote == 48 &&
+           reloadedSharedProfile.Settings.MidiShortcutPerformanceNote == 48,
+        "Shared protected-note bindings did not survive a full save, shutdown, and reload.");
+    Assert(reloadedSharedProfile.Settings.MidiControllerBindings.TryGetValue(
+               nameof(MidiShortcutAction.TogglePlayback), out var reloadedPlayBinding) &&
+           reloadedPlayBinding == "Keyboard|ControlChange|0|118|Absolute|Play",
+        "A direct controller binding did not survive a full save, shutdown, and reload.");
+
+    var shutdownProfilePath = Path.Combine(smokeRoot, "shutdown-profile.json");
+    var shutdownViewModel = new PianoPractice.Desktop.MainWindowViewModel(
+        shutdownProfilePath,
+        Path.Combine(smokeRoot, "shutdown-library"));
+    shutdownViewModel.StartMidiShortcutLearning($"Control:{nameof(MidiShortcutAction.SetOverallVolume)}");
+    handleControllerMessage.Invoke(shutdownViewModel,
+        [new MidiRawEvent(0xE8, 127, 127, DateTimeOffset.UtcNow), true]);
+    handleControllerMessage.Invoke(shutdownViewModel,
+        [new MidiRawEvent(0xE8, 127, 127, DateTimeOffset.UtcNow), true]);
+    shutdownViewModel.Dispose();
+    Assert(new UserProfileStore(shutdownProfilePath).Load().Settings.OverallVolume == 100,
+        "Closing inside the delayed controller-save window lost the last fader change.");
 }
 finally
 {

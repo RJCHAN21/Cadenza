@@ -34,6 +34,7 @@ public sealed class LibraryItemViewModel : INotifyPropertyChanged
     public string OriginalFileName => Item.OriginalFileName;
     public string StoredFilePath => Item.StoredFilePath;
     public string Composer => Item.Composer;
+    public string Arranger => Item.Arranger;
     public int MeasureCount => Item.MeasureCount;
     public DateTimeOffset ImportedUtc => Item.ImportedUtc;
     public DateTimeOffset? LastPlayedUtc => Item.LastPlayedUtc;
@@ -66,7 +67,9 @@ public sealed class LibraryItemViewModel : INotifyPropertyChanged
         ? $"Played {LastPlayedUtc.Value.LocalDateTime:MMM d, h:mm tt}"
         : "Not played yet";
 
-    public string SubtitleLabel => $"{MeasureCount} measures · {Composer}";
+    public string SubtitleLabel => string.IsNullOrWhiteSpace(Arranger)
+        ? $"{MeasureCount} measures · {Composer}"
+        : $"{MeasureCount} measures · {Composer} · Arr. {Arranger}";
 
     public event PropertyChangedEventHandler? PropertyChanged;
 

@@ -14,6 +14,7 @@ public enum MidiShortcutAction
     NextMeasure,
     PreviousPage,
     NextPage,
+    ReturnToLivePage,
     DismissResults,
     RepeatResults,
     Stop,
@@ -179,6 +180,7 @@ public sealed class MidiShortcutRouter
             MidiShortcutAction.NextMeasure or
             MidiShortcutAction.PreviousPage or
             MidiShortcutAction.NextPage or
+            MidiShortcutAction.ReturnToLivePage or
             MidiShortcutAction.Stop or
             MidiShortcutAction.ToggleLoop or
             MidiShortcutAction.SetLessonTempo or
@@ -192,6 +194,7 @@ public sealed class MidiShortcutRouter
             MidiShortcutAction.Play or
             MidiShortcutAction.Pause or
             MidiShortcutAction.Restart or
+            MidiShortcutAction.ReturnToLivePage or
             MidiShortcutAction.Stop or
             MidiShortcutAction.ToggleLoop or
             MidiShortcutAction.SetLessonTempo or
@@ -209,6 +212,7 @@ public sealed class MidiShortcutRouter
             MidiShortcutAction.NextMeasure or
             MidiShortcutAction.PreviousPage or
             MidiShortcutAction.NextPage or
+            MidiShortcutAction.ReturnToLivePage or
             MidiShortcutAction.Stop or
             MidiShortcutAction.ToggleLoop or
             MidiShortcutAction.SetLessonTempo or
@@ -228,6 +232,7 @@ public sealed class MidiShortcutRouter
             MidiShortcutAction.StartPerformance or
             MidiShortcutAction.Stop or
             MidiShortcutAction.ToggleLoop or
+            MidiShortcutAction.ReturnToLivePage or
             MidiShortcutAction.SetNotationZoom or
             MidiShortcutAction.SetOverallVolume or
             MidiShortcutAction.SetInstrumentalVolume or
@@ -241,7 +246,7 @@ public sealed class MidiShortcutRouter
         MidiShortcutAction.StartListen => "Start Listen",
         MidiShortcutAction.StartPractice => "Start Practice",
         MidiShortcutAction.StartPerformance => "Start Performance",
-        MidiShortcutAction.TogglePlayback => "Play / Pause (Legacy)",
+        MidiShortcutAction.TogglePlayback => "Play / Pause",
         MidiShortcutAction.Play => "Play",
         MidiShortcutAction.Pause => "Pause",
         MidiShortcutAction.Restart => "Restart",
@@ -249,6 +254,7 @@ public sealed class MidiShortcutRouter
         MidiShortcutAction.NextMeasure => "Next Measure",
         MidiShortcutAction.PreviousPage => "Previous Page",
         MidiShortcutAction.NextPage => "Next Page",
+        MidiShortcutAction.ReturnToLivePage => "Return to Live Page",
         MidiShortcutAction.DismissResults => "Dismiss Results",
         MidiShortcutAction.RepeatResults => "Repeat Results",
         MidiShortcutAction.Stop => "Stop",

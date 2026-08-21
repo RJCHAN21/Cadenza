@@ -116,6 +116,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Feedback accidental smoke syntax validation failed.' }
     node --check PianoPractice.RendererSmoke/hint-note-badge-smoke.cjs
     if ($LASTEXITCODE -ne 0) { throw 'Hint-note badge smoke syntax validation failed.' }
+    node --check PianoPractice.RendererSmoke/practice-feedback-identity-smoke.cjs
+    if ($LASTEXITCODE -ne 0) { throw 'Practice feedback identity smoke syntax validation failed.' }
 
     Write-Host '==> Focused renderer regressions'
     node PianoPractice.RendererSmoke/feedback-accidental-smoke.cjs
@@ -124,6 +126,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Hint-note badge renderer regression failed.' }
     node PianoPractice.RendererSmoke/playable-position-smoke.cjs
     if ($LASTEXITCODE -ne 0) { throw 'Playable-position renderer regression failed.' }
+    node PianoPractice.RendererSmoke/practice-feedback-identity-smoke.cjs
+    if ($LASTEXITCODE -ne 0) { throw 'Practice feedback identity renderer regression failed.' }
     node PianoPractice.RendererSmoke/bar-boundary-bridge-smoke.cjs
     if ($LASTEXITCODE -ne 0) { throw 'Bar-boundary renderer regression failed.' }
     node PianoPractice.RendererSmoke/listen-highlight-smoke.cjs

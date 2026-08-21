@@ -595,6 +595,8 @@
     let lessonRunning = false;
     let lessonMode = "WaitForYou";
     let pendingPage = 0;
+    let livePage = 1;
+    let manualPageBrowsing = false;
     let performanceTimeline = [];
 
     function setPerformanceTimeline(timeline) {
@@ -660,6 +662,7 @@
     let lessonGeneration = 0;
     let feedbackGlyphCloneId = 0;
     const persistentCorrectFeedback = new Map();
+    const tiedNoteIndex = new Map();
     let activeWrongFeedback = null;
     let feedbackTelemetry = {
       generation: 0,
@@ -675,6 +678,38 @@
 
     function post(type, detail = {}) {
       window.chrome?.webview?.postMessage({ type, ...detail });
+    }
+
+    function publishManualPageState(displayedPage = currentPage) {
+      const active = readingMode === "Page" && manualPageBrowsing && displayedPage !== livePage;
+      post("manualPageBrowsing", { active, page: displayedPage, livePage, pages: pageCount });
+    }
+
+    function setManualPageBrowsing(active, displayedPage = currentPage) {
+      manualPageBrowsing = Boolean(active) && readingMode === "Page" && displayedPage !== livePage;
+      publishManualPageState(displayedPage);
+    }
+
+    function shouldHoldManualPage(desiredPage) {
+      livePage = Math.max(1, Math.min(pageCount || 1, Number(desiredPage) || 1));
+      if (manualPageBrowsing && currentPage === livePage)
+        setManualPageBrowsing(false);
+      else if (manualPageBrowsing)
+        publishManualPageState();
+      return manualPageBrowsing && currentPage !== livePage;
+    }
+
+    function returnToLivePage(animate = true, onReturned = null) {
+      const targetPage = Math.max(1, Math.min(pageCount || 1, livePage || 1));
+      setManualPageBrowsing(false);
+      if (toolkit && pageCount && targetPage !== currentPage) {
+        const direction = targetPage > currentPage ? 1 : -1;
+        renderPage(targetPage, Boolean(animate), direction, onReturned);
+        return true;
+      }
+      if (typeof onReturned === "function") onReturned();
+      else if (toolkit && timemap.length) renderLatestCursor();
+      return false;
     }
 
     function applyReadingModeClass() {
@@ -789,6 +824,8 @@
         timelineRunning = false;
         playing = false;
         lessonRunning = false;
+        livePage = 1;
+        manualPageBrowsing = false;
         persistentCorrectFeedback.clear();
         activeWrongFeedback = null;
         clearPracticeWrongNote(true);
@@ -807,6 +844,7 @@
         rebuildPageIndex();
         currentPage = 1;
         renderPage(1, false);
+        publishManualPageState(1);
         message.style.display = "none";
         post("rendered", { pages: pageCount, version: toolkit.getVersion(), mode: readingMode });
       } catch (error) {
@@ -829,8 +867,11 @@
       pageCount = toolkit.getPageCount();
       rebuildPageIndex();
       currentPage = 1;
+      livePage = 1;
+      manualPageBrowsing = false;
       resetContinuousViewport();
       renderPage(1, false, 0, renderLatestCursor);
+      publishManualPageState(1);
       post("modeChanged", { mode, pages: pageCount });
     }
 
@@ -1246,16 +1287,39 @@
       const direction = Math.sign(Number(delta || 0));
       const targetPage = Math.max(1, Math.min(pageCount, currentPage + direction));
       if (targetPage === currentPage) return;
+      setManualPageBrowsing(targetPage !== livePage, targetPage);
       renderPage(targetPage, true, direction);
     }
 
     function rebuildPageIndex() {
       elementPageIndex.clear();
+      tiedNoteIndex.clear();
       const parser = new DOMParser();
       for (let page = 1; page <= pageCount; page++) {
         const document = parser.parseFromString(toolkit.renderToSVG(page, {}), "image/svg+xml");
         for (const element of document.querySelectorAll("[data-id]")) {
           elementPageIndex.set(element.getAttribute("data-id"), page);
+        }
+        for (const tie of document.querySelectorAll('g.tie, [data-class="tie"]')) {
+          const tieId = tie.id || tie.getAttribute("data-id");
+          let startId = tie.getAttribute("data-startid") || tie.getAttribute("startid") || "";
+          let endId = tie.getAttribute("data-endid") || tie.getAttribute("endid") || "";
+          if ((!startId || !endId) && tieId && toolkit?.getElementAttr) {
+            try {
+              const attributes = toolkit.getElementAttr(tieId);
+              startId ||= attributes?.startid || attributes?.["data-startid"] || attributes?.["@startid"] || "";
+              endId ||= attributes?.endid || attributes?.["data-endid"] || attributes?.["@endid"] || "";
+            } catch {
+              // An unresolvable decorative tie cannot contribute a note chain.
+            }
+          }
+          startId = String(startId || "").replace(/^#/, "");
+          endId = String(endId || "").replace(/^#/, "");
+          if (!startId || !endId) continue;
+          if (!tiedNoteIndex.has(startId)) tiedNoteIndex.set(startId, new Set());
+          if (!tiedNoteIndex.has(endId)) tiedNoteIndex.set(endId, new Set());
+          tiedNoteIndex.get(startId).add(endId);
+          tiedNoteIndex.get(endId).add(startId);
         }
       }
     }
@@ -1807,7 +1871,7 @@
         target = elementForVerovioId(item.noteIdentity);
       }
       if (!target) {
-        const event = eventAtBeat(item.beat);
+        const event = feedbackEventAtBeat(item.beat);
         const targets = elementsForEvent(event, item.midiNote, item.staffNumber);
         target = targets[0];
       }
@@ -1831,8 +1895,9 @@
     function renderPracticeCorrectNote(key, item) {
       if (practiceWrongNote.querySelector(`:scope > g.correct-feedback[data-feedback-key="${CSS.escape(key)}"]`))
         return true;
-      const event = eventAtBeat(item.beat);
-      if (pageForEvent(event) !== currentPage) {
+      const event = feedbackEventAtBeat(item.beat);
+      const targetPage = elementPageIndex.get(item.noteIdentity) || pageForEvent(event);
+      if (targetPage !== currentPage) {
         return false;
       }
       const target = expectedFeedbackTarget(item);
@@ -1869,7 +1934,7 @@
         } else {
           clearPracticeWrongNote(false);
           showPracticeWrongNote(
-            eventAtBeat(activeWrongFeedback.beat),
+            feedbackEventAtBeat(activeWrongFeedback.beat),
             activeWrongFeedback.midiNote,
             activeWrongFeedback.dispatchId,
             true,
@@ -2044,6 +2109,13 @@
           ? event : best, null);
     }
 
+    function feedbackEventAtBeat(beat) {
+      const performanceBeat = Math.max(0, Number(beat || 0));
+      const exactPerformanceEvent = timemap.find(event =>
+        event.on?.length && Math.abs(Number(event.qstamp ?? 0) - performanceBeat) <= 0.0001);
+      return exactPerformanceEvent || eventAtBeat(performanceBeat);
+    }
+
     function rebuildAudit() {
       audit.innerHTML = "";
       document.querySelectorAll("g.note.audit-correct, g.note.audit-missed, g.note.audit-early")
@@ -2110,8 +2182,26 @@
       clearPracticeWrongNote(true);
     }
 
+    function clearLessonFeedbackForPlayback() {
+      persistentCorrectFeedback.clear();
+      activeWrongFeedback = null;
+      clearPracticeWrongNote(true);
+      clearPracticeCorrectNotes();
+      clearTemporaryLiveNoteFeedback();
+      resetAudit();
+      feedback.className = "";
+      feedback.style.opacity = "0";
+      document.querySelectorAll("g.note.feedback-correct, g.note.feedback-wrong, g.note.feedback-hold, g.note.feedback-early, g.note.feedback-missed, g.note.audit-correct, g.note.audit-missed, g.note.audit-early")
+        .forEach(node => {
+          node.classList.remove("feedback-correct", "feedback-wrong", "feedback-hold", "feedback-early", "feedback-missed", "audit-correct", "audit-missed", "audit-early");
+          node.removeAttribute("data-cadenza-feedback");
+          paintNotehead(node);
+        });
+    }
+
     function beginTimeline(startBeat = 0) {
       stopPlayback();
+      if (!lessonRunning) clearLessonFeedbackForPlayback();
       timelineRunning = true;
       latestRequestedBeat = Math.max(0, Number(startBeat || 0));
       lastAuthoritativeBeat = latestRequestedBeat;
@@ -2154,6 +2244,7 @@
       const sourceBeat = performanceToSourceBeat(beat);
       const ms = sourceBeat * 60000 / bpm;
       const desiredPage = pageForEvent(eventAtBeat(beat));
+      if (shouldHoldManualPage(desiredPage)) return;
       if (desiredPage !== currentPage) {
         if (!pendingPage || pendingPage !== desiredPage) {
           const direction = desiredPage > currentPage ? 1 : -1;
@@ -2821,58 +2912,25 @@
       const note = node.closest?.("g.note") || node;
       const noteId = note.id || note.getAttribute("data-id");
       if (!noteId) return [];
+      return findTiedContinuationIds(noteId)
+        .map(elementForVerovioId)
+        .filter(Boolean)
+        .map(element => element.closest?.("g.note") || element);
+    }
 
+    function findTiedContinuationIds(noteId) {
+      const normalizedId = String(noteId || "").replace(/^#/, "");
+      if (!normalizedId) return [];
       const result = [];
-      const visited = new Set([noteId]);
-      const queue = [noteId];
-
+      const visited = new Set([normalizedId]);
+      const queue = [normalizedId];
       while (queue.length > 0) {
         const currentId = queue.shift();
-        const ties = notation.querySelectorAll("g.tie, .tie, g.slur, .slur");
-        for (const item of ties) {
-          const itemId = item.id || item.getAttribute("data-id");
-          let startId = item.getAttribute("data-startid") || item.getAttribute("startid") ||
-            item.querySelector("[data-startid]")?.getAttribute("data-startid") ||
-            item.querySelector("[startid]")?.getAttribute("startid") || "";
-          let endId = item.getAttribute("data-endid") || item.getAttribute("endid") ||
-            item.querySelector("[data-endid]")?.getAttribute("data-endid") ||
-            item.querySelector("[endid]")?.getAttribute("endid") || "";
-
-          if ((!startId || !endId) && toolkit?.getElementAttr && itemId) {
-            try {
-              const attrs = toolkit.getElementAttr(itemId);
-              if (attrs) {
-                startId = startId || attrs.startid || attrs["data-startid"] || attrs["@startid"] || "";
-                endId = endId || attrs.endid || attrs["data-endid"] || attrs["@endid"] || "";
-              }
-            } catch {
-              // ignore
-            }
-          }
-
-          startId = String(startId || "").replace(/^#/, "");
-          endId = String(endId || "").replace(/^#/, "");
-
-          const matchStart = startId && (startId === currentId || currentId.endsWith(startId) || startId.endsWith(currentId));
-          const matchEnd = endId && (endId === currentId || currentId.endsWith(endId) || endId.endsWith(currentId));
-
-          if (matchStart && endId && !visited.has(endId)) {
-            visited.add(endId);
-            queue.push(endId);
-            const targetNode = elementForVerovioId(endId);
-            if (targetNode) {
-              const targetNote = targetNode.closest?.("g.note") || targetNode;
-              result.push(targetNote);
-            }
-          } else if (matchEnd && startId && !visited.has(startId)) {
-            visited.add(startId);
-            queue.push(startId);
-            const sourceNode = elementForVerovioId(startId);
-            if (sourceNode) {
-              const sourceNote = sourceNode.closest?.("g.note") || sourceNode;
-              result.push(sourceNote);
-            }
-          }
+        for (const connectedId of tiedNoteIndex.get(currentId) || []) {
+          if (visited.has(connectedId)) continue;
+          visited.add(connectedId);
+          queue.push(connectedId);
+          result.push(connectedId);
         }
       }
       return result;
@@ -2881,6 +2939,11 @@
     function showFeedback(kind, beat, midiNote = null, dispatchId = 0, runGeneration = 0, eventId = 0, occurrenceIndex = 0, staffNumber = 0) {
       const numericRunGeneration = Number(runGeneration || 0);
       if (!lessonRunning || (numericRunGeneration > 0 && numericRunGeneration !== lessonGeneration)) return false;
+      if (lessonMode === "WaitForYou" && manualPageBrowsing) {
+        const resumed = returnToLivePage(false, () =>
+          showFeedback(kind, beat, midiNote, dispatchId, runGeneration, eventId, occurrenceIndex, staffNumber));
+        if (resumed) return true;
+      }
       const numericDispatchId = Number(dispatchId || 0);
       feedbackTelemetry.received++;
       if (kind === "wrong" || kind === "extra") feedbackTelemetry.receivedWrong++;
@@ -2891,8 +2954,7 @@
         feedbackTelemetry.lastDispatchId = Math.max(feedbackTelemetry.lastDispatchId, numericDispatchId);
       }
       const ms = Number(beat || 0) * 60000 / bpm;
-      if (lessonMode === "WaitForYou") setCursorBeat(beat);
-      const event = eventAtBeat(beat);
+      const event = feedbackEventAtBeat(beat);
       const targetElements = elementsForEvent(event, midiNote, staffNumber);
 
       if (lessonMode === "WaitForYou" && (kind === "wrong" || kind === "extra")) {
@@ -2913,18 +2975,33 @@
         clearPracticeWrongNote();
         const acceptedTargets = targetElements.length ? targetElements : [null];
         const expandedTargets = [];
+        const expandedIdentities = new Set();
         for (const node of acceptedTargets) {
           if (node) {
-            expandedTargets.push(node);
-            for (const continuation of findTiedContinuationElements(node)) {
-              if (!expandedTargets.includes(continuation)) expandedTargets.push(continuation);
+            const note = node.closest?.("g.note") || node;
+            const noteIdentity = note.id || note.getAttribute("data-id");
+            if (noteIdentity && !expandedIdentities.has(noteIdentity)) {
+              expandedIdentities.add(noteIdentity);
+              expandedTargets.push({ node: note, noteIdentity });
+            }
+            for (const continuationId of findTiedContinuationIds(noteIdentity)) {
+              if (expandedIdentities.has(continuationId)) continue;
+              expandedIdentities.add(continuationId);
+              const continuation = elementForVerovioId(continuationId);
+              expandedTargets.push({
+                node: continuation?.closest?.("g.note") || continuation,
+                noteIdentity: continuationId
+              });
             }
           }
         }
-        const targetsToPaint = expandedTargets.length ? expandedTargets : acceptedTargets;
+        const targetsToPaint = expandedTargets.length
+          ? expandedTargets
+          : acceptedTargets.map(node => ({ node, noteIdentity: "" }));
         const renderedKeys = [];
-        const paintedTargets = targetsToPaint.map((node, targetIndex) => {
-          const noteIdentity = node?.id || node?.getAttribute("data-id") ||
+        const paintedTargets = targetsToPaint.map((target, targetIndex) => {
+          const node = target.node;
+          const noteIdentity = target.noteIdentity || node?.id || node?.getAttribute("data-id") ||
             `${Number(beat || 0).toFixed(6)}:${Number(midiNote)}:${Number(staffNumber || 0)}:${targetIndex}`;
           const persistentKey = `${lessonGeneration}:${Number(occurrenceIndex || 0)}:${noteIdentity}`;
           const item = {
@@ -3287,7 +3364,7 @@
       if (overlay) overlay.classList.remove("active");
     }
 
-    window.CadenzaNotation = { loadScore, setPerformanceTimeline, setReadingMode, setHintMode, setHandMode, setScoreAppearance, startPlayback, stopPlayback, beginTimeline, endTimeline, setCursorBeat, setZoom, setTempo, changePage, resetAudit, beginLesson, finishLesson, showFeedback, showTemporaryLiveNoteFeedback, clearPartialFeedback, showCountdownStep, hideCountdown, showResultsModal, updateResultsAutoRepeat, hideResultsModal, showHoldProgress, hideHoldProgress, getState, elementsAtBeat, validateRendererLayout, validateFeedbackGeometry };
+    window.CadenzaNotation = { loadScore, setPerformanceTimeline, setReadingMode, setHintMode, setHandMode, setScoreAppearance, startPlayback, stopPlayback, beginTimeline, endTimeline, setCursorBeat, setZoom, setTempo, changePage, returnToLivePage, resetAudit, beginLesson, finishLesson, showFeedback, showTemporaryLiveNoteFeedback, clearPartialFeedback, showCountdownStep, hideCountdown, showResultsModal, updateResultsAutoRepeat, hideResultsModal, showHoldProgress, hideHoldProgress, getState, elementsAtBeat, validateRendererLayout, validateFeedbackGeometry };
 
     document.addEventListener("DOMContentLoaded", () => {
       verovio.module.onRuntimeInitialized = () => {

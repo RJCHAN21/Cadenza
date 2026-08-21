@@ -116,6 +116,12 @@
       return group;
     }
 
+    function playableGroupAt(sourceBeat, occurrence) {
+      return eventsForOccurrence(occurrence).filter(event =>
+        isPlayable(event) &&
+        Math.abs(number(event?.qstamp, Number.NaN) - sourceBeat) <= EPSILON);
+    }
+
     function groupStamp(group, fallback) {
       return group.length
         ? number(group[0]?.qstamp, fallback)
@@ -299,6 +305,12 @@
     function applyPosition(performanceBeat, reset, previousOffsetX) {
       if ((typeof pendingPage !== "undefined" && pendingPage) || !Array.isArray(timemap) || !timemap.length)
         return;
+      if (typeof manualPageBrowsing !== "undefined" && manualPageBrowsing &&
+          typeof currentPage !== "undefined" && typeof livePage !== "undefined" &&
+          currentPage !== livePage) {
+        playhead.style.opacity = "0";
+        return;
+      }
 
       const occurrence = occurrenceAt(performanceBeat);
       if (!occurrence) return;
@@ -318,8 +330,16 @@
       const occurrenceIndex = performanceTimeline.indexOf(occurrence);
       const sourceBeat = sourceBeatFor(performanceBeat, occurrence);
       const measure = measureFor(occurrence);
-      const previousGroup = playableGroupAtOrBefore(sourceBeat, occurrence);
-      const nextGroup = playableGroupAfter(sourceBeat, occurrence);
+      const practiceGroup = typeof lessonRunning !== "undefined" && lessonRunning &&
+        typeof lessonMode !== "undefined" && lessonMode === "WaitForYou"
+        ? playableGroupAt(sourceBeat, occurrence)
+        : [];
+      const previousGroup = practiceGroup.length
+        ? practiceGroup
+        : playableGroupAtOrBefore(sourceBeat, occurrence);
+      const nextGroup = practiceGroup.length
+        ? []
+        : playableGroupAfter(sourceBeat, occurrence);
       const firstGroup = previousGroup.length
         ? previousGroup
         : playableGroupAfter(number(occurrence.sourceStartBeat) - EPSILON, occurrence);

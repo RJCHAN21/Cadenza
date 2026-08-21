@@ -43,9 +43,9 @@ public sealed record MidiControllerBinding(
 
     public string Format() => Kind switch
     {
-        MidiControllerMessageKind.Note => $"{(ControlSurface ? "MIDIIN2" : "MIDI")} Note {Number} · ch {Channel + 1}",
-        MidiControllerMessageKind.ControlChange => $"{(ControlSurface ? "MIDIIN2" : "MIDI")} CC{Number} · ch {Channel + 1}{(Relative ? " · relative" : string.Empty)}",
-        MidiControllerMessageKind.PitchBend => $"{(ControlSurface ? "MIDIIN2" : "MIDI")} Pitch Bend · ch {Channel + 1}",
+        MidiControllerMessageKind.Note => $"{(ControlSurface ? "MIDIIN2" : "MIDI")} Note {Number}",
+        MidiControllerMessageKind.ControlChange => $"{(ControlSurface ? "MIDIIN2" : "MIDI")} CC{Number}{(Relative ? " · relative" : string.Empty)}",
+        MidiControllerMessageKind.PitchBend => $"{(ControlSurface ? "MIDIIN2" : "MIDI")} Pitch Bend",
         _ => "Unassigned"
     };
 

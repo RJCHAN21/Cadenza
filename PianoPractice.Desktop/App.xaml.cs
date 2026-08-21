@@ -19,10 +19,7 @@ public partial class App : Application
 
         try
         {
-            var diagnosticsDirectory = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Cadenza",
-                "Diagnostics");
+            var diagnosticsDirectory = AppStoragePaths.DiagnosticsDirectory;
             Directory.CreateDirectory(diagnosticsDirectory);
             File.AppendAllText(
                 Path.Combine(diagnosticsDirectory, "playback-startup-errors.log"),

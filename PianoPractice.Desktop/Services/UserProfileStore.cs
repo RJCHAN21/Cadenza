@@ -6,7 +6,7 @@ namespace PianoPractice.Desktop.Services;
 
 public sealed class UserProfileStore
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -15,10 +15,7 @@ public sealed class UserProfileStore
 
     public UserProfileStore(string? profilePath = null)
     {
-        ProfilePath = profilePath ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "CadenzaPianoStudio",
-            "profile.json");
+        ProfilePath = profilePath ?? Path.Combine(AppStoragePaths.ProductDirectory, "profile.json");
     }
 
     public string ProfilePath { get; }
@@ -52,17 +49,14 @@ public sealed class UserProfileStore
             if (profile.SchemaVersion > CurrentSchemaVersion || profile.SchemaVersion < 1)
             {
                 PreserveUnreadableProfile($"unsupported-v{profile.SchemaVersion}");
-                return CadenzaUserProfile.CreateDefault();
+                return LoadBackupOrDefault();
             }
-            profile.Settings ??= new CadenzaUserSettings();
-            profile.Songs ??= new Dictionary<string, SongProgressRecord>(StringComparer.OrdinalIgnoreCase);
-            profile.SchemaVersion = CurrentSchemaVersion;
-            return profile;
+            return Normalize(profile);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
         {
             PreserveUnreadableProfile("corrupt");
-            return CadenzaUserProfile.CreateDefault();
+            return LoadBackupOrDefault();
         }
     }
 
@@ -95,6 +89,34 @@ public sealed class UserProfileStore
             // If preservation fails, the original remains in place and Save
             // will surface the filesystem failure instead of deleting it.
         }
+    }
+
+    private CadenzaUserProfile LoadBackupOrDefault()
+    {
+        try
+        {
+            var backupPath = ProfilePath + ".bak";
+            if (!File.Exists(backupPath)) return CadenzaUserProfile.CreateDefault();
+            var profile = JsonSerializer.Deserialize<CadenzaUserProfile>(File.ReadAllText(backupPath), JsonOptions);
+            if (profile is null || profile.SchemaVersion > CurrentSchemaVersion || profile.SchemaVersion < 1)
+                return CadenzaUserProfile.CreateDefault();
+            return Normalize(profile);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return CadenzaUserProfile.CreateDefault();
+        }
+    }
+
+    private static CadenzaUserProfile Normalize(CadenzaUserProfile profile)
+    {
+        var sourceSchemaVersion = profile.SchemaVersion;
+        profile.Settings ??= new CadenzaUserSettings();
+        if (sourceSchemaVersion < 3)
+            profile.Settings.AutoDismissResultsEnabled = false;
+        profile.Songs ??= new Dictionary<string, SongProgressRecord>(StringComparer.OrdinalIgnoreCase);
+        profile.SchemaVersion = CurrentSchemaVersion;
+        return profile;
     }
 
     private static void WriteDurableText(string path, string value)
@@ -160,7 +182,7 @@ public sealed class CadenzaUserSettings
     public bool OnlyShowFeedbackOnPerformanceEnd { get; set; }
     public string? LastOpenedScorePath { get; set; }
     public string? LastOpenedLibraryItemId { get; set; }
-    public bool AutoDismissResultsEnabled { get; set; } = true;
+    public bool AutoDismissResultsEnabled { get; set; }
     public double AutoDismissResultsSeconds { get; set; } = 10.0;
     public bool AlwaysShowLiveNoteFeedback { get; set; } = true;
     public bool MidiShortcutsEnabled { get; set; } = true;
@@ -175,10 +197,12 @@ public sealed class CadenzaUserSettings
     public int MidiShortcutNextMeasureNote { get; set; } = 59; // B3
     public int MidiShortcutPreviousPageNote { get; set; } = 53; // F3
     public int MidiShortcutNextPageNote { get; set; } = 55; // G3
+    public int MidiShortcutReturnToLivePageNote { get; set; } = -1;
     public int MidiShortcutDismissResultsNote { get; set; } = 62; // D4
     public int MidiShortcutRepeatResultsNote { get; set; } = 67; // G4
     public int MidiControllerMappingVersion { get; set; }
     public Dictionary<string, string> MidiControllerBindings { get; set; } = new(StringComparer.Ordinal);
+    public Dictionary<string, string> KeyboardShortcutBindings { get; set; } = new(StringComparer.Ordinal);
 }
 
 public sealed class SongProgressRecord

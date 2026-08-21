@@ -1179,7 +1179,7 @@
 
                       <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
                         <Button Content="Play" Style="{StaticResource GoldButton}" Click="PlayLibraryItem_Click" Tag="{Binding}" Height="32" Padding="16,0" Margin="0,0,6,0" ToolTip="Load and play this song" />
-                        <Button Content="Rename" Click="RenameLibraryItem_Click" Tag="{Binding}" Height="32" Padding="12,0" Margin="0,0,6,0" ToolTip="Rename song title" />
+                        <Button Content="Edit" Click="RenameLibraryItem_Click" Tag="{Binding}" Height="32" Padding="12,0" Margin="0,0,6,0" ToolTip="Edit title, composer, and arranger" />
                         <Button Content="Delete" Click="DeleteLibraryItem_Click" Tag="{Binding}" Background="#2B1D1D" Foreground="#FF9C8E" BorderThickness="0" Height="32" Padding="12,0" ToolTip="Delete song from library" />
                       </StackPanel>
                     </Grid>
@@ -1433,6 +1433,18 @@
                   <TextBlock Text="{Binding ProgressLabel}" Foreground="{StaticResource Ink}" FontSize="13.5" VerticalAlignment="Center" Margin="16,0,0,0" />
                 </StackPanel>
               </Border>
+
+              <Button x:Name="ReturnToLivePageButton"
+                      Content="Return to live page  Ctrl+Home"
+                      Click="ReturnToLivePage_Click"
+                      Style="{StaticResource GoldButton}"
+                      Visibility="Collapsed"
+                      HorizontalAlignment="Center"
+                      MinWidth="210"
+                      Height="38"
+                      Padding="16,0"
+                      Margin="0,0,0,6"
+                      ToolTip="Return to the page containing the current playhead or expected practice note" />
 
               <!-- Plain Centered Text HUD (No Card Box) -->
               <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,8">
@@ -1803,79 +1815,42 @@
                   </StackPanel>
                 </Border>
 
-                <Border Background="#11161C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="20,16" Margin="0,0,0,14">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="230" />
-                      <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                      <RowDefinition Height="Auto" />
-                      <RowDefinition Height="Auto" />
-                      <RowDefinition Height="Auto" />
-                      <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-
-                    <StackPanel Grid.Row="0" Margin="0,4,20,12">
-                      <TextBlock Text="SELECT MODE" Foreground="{StaticResource Gold}" FontSize="11" FontWeight="Bold" />
-                      <TextBlock Text="Selection does not start playback" Foreground="{StaticResource Muted}" FontSize="10.5" />
-                    </StackPanel>
-                    <TextBlock Grid.Row="0" Grid.Column="1" Text="Ctrl+1  Listen    Ctrl+2  Practice    Ctrl+3  Performance"
-                               Foreground="{StaticResource Ink}" FontFamily="Consolas" FontSize="12.5" VerticalAlignment="Center" Margin="0,4,0,12" />
-
-                    <StackPanel Grid.Row="1" Margin="0,4,20,12">
-                      <TextBlock Text="SESSION" Foreground="{StaticResource Gold}" FontSize="11" FontWeight="Bold" />
-                      <TextBlock Text="Start, pause, stop, or restart" Foreground="{StaticResource Muted}" FontSize="10.5" />
-                    </StackPanel>
-                    <TextBlock Grid.Row="1" Grid.Column="1" Text="Space  Play / Pause    Esc  Stop    Ctrl+R  Restart"
-                               Foreground="{StaticResource Ink}" FontFamily="Consolas" FontSize="12.5" VerticalAlignment="Center" Margin="0,4,0,12" />
-
-                    <StackPanel Grid.Row="2" Margin="0,4,20,12">
-                      <TextBlock Text="NAVIGATION" Foreground="{StaticResource Gold}" FontSize="11" FontWeight="Bold" />
-                      <TextBlock Text="Move through the selected score" Foreground="{StaticResource Muted}" FontSize="10.5" />
-                    </StackPanel>
-                    <TextBlock Grid.Row="2" Grid.Column="1" Text="Ctrl+← / Ctrl+→  Measure    Ctrl+PageUp / Ctrl+PageDown  Page"
-                               Foreground="{StaticResource Ink}" FontFamily="Consolas" FontSize="12.5" VerticalAlignment="Center" Margin="0,4,0,12" />
-
-                    <StackPanel Grid.Row="3" Margin="0,4,20,4">
-                      <TextBlock Text="RESULTS" Foreground="{StaticResource Gold}" FontSize="11" FontWeight="Bold" />
-                      <TextBlock Text="Choose the next action explicitly" Foreground="{StaticResource Muted}" FontSize="10.5" />
-                    </StackPanel>
-                    <TextBlock Grid.Row="3" Grid.Column="1" Text="Enter  Repeat    Esc  Close"
-                               Foreground="{StaticResource Ink}" FontFamily="Consolas" FontSize="12.5" VerticalAlignment="Center" Margin="0,4,0,4" />
-                  </Grid>
-                </Border>
-
-                <TextBlock Text="MIDI CONTROLLER BINDINGS" Foreground="{StaticResource Gold}" FontWeight="Bold" FontSize="12" Margin="0,8,0,4" />
-                <TextBlock Text="Direct controls do not require Remote Arm. Protected piano notes do. Select any binding to learn a replacement. Controller buttons may be shared by multiple actions; Cadenza warns you and keeps every assignment."
+                <TextBlock Text="INPUT BINDINGS" Foreground="{StaticResource Gold}" FontWeight="Bold" FontSize="12" Margin="0,8,0,4" />
+                <TextBlock Text="Select a Keyboard or MIDI binding to learn a replacement. Protected piano-note MIDI bindings still require Remote Arm; controller buttons act directly."
                            Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,8" />
                 <Border Background="#11161C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="16,10" Margin="0,0,0,14">
-                  <ItemsControl ItemsSource="{Binding MidiShortcutBindings}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate>
-                        <Grid Margin="0,5">
+                  <StackPanel>
+                    <Grid Margin="0,2,0,6">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="170" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="145" />
+                        <ColumnDefinition Width="145" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Grid.Column="2" Text="KEYBOARD" Foreground="{StaticResource Gold}" FontSize="10.5" FontWeight="Bold" HorizontalAlignment="Center" />
+                      <TextBlock Grid.Column="3" Text="MIDI" Foreground="{StaticResource Gold}" FontSize="10.5" FontWeight="Bold" HorizontalAlignment="Center" />
+                    </Grid>
+                    <ItemsControl ItemsSource="{Binding MidiShortcutBindings}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                          <Grid Margin="0,5">
                           <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="170" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="145" />
-                            <ColumnDefinition Width="30" />
-                            <ColumnDefinition Width="92" />
-                            <ColumnDefinition Width="38" />
+                            <ColumnDefinition Width="145" />
                           </Grid.ColumnDefinitions>
                           <TextBlock Text="{Binding Label}" Foreground="{StaticResource Ink}" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" />
                           <TextBlock Grid.Column="1" Text="{Binding Contexts}" Foreground="{StaticResource Muted}" FontSize="10.5" VerticalAlignment="Center" />
-                          <Button Grid.Column="2" Content="{Binding DirectControlText}" Tag="{Binding ControlActionId}" Click="RebindMidiShortcut_Click"
-                                  Height="32" Padding="10,0" ToolTip="Select to reassign. Escape cancels; Backspace unassigns while Listening." />
-                          <Button Grid.Column="3" Content="&#x00D7;" Tag="{Binding ControlActionId}" Click="UnbindMidiShortcut_Click"
-                                  Height="32" Width="26" Margin="4,0,0,0" Padding="0" FontSize="15" ToolTip="Unassign this direct controller binding." />
-                          <Button Grid.Column="4" Content="{Binding NoteText}" Tag="{Binding NoteActionId}" Click="RebindMidiShortcut_Click"
-                                  IsEnabled="{Binding CanUseNoteBinding}" Height="32" Padding="8,0" Margin="8,0,0,0" ToolTip="Select to reassign. Escape cancels; Backspace unassigns while Listening." />
-                          <Button Grid.Column="5" Content="&#x00D7;" Tag="{Binding NoteActionId}" Click="UnbindMidiShortcut_Click"
-                                  IsEnabled="{Binding CanUseNoteBinding}" Height="32" Width="26" Margin="4,0,0,0" Padding="0" FontSize="15" ToolTip="Unassign this protected piano-note binding." />
-                        </Grid>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
+                          <Button Grid.Column="2" Content="{Binding KeyboardText}" Tag="{Binding KeyboardLearningActionId}" Click="RebindMidiShortcut_Click"
+                                  IsEnabled="{Binding CanUseKeyboardBinding}" Height="32" Padding="10,0" ToolTip="Select to reassign. Backspace unassigns while Listening." />
+                          <Button Grid.Column="3" Content="{Binding MidiText}" Tag="{Binding MidiActionId}" Click="RebindMidiShortcut_Click"
+                                  Height="32" Padding="10,0" Margin="8,0,0,0" ToolTip="Select to reassign. Escape cancels; Backspace unassigns while Listening." />
+                          </Grid>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </StackPanel>
                 </Border>
 
                 <TextBlock Text="Context rules are enforced when the action key is pressed. Mode switching cannot interrupt a run; navigation cannot move a running performance; results actions only work on the results screen."
@@ -2066,16 +2041,20 @@
         <StackPanel>
           <DockPanel Margin="0,0,0,16">
             <StackPanel>
-              <TextBlock Text="RENAME SONG" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" />
-              <TextBlock Text="Edit Display Title" FontSize="21" FontWeight="SemiBold" Margin="0,2,0,0" />
+              <TextBlock Text="EDIT SCORE" Style="{StaticResource Eyebrow}" Foreground="{StaticResource Gold}" />
+              <TextBlock Text="Score Details" FontSize="21" FontWeight="SemiBold" Margin="0,2,0,0" />
             </StackPanel>
             <Button Style="{StaticResource ModalCloseButton}" DockPanel.Dock="Right" Click="CloseRenameOverlay_Click" VerticalAlignment="Top" />
           </DockPanel>
-          <TextBlock Text="Enter a custom display title for this score in your library:" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,0,10" />
-          <TextBox Text="{Binding RenameItemTitleInput, UpdateSourceTrigger=PropertyChanged}" Foreground="#FFFFFF" CaretBrush="#FFFFFF" Height="34" FontSize="13" VerticalContentAlignment="Center" Padding="8,0" Margin="0,0,0,18" />
+          <TextBlock Text="Title" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,0,6" />
+          <TextBox Text="{Binding RenameItemTitleInput, UpdateSourceTrigger=PropertyChanged}" Foreground="#FFFFFF" CaretBrush="#FFFFFF" Height="34" FontSize="13" VerticalContentAlignment="Center" Padding="8,0" Margin="0,0,0,12" />
+          <TextBlock Text="Composer" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,0,6" />
+          <TextBox Text="{Binding RenameItemComposerInput, UpdateSourceTrigger=PropertyChanged}" Foreground="#FFFFFF" CaretBrush="#FFFFFF" Height="34" FontSize="13" VerticalContentAlignment="Center" Padding="8,0" Margin="0,0,0,12" />
+          <TextBlock Text="Arranger (optional)" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,0,6" />
+          <TextBox Text="{Binding RenameItemArrangerInput, UpdateSourceTrigger=PropertyChanged}" Foreground="#FFFFFF" CaretBrush="#FFFFFF" Height="34" FontSize="13" VerticalContentAlignment="Center" Padding="8,0" Margin="0,0,0,18" />
           <DockPanel>
             <Button Content="Cancel" Click="CloseRenameOverlay_Click" Height="34" Padding="16,0" HorizontalAlignment="Left" />
-            <Button Content="Save Title" Style="{StaticResource GoldButton}" Click="SaveRenameItem_Click" DockPanel.Dock="Right" Height="34" Padding="18,0" HorizontalAlignment="Right" />
+            <Button Content="Save Changes" Style="{StaticResource GoldButton}" Click="SaveRenameItem_Click" DockPanel.Dock="Right" Height="34" Padding="18,0" HorizontalAlignment="Right" />
           </DockPanel>
         </StackPanel>
       </Border>

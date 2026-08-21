@@ -9,10 +9,41 @@ internal static class PersistenceHardeningSmoke
     internal static void Run()
     {
         LibraryIdentityUsesContentNotFilename();
+        LibraryMetadataRoundTrips();
         LibraryWriteFailuresRollBackInMemoryAndFiles();
         ProfileCorruptionRemainsRecoverable();
         LegacyPathProgressMigratesToLibraryIdentity();
         ViewModelTestStorageIsHermetic();
+    }
+
+    private static void LibraryMetadataRoundTrips()
+    {
+        WithTemporaryDirectory(root =>
+        {
+            var source = Path.Combine(root, "score.musicxml");
+            WriteFile(source, "score");
+            var storeRoot = Path.Combine(root, "store");
+            var store = new LibraryStore(storeRoot);
+            store.LoadLibrary();
+            var item = store.AddOrUpdateFile(source, "Original", "Original Composer", 12, new string('c', 64));
+
+            Assert(store.UpdateMetadata(item.Id, "Edited", "New Composer", "New Arranger"),
+                "score metadata update failed");
+
+            var reloaded = new LibraryStore(storeRoot).LoadLibrary().Single();
+            Assert(reloaded.DisplayName == "Edited", "edited score title did not persist");
+            Assert(reloaded.Composer == "New Composer", "edited composer did not persist");
+            Assert(reloaded.Arranger == "New Arranger", "edited arranger did not persist");
+
+            var duplicate = new LibraryStore(storeRoot);
+            duplicate.LoadLibrary();
+            duplicate.AddOrUpdateFile(source, "Imported Again", "Imported Composer", 12, new string('c', 64));
+            var preserved = new LibraryStore(storeRoot).LoadLibrary().Single();
+            Assert(preserved.DisplayName == "Edited" &&
+                   preserved.Composer == "New Composer" &&
+                   preserved.Arranger == "New Arranger",
+                "re-importing an existing score overwrote user-edited metadata");
+        });
     }
 
     private static void LibraryWriteFailuresRollBackInMemoryAndFiles()
@@ -32,6 +63,11 @@ internal static class PersistenceHardeningSmoke
 
             AssertThrows(() => store.RenameItem(first.Id, "Changed"), "rename write failure was hidden");
             Assert(first.DisplayName == "First", "failed rename leaked into in-memory library state");
+
+            AssertThrows(() => store.UpdateMetadata(first.Id, "Changed", "Composer", "Arranger"),
+                "metadata write failure was hidden");
+            Assert(first.DisplayName == "First" && first.Composer == "Unknown Composer" && first.Arranger.Length == 0,
+                "failed metadata update leaked into in-memory library state");
 
             AssertThrows(() => store.RecordPlayed(first.Id), "last-played write failure was hidden");
             Assert(first.LastPlayedUtc is null, "failed last-played update leaked into in-memory state");
@@ -95,6 +131,15 @@ internal static class PersistenceHardeningSmoke
             var reloaded = store.Load();
             Assert(reloaded.Settings.MonitorVolume == 42, "durably saved profile did not round-trip");
 
+            reloaded.Settings.MonitorVolume = 73;
+            store.Save(reloaded);
+            WriteFile(profilePath, "{interrupted write");
+            var recovered = store.Load();
+            Assert(recovered.Settings.MonitorVolume == 42,
+                "a damaged live profile did not recover the last atomic backup");
+            Assert(Directory.GetFiles(root, "profile.json.corrupt-*").Length == 2,
+                "the damaged live profile was not preserved before backup recovery");
+
             var unsupportedPath = Path.Combine(root, "future.json");
             WriteFile(unsupportedPath, "{\"SchemaVersion\":999,\"Settings\":{},\"Songs\":{}}");
             var unsupported = new UserProfileStore(unsupportedPath).Load();
@@ -102,6 +147,17 @@ internal static class PersistenceHardeningSmoke
                 "unsupported profile schema did not degrade to a current empty profile");
             Assert(!File.Exists(unsupportedPath) && Directory.GetFiles(root, "future.json.unsupported-v999-*").Length == 1,
                 "unsupported profile schema was not preserved for recovery");
+
+            var priorSchemaPath = Path.Combine(root, "prior-schema.json");
+            WriteFile(priorSchemaPath, "{\"SchemaVersion\":2,\"Settings\":{\"AutoDismissResultsEnabled\":true},\"Songs\":{}}");
+            var migrated = new UserProfileStore(priorSchemaPath).Load();
+            Assert(migrated.SchemaVersion == UserProfileStore.CurrentSchemaVersion &&
+                   !migrated.Settings.AutoDismissResultsEnabled,
+                "the prior always-on results auto-dismiss default was not disabled during migration");
+            migrated.Settings.AutoDismissResultsEnabled = true;
+            new UserProfileStore(priorSchemaPath).Save(migrated);
+            Assert(new UserProfileStore(priorSchemaPath).Load().Settings.AutoDismissResultsEnabled,
+                "an explicit post-migration results auto-dismiss choice did not persist");
         });
     }
 

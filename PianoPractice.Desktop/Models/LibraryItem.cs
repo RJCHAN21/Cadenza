@@ -8,6 +8,7 @@ public sealed class LibraryItem
     public string StoredFilePath { get; set; } = string.Empty;
     public string ContentSha256 { get; set; } = string.Empty;
     public string Composer { get; set; } = "Unknown Composer";
+    public string Arranger { get; set; } = string.Empty;
     public int MeasureCount { get; set; }
     public DateTimeOffset ImportedUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? LastPlayedUtc { get; set; }

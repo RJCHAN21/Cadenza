@@ -125,13 +125,12 @@ public partial class MainWindow
         var score = _viewModel.CurrentScore;
         var clockRequired = score is not null &&
             ((_viewModel.IsPreviewPlaying && !_viewModel.IsLessonActive) ||
-             (_viewModel.IsLessonActive && _viewModel.SelectedLessonMode == LessonMode.TimedPlay));
+             (_viewModel.IsLessonActive && _viewModel.SelectedLessonMode == LessonMode.TimedPlay &&
+              !_viewModel.IsPerformancePaused));
 
         if (!clockRequired || score is null)
         {
-            _correctedClockActive = false;
-            _correctedPerformanceClock.Reset();
-            _lastCorrectedDispatchTimestamp = 0;
+            ResetCorrectedPerformanceClock();
             return;
         }
 
@@ -168,6 +167,13 @@ public partial class MainWindow
         _lastCorrectedDispatchTimestamp = now;
         _lastCorrectedBeat = targetBeat;
         _viewModel.CursorBeat = targetBeat;
+    }
+
+    private void ResetCorrectedPerformanceClock()
+    {
+        _correctedClockActive = false;
+        _correctedPerformanceClock.Reset();
+        _lastCorrectedDispatchTimestamp = 0;
     }
 
     private double SelectedPerformanceRangeEnd(ScoreDocument score)

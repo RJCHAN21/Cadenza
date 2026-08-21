@@ -18,9 +18,7 @@ public sealed class LibraryStore
 
     public LibraryStore(string? baseDir = null)
     {
-        var appDir = Path.GetFullPath(baseDir ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "CadenzaPianoStudio"));
+        var appDir = Path.GetFullPath(baseDir ?? AppStoragePaths.ProductDirectory);
 
         LibraryDirectory = Path.GetFullPath(Path.Combine(appDir, "Library"));
         ManifestPath = Path.GetFullPath(Path.Combine(appDir, "library_manifest.json"));
@@ -66,6 +64,10 @@ public sealed class LibraryStore
                     continue;
 
                 item.StoredFilePath = safePath;
+                item.Composer = string.IsNullOrWhiteSpace(item.Composer)
+                    ? "Unknown Composer"
+                    : item.Composer.Trim();
+                item.Arranger = item.Arranger?.Trim() ?? string.Empty;
                 _items.Add(item);
             }
         }
@@ -118,7 +120,9 @@ public sealed class LibraryStore
         {
             if (string.IsNullOrWhiteSpace(existing.DisplayName))
                 existing.DisplayName = NormalizeDisplayName(title, originalFileName);
-            if (!string.IsNullOrWhiteSpace(composer))
+            if (!string.IsNullOrWhiteSpace(composer) &&
+                (string.IsNullOrWhiteSpace(existing.Composer) ||
+                 string.Equals(existing.Composer, "Unknown Composer", StringComparison.OrdinalIgnoreCase)))
                 existing.Composer = composer.Trim();
             if (measureCount > 0)
                 existing.MeasureCount = measureCount;
@@ -236,6 +240,42 @@ public sealed class LibraryStore
         catch
         {
             item.DisplayName = originalName;
+            throw;
+        }
+        return true;
+    }
+
+    /// <summary>Atomically updates the user-visible metadata for one managed score.</summary>
+    /// <param name="id">The stable library item identifier.</param>
+    /// <param name="displayName">The required library title.</param>
+    /// <param name="composer">The composer, or an empty value for the unknown-composer label.</param>
+    /// <param name="arranger">The optional arranger.</param>
+    /// <returns><see langword="true"/> when the item was found and saved.</returns>
+    public bool UpdateMetadata(string id, string displayName, string composer, string arranger)
+    {
+        if (string.IsNullOrWhiteSpace(displayName))
+            return false;
+
+        var item = _items.FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, id, StringComparison.Ordinal));
+        if (item is null)
+            return false;
+
+        var originalName = item.DisplayName;
+        var originalComposer = item.Composer;
+        var originalArranger = item.Arranger;
+        item.DisplayName = displayName.Trim();
+        item.Composer = string.IsNullOrWhiteSpace(composer) ? "Unknown Composer" : composer.Trim();
+        item.Arranger = arranger?.Trim() ?? string.Empty;
+        try
+        {
+            SaveManifest();
+        }
+        catch
+        {
+            item.DisplayName = originalName;
+            item.Composer = originalComposer;
+            item.Arranger = originalArranger;
             throw;
         }
         return true;

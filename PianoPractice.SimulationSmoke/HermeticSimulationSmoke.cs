@@ -21,6 +21,8 @@ internal static class HermeticSimulationSmoke
             Assert(score.MeterChanges.Count >= 2, "Meter changes were not retained.");
             Assert(score.HasBlockingPlaybackWarning(1, score.MeasureCount),
                 "The deterministic fixture no longer exercises best-effort Listen playback.");
+            Assert(!new CadenzaUserSettings().AutoDismissResultsEnabled,
+                "Results auto-dismiss must be disabled for new profiles.");
 
             using (var audio = new PianoAudioService())
             {
@@ -57,9 +59,34 @@ internal static class HermeticSimulationSmoke
                 viewModel.SetPracticeMode(PracticeMode.BothHands);
                 viewModel.SetLessonMode(LessonMode.WaitForYou);
                 Assert(viewModel.StartLesson(), viewModel.StatusMessage);
+                Assert(viewModel.PreviewButtonLabel == "Pause", "Running Practice transport did not show Pause.");
+                await viewModel.TogglePreviewAsync();
+                Assert(viewModel.IsPracticePaused && viewModel.PreviewButtonLabel == "Resume",
+                    "The Practice transport did not pause and change to Resume.");
+                await viewModel.TogglePreviewAsync();
+                Assert(!viewModel.IsPracticePaused && viewModel.PreviewButtonLabel == "Pause",
+                    "The Practice transport did not resume at the same expected note.");
 
                 var firstGroup = score.GetPracticeGroups(PracticeMode.BothHands).First();
-                foreach (var note in firstGroup.MidiNotes)
+                var feedback = new List<LessonNoteFeedbackEvent>();
+                var partialChordResets = 0;
+                viewModel.NoteFeedback += (_, message) => feedback.Add(message);
+                viewModel.PartialChordReset += (_, _) => partialChordResets++;
+                var acceptedTone = firstGroup.MidiNotes[0];
+                var extraTone = Enumerable.Range(0, 128).First(note => !firstGroup.MidiNotes.Contains(note));
+                viewModel.SimulateNoteOn(acceptedTone);
+                viewModel.SimulateNoteOff(acceptedTone);
+                viewModel.SimulateNoteOn(extraTone);
+                viewModel.SimulateNoteOff(extraTone);
+
+                Assert(viewModel.CorrectLabel == "1" && viewModel.ExtraLabel == "1",
+                    "A correct-plus-extra Practice input was not scored as one accepted and one extra note.");
+                Assert(partialChordResets == 0 && feedback.Count(message => message.Kind == "correct") == 1,
+                    "An extra Practice note revoked the accepted chord tone's green-feedback event.");
+                Assert(Math.Abs(viewModel.CursorBeat - firstGroup.OnsetBeats) < 0.001,
+                    "An incomplete Practice chord advanced after a correct-plus-extra input.");
+
+                foreach (var note in firstGroup.MidiNotes.Skip(1))
                 {
                     viewModel.SimulateNoteOn(note);
                     viewModel.SimulateNoteOff(note);
@@ -72,6 +99,24 @@ internal static class HermeticSimulationSmoke
                 viewModel.SetLessonMode(LessonMode.TimedPlay);
                 Assert(viewModel.StartLesson(), viewModel.StatusMessage);
                 Assert(viewModel.IsLessonActive, "Performance mode did not enter its running state.");
+                Assert(viewModel.PreviewButtonLabel == "Pause",
+                    $"Running Performance transport showed {viewModel.PreviewButtonLabel} instead of Pause.");
+                await Task.Delay(80);
+                viewModel.UpdateVisualClock();
+                var pausedBeat = viewModel.CursorBeat;
+                await viewModel.TogglePreviewAsync();
+                Assert(viewModel.IsPerformancePaused && viewModel.PreviewButtonLabel == "Resume",
+                    "The Performance transport did not pause and change to Resume.");
+                await Task.Delay(80);
+                viewModel.UpdateVisualClock();
+                Assert(Math.Abs(viewModel.CursorBeat - pausedBeat) < 0.001,
+                    "The assessed performance position moved while page browsing was paused.");
+                await viewModel.TogglePreviewAsync();
+                Assert(!viewModel.IsPerformancePaused,
+                    $"A paused performance did not resume after its count-in: active={viewModel.IsLessonActive}, " +
+                    $"paused={viewModel.IsPerformancePaused}, status={viewModel.StatusMessage}");
+                Assert(viewModel.IsLessonActive && !viewModel.IsPerformancePaused,
+                    "Performance resume did not restore the running state.");
                 viewModel.StopLesson();
                 Assert(!viewModel.IsLessonActive, "Performance mode did not leave its running state.");
 
@@ -99,6 +144,46 @@ internal static class HermeticSimulationSmoke
                 Assert(restored.TryLoadLastOpenedScore(), "The last-opened library item was not restored by stable ID.");
                 Assert(restored.CurrentScore?.ContentSha256 == score.ContentSha256,
                     "Restored score identity does not match the validated imported document.");
+            }
+
+            using (var looping = new MainWindowViewModel(Path.Combine(root, "loop-profile.json")))
+            {
+                var startedRuns = 0;
+                var presentedResults = 0;
+                looping.LessonRunStateChanged += (_, state) =>
+                {
+                    if (state.State == "started") startedRuns++;
+                };
+                looping.ResultsPresented += (_, _) => presentedResults++;
+                looping.LoadScore(scorePath);
+                looping.OpenCurrentLesson();
+                looping.MidiMonitorEnabled = false;
+                looping.UseKeyboardSimulation = true;
+                looping.FocusStartMeasure = 1;
+                looping.FocusEndMeasure = 1;
+                looping.SetPracticeMode(PracticeMode.BothHands);
+                looping.SetLessonMode(LessonMode.WaitForYou);
+                looping.IsLoopEnabled = true;
+                Assert(looping.StartLesson(), looping.StatusMessage);
+
+                foreach (var group in score.GetPracticeGroups(PracticeMode.BothHands)
+                             .Where(group => group.MeasureNumber == "1"))
+                {
+                    foreach (var note in group.MidiNotes)
+                    {
+                        looping.SimulateNoteOn(note);
+                        looping.SimulateNoteOff(note);
+                    }
+                }
+
+                Assert(startedRuns == 2 && looping.IsLessonActive,
+                    $"Loop mode did not restart the selected Practice range in the completion event: " +
+                    $"started={startedRuns}, active={looping.IsLessonActive}, status={looping.StatusMessage}");
+                Assert(!looping.ResultsVisible && presentedResults == 0,
+                    "Loop mode presented a results summary between runs.");
+                Assert(looping.IsLoopEnabled,
+                    "Completing a looped run unexpectedly disabled loop mode.");
+                looping.StopLesson();
             }
 
             var delayedHandPath = Path.Combine(root, "delayed-right-hand.musicxml");

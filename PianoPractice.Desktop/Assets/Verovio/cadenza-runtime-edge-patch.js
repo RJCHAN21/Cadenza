@@ -274,6 +274,11 @@
       const previous = eventAtOrBeforeSourceBeat(sourceBeat, occurrence) || startEvent;
       const next = eventAfterSourceBeat(sourceBeat, occurrence);
       const desiredPage = pageForEvent(previous || next || startEvent);
+      if (shouldHoldManualPage(desiredPage)) {
+        playhead.style.opacity = "0";
+        updatePlaying([]);
+        return null;
+      }
       if (desiredPage !== currentPage) {
         if (!pendingPage || pendingPage !== desiredPage) {
           const direction = desiredPage > currentPage ? 1 : -1;

@@ -18,6 +18,8 @@ public partial class MainWindow : Window
     private readonly MainWindowViewModel _viewModel = new();
     private bool _notationReady;
     private int _notationZoom = 100;
+    private int _displayedScorePage = 1;
+    private int _displayedScorePageCount = 1;
     private long _rendererTimelineGeneration;
     private readonly SemaphoreSlim _rendererLifecycleGate = new(1, 1);
     private bool _cursorDispatchActive;
@@ -48,6 +50,8 @@ public partial class MainWindow : Window
         _viewModel.CountdownStepRequested += ViewModel_CountdownStepRequested;
         _viewModel.HideCountdownRequested += ViewModel_HideCountdownRequested;
         _viewModel.LessonRunStateChanged += ViewModel_LessonRunStateChanged;
+        _viewModel.DisplayPageChangeRequested += ViewModel_DisplayPageChangeRequested;
+        _viewModel.ReturnToLivePageRequested += ViewModel_ReturnToLivePageRequested;
         _viewModel.ResultsPresented += ViewModel_ResultsPresented;
         _viewModel.AutoRepeatUpdated += ViewModel_AutoRepeatUpdated;
         _viewModel.ResultsDismissed += ViewModel_ResultsDismissed;
@@ -104,10 +108,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            var userDataFolder = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "CadenzaPianoStudio",
-                "WebView2");
+            var userDataFolder = Path.Combine(AppStoragePaths.ProductDirectory, "WebView2");
             var options = new Microsoft.Web.WebView2.Core.CoreWebView2EnvironmentOptions(
                 additionalBrowserArguments: "--disable-background-timer-throttling --disable-backgrounding-occluded-windows --autoplay-policy=no-user-gesture-required");
             var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder, options: options);
@@ -142,8 +143,11 @@ public partial class MainWindow : Window
             }
             else if (type == "rendered")
             {
+                ReturnToLivePageButton.Visibility = Visibility.Collapsed;
                 var version = root.TryGetProperty("version", out var versionProperty) ? versionProperty.GetString() : "unknown";
                 var pages = root.TryGetProperty("pages", out var pagesProperty) ? pagesProperty.GetInt32() : 1;
+                _displayedScorePage = 1;
+                _displayedScorePageCount = Math.Max(1, pages);
                 ScorePageIndicator.Text = $"Page 1 / {pages} · System 1";
                 _viewModel.SetStatusMessage($"Score engraved locally with Verovio {version} and SMuFL notation.");
                 if (_viewModel.CurrentScore?.PerformanceMeasures is { Count: > 0 } timeline)
@@ -176,7 +180,14 @@ public partial class MainWindow : Window
                 var pages = root.TryGetProperty("pages", out var pagesProperty) ? pagesProperty.GetInt32() : 1;
                 var system = root.TryGetProperty("system", out var systemProperty) ? systemProperty.GetInt32() : 1;
                 var systems = root.TryGetProperty("systems", out var systemsProperty) ? systemsProperty.GetInt32() : 1;
+                _displayedScorePage = page;
+                _displayedScorePageCount = Math.Max(1, pages);
                 ScorePageIndicator.Text = $"Page {page} / {pages} · System {system} / {systems}";
+            }
+            else if (type == "manualPageBrowsing")
+            {
+                var active = root.TryGetProperty("active", out var activeProperty) && activeProperty.GetBoolean();
+                ReturnToLivePageButton.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
             }
             else if (type == "repeatLesson")
             {
@@ -200,10 +211,7 @@ public partial class MainWindow : Window
 
     private static async Task SaveRendererDiagnosticAsync(string type, JsonElement payload)
     {
-        var diagnosticsFolder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Cadenza",
-            "Diagnostics");
+        var diagnosticsFolder = AppStoragePaths.DiagnosticsDirectory;
         Directory.CreateDirectory(diagnosticsFolder);
         var mode = payload.TryGetProperty("mode", out var modeProperty)
             ? modeProperty.GetString()?.ToLowerInvariant()
@@ -225,10 +233,7 @@ public partial class MainWindow : Window
         if (scriptResult is null) return;
         var rendererJson = JsonSerializer.Deserialize<string>(scriptResult);
         if (string.IsNullOrWhiteSpace(rendererJson)) return;
-        var diagnosticsFolder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Cadenza",
-            "Diagnostics");
+        var diagnosticsFolder = AppStoragePaths.DiagnosticsDirectory;
         Directory.CreateDirectory(diagnosticsFolder);
         await File.WriteAllTextAsync(
             Path.Combine(diagnosticsFolder, $"renderer-state-{checkpoint}.json"),
@@ -308,7 +313,6 @@ public partial class MainWindow : Window
             {
                 _viewModel.LoadScore(fileName);
             }
-            _ = LoadNotationAsync();
         }
         catch (Exception exception)
         {
@@ -321,7 +325,6 @@ public partial class MainWindow : Window
         if (sender is FrameworkElement { Tag: LibraryItemViewModel item })
         {
             _viewModel.LoadLibraryItem(item);
-            _ = LoadNotationAsync();
         }
     }
 
@@ -472,7 +475,6 @@ public partial class MainWindow : Window
     {
         _viewModel.OpenCurrentLesson();
         NotationWebView.Visibility = Visibility.Visible;
-        _ = LoadNotationAsync();
     }
 
     private void BackToDashboard_Click(object sender, RoutedEventArgs e) => _viewModel.ShowDashboard();
@@ -514,20 +516,16 @@ public partial class MainWindow : Window
     {
         if (sender is Button { Tag: string actionId })
         {
-            _viewModel.StartMidiShortcutLearning(actionId);
+            const string keyboardPrefix = "Keyboard:";
+            if (actionId.StartsWith(keyboardPrefix, StringComparison.Ordinal))
+                _viewModel.StartKeyboardShortcutLearning(actionId[keyboardPrefix.Length..]);
+            else
+                _viewModel.StartMidiShortcutLearning(actionId);
         }
     }
 
     private void MapMidiController_Click(object sender, RoutedEventArgs e) =>
         _viewModel.StartMidiControllerAutoMapping();
-
-    private void UnbindMidiShortcut_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button { Tag: string actionId })
-        {
-            _viewModel.UnbindMidiShortcut(actionId);
-        }
-    }
 
     private void CancelMidiShortcutLearning_Click(object sender, RoutedEventArgs e) =>
         _viewModel.CancelMidiShortcutLearning();
@@ -574,18 +572,44 @@ public partial class MainWindow : Window
 
     private async void PreviousScorePage_Click(object sender, RoutedEventArgs e)
     {
-        if (_viewModel.IsPreviewPlaying || _viewModel.IsPreviewBuilding || _viewModel.IsPreviewPaused || _viewModel.ReadingMode == ScoreReadingMode.Continuous)
-            await _viewModel.SeekDisplayPageAsync(-1);
-        else if (_notationReady && NotationWebView.CoreWebView2 is not null)
-            await ExecuteRendererScriptAsync("window.CadenzaNotation.changePage(-1);");
+        await ChangeDisplayedScorePageAsync(-1);
     }
 
     private async void NextScorePage_Click(object sender, RoutedEventArgs e)
     {
-        if (_viewModel.IsPreviewPlaying || _viewModel.IsPreviewBuilding || _viewModel.IsPreviewPaused || _viewModel.ReadingMode == ScoreReadingMode.Continuous)
-            await _viewModel.SeekDisplayPageAsync(1);
-        else if (_notationReady && NotationWebView.CoreWebView2 is not null)
-            await ExecuteRendererScriptAsync("window.CadenzaNotation.changePage(1);");
+        await ChangeDisplayedScorePageAsync(1);
+    }
+
+    private async void ViewModel_DisplayPageChangeRequested(object? sender, int delta) =>
+        await ChangeDisplayedScorePageAsync(delta);
+
+    private async void ViewModel_ReturnToLivePageRequested(object? sender, EventArgs e) =>
+        await ReturnToLivePageAsync();
+
+    private async Task ChangeDisplayedScorePageAsync(int delta)
+    {
+        if (delta == 0) return;
+        if (_viewModel.ReadingMode == ScoreReadingMode.Continuous)
+        {
+            await _viewModel.SeekDisplayPageAsync(delta);
+            return;
+        }
+
+        var targetPage = Math.Clamp(_displayedScorePage + Math.Sign(delta), 1, _displayedScorePageCount);
+        if (targetPage == _displayedScorePage) return;
+
+        _viewModel.PausePerformanceForPageNavigation();
+        if (_notationReady && NotationWebView.CoreWebView2 is not null)
+            await ExecuteRendererScriptAsync($"window.CadenzaNotation.changePage({Math.Sign(delta)});");
+    }
+
+    private async void ReturnToLivePage_Click(object sender, RoutedEventArgs e) =>
+        await ReturnToLivePageAsync();
+
+    private async Task ReturnToLivePageAsync()
+    {
+        if (_notationReady && NotationWebView.CoreWebView2 is not null)
+            await ExecuteRendererScriptAsync("window.CadenzaNotation.returnToLivePage();");
     }
 
     private async Task SetNotationZoomAsync(int percent)
@@ -636,13 +660,23 @@ public partial class MainWindow : Window
     private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (IsTextInputFocused(e)) return;
-        if (_viewModel.IsMidiShortcutLearning && e.Key == Key.Escape)
+        var pressedKey = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (_viewModel.IsKeyboardShortcutLearning)
+        {
+            if (pressedKey == Key.Back)
+                _viewModel.UnbindCurrentMidiShortcutLearning();
+            else
+                _viewModel.TryAssignKeyboardShortcut(pressedKey, Keyboard.Modifiers);
+            e.Handled = true;
+            return;
+        }
+        if (_viewModel.IsMidiShortcutLearning && pressedKey == Key.Escape)
         {
             _viewModel.CancelMidiShortcutLearning();
             e.Handled = true;
             return;
         }
-        if (_viewModel.IsMidiShortcutLearning && e.Key == Key.Back)
+        if (_viewModel.IsMidiShortcutLearning && pressedKey == Key.Back)
         {
             if (_viewModel.UnbindCurrentMidiShortcutLearning()) e.Handled = true;
             return;
@@ -655,7 +689,11 @@ public partial class MainWindow : Window
             e.Key is Key.Space or Key.Enter)
             return;
 
-        var shortcut = AppShortcutRouter.Resolve(e.Key, Keyboard.Modifiers, _viewModel.ResultsVisible);
+        var shortcut = AppShortcutRouter.Resolve(
+            pressedKey,
+            Keyboard.Modifiers,
+            _viewModel.ResultsVisible,
+            _viewModel.KeyboardShortcutOverrides);
         if (shortcut != AppShortcutAction.None)
         {
             e.Handled = true;
@@ -666,8 +704,8 @@ public partial class MainWindow : Window
         if (!e.IsRepeat &&
             _viewModel.UseKeyboardSimulation &&
             AppShortcutRouter.AllowsComputerPianoInput(Keyboard.Modifiers) &&
-            ComputerKeyboardPianoMap.MidiNotes.TryGetValue(e.Key, out var midiNote) &&
-            _pressedComputerPianoKeys.Add(e.Key))
+            ComputerKeyboardPianoMap.MidiNotes.TryGetValue(pressedKey, out var midiNote) &&
+            _pressedComputerPianoKeys.Add(pressedKey))
         {
             _viewModel.SimulateNoteOn(midiNote);
             e.Handled = true;
@@ -688,7 +726,13 @@ public partial class MainWindow : Window
                 await _viewModel.SwitchLessonModeAsync(LessonMode.TimedPlay);
                 break;
             case AppShortcutAction.TogglePlayback:
-                if (_viewModel.IsLessonActive) _viewModel.StopLesson();
+                if (_viewModel.IsPerformancePaused) await _viewModel.ResumePerformanceAsync();
+                else if (_viewModel.IsPracticePaused) _viewModel.ResumePractice();
+                else if (_viewModel.IsLessonActive && _viewModel.SelectedLessonMode == LessonMode.TimedPlay)
+                    _viewModel.PausePerformanceForPageNavigation(forPageNavigation: false);
+                else if (_viewModel.IsLessonActive && _viewModel.SelectedLessonMode == LessonMode.WaitForYou)
+                    _viewModel.PausePractice();
+                else if (_viewModel.IsLessonActive) _viewModel.StopLesson();
                 else await _viewModel.StartSelectedModeAsync();
                 break;
             case AppShortcutAction.Stop:
@@ -704,10 +748,13 @@ public partial class MainWindow : Window
                 await _viewModel.SeekDisplayMeasureAsync(1);
                 break;
             case AppShortcutAction.PreviousPage:
-                await _viewModel.SeekDisplayPageAsync(-1);
+                await ChangeDisplayedScorePageAsync(-1);
                 break;
             case AppShortcutAction.NextPage:
-                await _viewModel.SeekDisplayPageAsync(1);
+                await ChangeDisplayedScorePageAsync(1);
+                break;
+            case AppShortcutAction.ReturnToLivePage:
+                await ReturnToLivePageAsync();
                 break;
             case AppShortcutAction.DismissResults:
                 _viewModel.DismissResults();
@@ -859,13 +906,20 @@ public partial class MainWindow : Window
             _rendererTimelineGeneration++;
             _pendingCursorBeat = null;
             _lastQueuedCursorBeat = e.StartBeat;
-            var script = e.State == "started"
-                ? $"window.CadenzaNotation.beginLesson({JsonSerializer.Serialize(e.Mode.ToString())}, {e.StartBeat.ToString(System.Globalization.CultureInfo.InvariantCulture)}, false, {e.RunGeneration}, {_viewModel.OnlyShowFeedbackOnPerformanceEnd.ToString().ToLowerInvariant()});"
-                : $"window.CadenzaNotation.finishLesson({(e.State == "completed" ? "true" : "false")}, {e.RunGeneration});";
+            var startBeat = e.StartBeat.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var script = e.State switch
+            {
+                "started" =>
+                    $"window.CadenzaNotation.beginLesson({JsonSerializer.Serialize(e.Mode.ToString())}, {startBeat}, false, {e.RunGeneration}, {_viewModel.OnlyShowFeedbackOnPerformanceEnd.ToString().ToLowerInvariant()});",
+                "paused" => "window.CadenzaNotation.endTimeline();",
+                "resume-countdown" => "window.CadenzaNotation.returnToLivePage(false);",
+                "resumed" => $"window.CadenzaNotation.beginTimeline({startBeat});",
+                _ => $"window.CadenzaNotation.finishLesson({(e.State == "completed" ? "true" : "false")}, {e.RunGeneration});"
+            };
             await ExecuteRendererScriptAsync(script);
-            if (e.State == "started")
+            if (e.State is "started" or "resumed")
                 QueueRendererCursor(e.StartBeat, allowReset: true);
-            else
+            else if (e.State is "completed" or "stopped")
                 await CaptureRendererStateAsync($"lesson-{e.State}");
         }
         finally
@@ -894,7 +948,8 @@ public partial class MainWindow : Window
         }
         else if (e.PropertyName == nameof(MainWindowViewModel.CurrentScore))
         {
-            await LoadNotationAsync();
+            if (_viewModel.IsPlayerVisible)
+                await LoadNotationAsync();
         }
         else if (e.PropertyName == nameof(MainWindowViewModel.NotationZoomPercent))
         {
@@ -917,16 +972,22 @@ public partial class MainWindow : Window
         if (!_notationReady || NotationWebView.CoreWebView2 is null) return;
         if (e.PropertyName == nameof(MainWindowViewModel.IsPreviewPlaying))
         {
+            // Capture the transition before awaiting the renderer. During a restart,
+            // audio and the corrected clock can advance CursorBeat while the prior
+            // timeline is still finishing, which would otherwise skip the opening beat.
+            var previewIsPlaying = _viewModel.IsScorePreviewPlaying;
+            var previewStartBeat = _viewModel.CursorBeat;
+            ResetCorrectedPerformanceClock();
             await _rendererLifecycleGate.WaitAsync();
             try
             {
-                if (_viewModel.IsScorePreviewPlaying)
+                if (previewIsPlaying)
                 {
                     _rendererTimelineGeneration++;
-                    _lastQueuedCursorBeat = _viewModel.CursorBeat;
+                    _lastQueuedCursorBeat = previewStartBeat;
                     await ExecuteRendererScriptAsync(
-                        $"window.CadenzaNotation.beginTimeline({_viewModel.CursorBeat.ToString(System.Globalization.CultureInfo.InvariantCulture)});");
-                    QueueRendererCursor(_viewModel.CursorBeat, allowReset: true);
+                        $"window.CadenzaNotation.beginTimeline({previewStartBeat.ToString(System.Globalization.CultureInfo.InvariantCulture)});");
+                    QueueRendererCursor(previewStartBeat, allowReset: true);
                 }
                 else
                 {
@@ -1068,6 +1129,8 @@ public partial class MainWindow : Window
         _viewModel.CorrectFeedback -= ViewModel_CorrectFeedback;
         _viewModel.NoteFeedback -= ViewModel_NoteFeedback;
         _viewModel.LessonRunStateChanged -= ViewModel_LessonRunStateChanged;
+        _viewModel.DisplayPageChangeRequested -= ViewModel_DisplayPageChangeRequested;
+        _viewModel.ReturnToLivePageRequested -= ViewModel_ReturnToLivePageRequested;
         _viewModel.ResultsPresented -= ViewModel_ResultsPresented;
         _viewModel.AutoRepeatUpdated -= ViewModel_AutoRepeatUpdated;
         _viewModel.ResultsDismissed -= ViewModel_ResultsDismissed;
